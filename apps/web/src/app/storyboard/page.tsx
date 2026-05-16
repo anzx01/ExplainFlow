@@ -210,6 +210,12 @@ export default function StoryboardPage() {
         </div>
 
         <div className="flex items-center gap-3">
+          <Link
+            href="/jobs"
+            className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
+          >
+            视频库
+          </Link>
           <span className="text-xs font-mono text-[--fg-muted]">
             共 {storyboard.scenes.length} 场 · {Math.round(storyboard.total_duration_estimate)}s
           </span>

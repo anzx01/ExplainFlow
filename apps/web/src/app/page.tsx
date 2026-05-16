@@ -12,6 +12,7 @@ export default function HomePage() {
         <div className="flex items-center gap-8 text-sm text-[--fg-muted]">
           <a href="#features" className="hover:text-[--fg-default] transition-colors">功能</a>
           <a href="#how" className="hover:text-[--fg-default] transition-colors">使用流程</a>
+          <Link href="/jobs" className="hover:text-[--fg-default] transition-colors">视频库</Link>
         </div>
         <Link
           href="/studio"

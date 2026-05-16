@@ -5,8 +5,13 @@
     "progress": 100
   },
   "f494bdd7-430a-4d77-a6ed-cf21e599cd73": {
-    "status": "processing",
+    "status": "done",
     "outputPath": "D:\\aiapp\\ExplainFlow\\outputs\\梯度下降_f494bdd7.mp4",
-    "progress": 0
+    "progress": 100
+  },
+  "2707bda5-c840-4609-a007-8b827efd22eb": {
+    "status": "done",
+    "outputPath": "D:\\aiapp\\ExplainFlow\\outputs\\讲解下降算法的原理_2707bda5.mp4",
+    "progress": 100
   }
 }

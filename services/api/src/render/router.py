@@ -2,7 +2,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
-from .models import RenderJobRequest, RenderJobStatus
+from .models import RenderJobRequest, RenderJobStatus, RenderJobSummary, RenderJobPatch
 
 router = APIRouter(prefix="/render", tags=["render"])
 
@@ -89,3 +89,53 @@ async def download_video(job_id: str, request: Request):
         status_code=r.status_code,
         headers=response_headers,
     )
+
+
+@router.get("/jobs", response_model=list[RenderJobSummary])
+async def list_render_jobs() -> list[RenderJobSummary]:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{RENDER_SERVER}/jobs")
+            resp.raise_for_status()
+            return [RenderJobSummary(**j) for j in resp.json()["jobs"]]
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Render server not running")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/job/{job_id}")
+async def delete_render_job(job_id: str) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.delete(f"{RENDER_SERVER}/job/{job_id}")
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Job not found")
+            resp.raise_for_status()
+            return {"ok": True}
+    except HTTPException:
+        raise
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Render server not running")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.patch("/job/{job_id}")
+async def update_render_job(job_id: str, patch: RenderJobPatch) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.patch(
+                f"{RENDER_SERVER}/job/{job_id}",
+                json=patch.model_dump(exclude_none=True),
+            )
+            if resp.status_code == 404:
+                raise HTTPException(status_code=404, detail="Job not found")
+            resp.raise_for_status()
+            return {"ok": True}
+    except HTTPException:
+        raise
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Render server not running")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

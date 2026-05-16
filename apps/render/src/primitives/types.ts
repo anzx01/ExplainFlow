@@ -25,6 +25,7 @@ export interface Scene {
   duration_estimate: number;
   animations: AnimationInstruction[];
   node_ids: string[];
+  audioUrl?: string | null;
 }
 
 export interface Storyboard {

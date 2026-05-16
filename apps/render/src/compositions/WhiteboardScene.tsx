@@ -1,5 +1,5 @@
 import React from "react";
-import { AbsoluteFill, Series } from "remotion";
+import { AbsoluteFill, Audio } from "remotion";
 import { WhiteboardDraw } from "../primitives/WhiteboardDraw";
 import { FormulaReveal } from "../primitives/FormulaReveal";
 import { ConceptNode } from "../primitives/ConceptNode";
@@ -73,7 +73,6 @@ function renderAnimation(anim: AnimationInstruction, startFrame: number, duratio
 export const WhiteboardScene: React.FC<Props> = ({ scene }) => {
   const sceneDurationFrames = Math.round(scene.duration_estimate * FPS);
 
-  // Lay animations out sequentially with slight overlap
   let cursor = 0;
   const animElements: React.ReactNode[] = [];
   for (const anim of scene.animations) {
@@ -84,7 +83,10 @@ export const WhiteboardScene: React.FC<Props> = ({ scene }) => {
 
   return (
     <AbsoluteFill style={{ background: COLORS.bg }}>
-      {/* Scene title */}
+      {scene.audioUrl && (
+        <Audio src={scene.audioUrl} startFrom={0} />
+      )}
+
       <div
         style={{
           position: "absolute",

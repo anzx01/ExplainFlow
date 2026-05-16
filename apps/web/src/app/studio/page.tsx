@@ -87,6 +87,12 @@ export default function StudioPage() {
               生成 Storyboard
             </Button>
           )}
+          <Link
+            href="/jobs"
+            className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
+          >
+            视频库
+          </Link>
           {storyboard && (
             <Link
               href="/storyboard"

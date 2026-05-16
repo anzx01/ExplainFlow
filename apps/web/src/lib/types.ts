@@ -59,3 +59,13 @@ export interface Storyboard {
   total_duration_estimate: number;
   scenes: Scene[];
 }
+
+// ── Render Jobs ─────────────────────────────────────────────────
+export interface RenderJobSummary {
+  id: string;
+  status: "processing" | "done" | "failed";
+  progress: number;
+  topic: string | null;
+  createdAt: string | null;
+  error: string | null;
+}
