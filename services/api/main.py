@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from src.core.config import settings
 from src.core.logging import setup_logging
 from src.explain.router import router as explain_router
+from src.imagegen.router import router as imagegen_router
 from src.narration.router import router as narration_router
 from src.planner.router import router as planner_router
 from src.render.router import router as render_router
@@ -32,6 +33,7 @@ app.add_middleware(
 )
 
 app.include_router(explain_router)
+app.include_router(imagegen_router)
 app.include_router(planner_router)
 app.include_router(narration_router)
 app.include_router(render_router)

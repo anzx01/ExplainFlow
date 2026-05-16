@@ -10,7 +10,13 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+.claude/settings.local.json
 logs/*.log
+logs/
+services/api/logs/
+outputs/
+evals/results.json
+evals/e2e_results.json
 *.mp4
 *.mp3
 *.wav

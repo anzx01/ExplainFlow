@@ -5,10 +5,19 @@ import Link from "next/link";
 import { StoryboardView } from "@/components/storyboard/StoryboardView";
 import type { Storyboard } from "@/lib/types";
 
+import { RENDER_URL } from "@/lib/constants";
+
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-const RENDER = process.env.NEXT_PUBLIC_RENDER_URL ?? "http://localhost:3001";
 
 type RenderState = "idle" | "submitting" | "polling" | "done" | "failed";
+
+type RenderPhase = "tts" | "imagegen" | "rendering" | null;
+
+const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
+  tts: "合成语音",
+  imagegen: "生成插图",
+  rendering: "渲染视频",
+};
 
 function RenderButton({
   storyboard,
@@ -20,6 +29,8 @@ function RenderButton({
   const [state, setState] = useState<RenderState>("idle");
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [progress, setProgress] = useState(0);
+  const [phase, setPhase] = useState<RenderPhase>(null);
 
   const poll = useCallback(
     async (id: string) => {
@@ -27,13 +38,16 @@ function RenderButton({
       const data = await res.json();
       if (data.status === "done") {
         setState("done");
+        setProgress(100);
         // Direct to render server (3001) for Range request support + no FastAPI proxy overhead
-        onVideoReady(`${RENDER}/download/${id}`);
+        onVideoReady(`${RENDER_URL}/download/${id}`);
       } else if (data.status === "failed") {
         setState("failed");
         setError(data.error ?? "渲染失败");
       } else {
-        setTimeout(() => poll(id), 3000);
+        setProgress(data.progress ?? 0);
+        setPhase(data.phase ?? null);
+        setTimeout(() => poll(id), 2000);
       }
     },
     [onVideoReady]
@@ -81,14 +95,28 @@ function RenderButton({
   }
 
   if (state === "submitting" || state === "polling") {
+    const phaseLabel = phase ? PHASE_LABEL[phase] : (state === "submitting" ? "提交中" : "准备中");
+    const showProgress = state === "polling" && phase === "rendering" && progress > 0;
     return (
-      <button
-        disabled
-        className="h-9 px-4 rounded-md border border-purple-500/40 text-sm text-purple-400 flex items-center gap-2"
-      >
-        <span className="inline-block w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
-        {state === "submitting" ? "提交中..." : "渲染中..."}
-      </button>
+      <div className="flex items-center gap-3">
+        <div className="flex flex-col items-end gap-1">
+          <div className="flex items-center gap-2 text-sm text-purple-400">
+            <span className="inline-block w-3 h-3 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+            <span>{phaseLabel}...</span>
+            {showProgress && (
+              <span className="font-mono text-xs text-purple-300">{progress}%</span>
+            )}
+          </div>
+          {showProgress && (
+            <div className="w-40 h-1 bg-purple-900/40 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-purple-500 rounded-full transition-all duration-500"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
     );
   }
 
@@ -97,7 +125,7 @@ function RenderButton({
     <div className="flex items-center gap-2">
       <span className="text-xs text-green-400 font-mono">✓ 已生成</span>
       <a
-        href={`${RENDER}/download/${jobId}`}
+        href={`${RENDER_URL}/download/${jobId}`}
         download
         className="h-9 px-4 rounded-md bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-300 text-sm font-medium flex items-center gap-2 transition-colors"
       >
@@ -109,18 +137,18 @@ function RenderButton({
 
 const DEMO_STORYBOARD: Storyboard = {
   topic: "梯度下降",
-  total_duration_estimate: 120,
+  total_duration_estimate: 130,
   scenes: [
     {
       id: "scene_0",
       order: 0,
       title: "开场：今天讲什么",
-      narration: "今天我们来讲解机器学习中最核心的优化算法——梯度下降。它是深度学习一切的基础。",
-      duration_estimate: 15,
+      narration: "今天我们来讲解机器学习中最核心的优化算法——梯度下降。它是深度学习一切的基础，无论是 GPT 还是 Stable Diffusion，背后都在用它。",
+      duration_estimate: 18,
       node_ids: [],
       animations: [
-        { type: "whiteboard_draw", duration: 2, content: "梯度下降" },
-        { type: "whiteboard_draw", duration: 1.5, content: "Gradient Descent" },
+        { type: "write_text", duration: 3, content: "梯度下降" },
+        { type: "bullet_list", duration: 8, content: "今天你会学到", items: ["什么是损失函数", "梯度的含义", "参数如何更新", "收敛的过程"] },
       ],
     },
     {
@@ -131,32 +159,34 @@ const DEMO_STORYBOARD: Storyboard = {
       duration_estimate: 28,
       node_ids: ["node_0"],
       animations: [
-        { type: "concept_node", duration: 2, content: "损失函数 L(θ)" },
-        { type: "formula_reveal", duration: 3, content: "MSE 公式", latex: "L(θ) = (1/n)·Σ(y - ŷ)²" },
+        { type: "concept_bubble", duration: 3, content: "损失函数 L(θ)" },
+        { type: "write_formula", duration: 6, content: "均方误差（MSE）", latex: "L(θ) = (1/n)·Σ(y - ŷ)²" },
+        { type: "write_text", duration: 4, content: "损失 = 预测误差的度量" },
       ],
     },
     {
       id: "scene_2",
       order: 2,
       title: "梯度是什么",
-      narration: "梯度是损失函数对参数的偏导数。它告诉我们，在当前点沿哪个方向走，损失增大最快。",
-      duration_estimate: 25,
+      narration: "梯度是损失函数对参数的偏导数。它告诉我们，在当前点沿哪个方向走，损失增大最快。我们要反着走，所以叫梯度下降。",
+      duration_estimate: 30,
       node_ids: ["node_1"],
       animations: [
-        { type: "concept_node", duration: 2, content: "梯度 ∇L(θ)" },
-        { type: "arrow_connect", duration: 2, content: "指向损失增大方向" },
+        { type: "write_text", duration: 3, content: "∇L(θ)  =  损失函数的梯度" },
+        { type: "draw_arrow", duration: 4, content: "梯度方向 = 损失增大最快" },
+        { type: "write_text", duration: 4, content: "我们沿 梯度反方向 走 → 损失减小" },
       ],
     },
     {
       id: "scene_3",
       order: 3,
-      title: "参数更新规则",
-      narration: "参数更新公式是：参数减去学习率乘以梯度。我们沿梯度反方向走，每步减少损失。",
-      duration_estimate: 30,
+      title: "参数更新公式",
+      narration: "参数更新公式是：新参数等于旧参数减去学习率乘以梯度。学习率控制每步的步长，太大会震荡，太小会很慢。",
+      duration_estimate: 32,
       node_ids: ["node_2"],
       animations: [
-        { type: "formula_reveal", duration: 4, content: "θ := θ - α·∇L(θ)", latex: "θ := θ − α · ∇L(θ)" },
-        { type: "whiteboard_draw", duration: 2, content: "α = 学习率（控制步长）" },
+        { type: "write_formula", duration: 6, content: "参数更新规则", latex: "θ := θ − α · ∇L(θ)" },
+        { type: "step_reveal", duration: 12, content: "三个关键量", items: ["θ — 模型参数（需要学习的权重）", "α — 学习率（控制步长大小）", "∇L(θ) — 梯度（告诉你往哪走）"] },
       ],
     },
     {
@@ -167,8 +197,8 @@ const DEMO_STORYBOARD: Storyboard = {
       duration_estimate: 22,
       node_ids: ["node_3"],
       animations: [
-        { type: "concept_node", duration: 2, content: "参数收敛" },
-        { type: "text_narration", duration: 2, content: "多次迭代 → 趋近最优解 ✓" },
+        { type: "concept_bubble", duration: 3, content: "不断迭代 → 参数收敛" },
+        { type: "bullet_list", duration: 8, content: "核心要点", items: ["损失函数定义目标", "梯度告诉方向", "学习率控制步长", "迭代直到收敛"] },
       ],
     },
   ],

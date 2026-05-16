@@ -1,13 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { listJobs, deleteJob, updateJobTopic } from "@/lib/api";
+import { RENDER_URL } from "@/lib/constants";
 import type { RenderJobSummary } from "@/lib/types";
 
-const RENDER = process.env.NEXT_PUBLIC_RENDER_URL ?? "http://localhost:3001";
-
-// ── Status badge ─────────────────────────────────────────────────
 function StatusBadge({ status, progress }: { status: RenderJobSummary["status"]; progress: number }) {
   if (status === "done") {
     return (
@@ -31,7 +29,6 @@ function StatusBadge({ status, progress }: { status: RenderJobSummary["status"];
   );
 }
 
-// ── Editable topic ────────────────────────────────────────────────
 function TopicCell({
   job,
   onSaved,
@@ -51,7 +48,6 @@ function TopicCell({
       onSaved(job.id, value.trim());
       setEditing(false);
     } catch {
-      // revert
       setValue(job.topic ?? "");
       setEditing(false);
     } finally {
@@ -85,7 +81,6 @@ function TopicCell({
   );
 }
 
-// ── Delete confirm ────────────────────────────────────────────────
 function DeleteButton({ jobId, onDeleted }: { jobId: string; onDeleted: (id: string) => void }) {
   const [confirm, setConfirm] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -124,7 +119,6 @@ function DeleteButton({ jobId, onDeleted }: { jobId: string; onDeleted: (id: str
   );
 }
 
-// ── Main page ─────────────────────────────────────────────────────
 export default function JobsPage() {
   const [jobs, setJobs] = useState<RenderJobSummary[]>([]);
   const [loading, setLoading] = useState(true);
@@ -132,10 +126,12 @@ export default function JobsPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "done" | "processing" | "failed">("all");
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const hasProcessingRef = useRef(false);
 
   const fetchJobs = useCallback(async () => {
     try {
       const data = await listJobs();
+      hasProcessingRef.current = data.some((j) => j.status === "processing");
       setJobs(data);
       setError(null);
     } catch (e) {
@@ -147,12 +143,8 @@ export default function JobsPage() {
 
   useEffect(() => {
     fetchJobs();
-    // Poll while any job is still processing
     const id = setInterval(() => {
-      setJobs((prev) => {
-        if (prev.some((j) => j.status === "processing")) { fetchJobs(); }
-        return prev;
-      });
+      if (hasProcessingRef.current) fetchJobs();
     }, 5000);
     return () => clearInterval(id);
   }, [fetchJobs]);
@@ -171,7 +163,6 @@ export default function JobsPage() {
 
   return (
     <div className="flex flex-col h-screen bg-[--bg-base] text-[--fg-default] overflow-hidden">
-      {/* NavBar */}
       <header className="flex items-center justify-between px-6 h-14 bg-[--bg-surface] border-b border-[--border-subtle] flex-shrink-0">
         <div className="flex items-center gap-4">
           <Link
@@ -200,9 +191,7 @@ export default function JobsPage() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* List panel */}
         <div className="flex flex-col flex-1 overflow-hidden">
-          {/* Toolbar */}
           <div className="flex items-center gap-3 px-6 py-3 border-b border-[--border-subtle] bg-[--bg-surface] flex-shrink-0">
             <input
               type="text"
@@ -234,7 +223,6 @@ export default function JobsPage() {
             </button>
           </div>
 
-          {/* Table */}
           <div className="flex-1 overflow-y-auto">
             {loading && (
               <div className="flex items-center justify-center h-40 text-[--fg-muted] text-sm">
@@ -305,7 +293,7 @@ export default function JobsPage() {
                                 {previewId === job.id ? "收起" : "预览"}
                               </button>
                               <a
-                                href={`${RENDER}/download/${job.id}`}
+                                href={`${RENDER_URL}/download/${job.id}`}
                                 download
                                 className="px-2 py-0.5 rounded text-xs text-[--fg-muted] hover:text-purple-400 border border-transparent hover:border-purple-500/40 transition-colors"
                               >
@@ -324,7 +312,6 @@ export default function JobsPage() {
           </div>
         </div>
 
-        {/* Preview side panel */}
         {previewJob && previewJob.status === "done" && (
           <div className="w-96 flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] flex flex-col overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-[--border-subtle]">
@@ -339,7 +326,7 @@ export default function JobsPage() {
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <video
                 key={previewJob.id}
-                src={`${RENDER}/download/${previewJob.id}`}
+                src={`${RENDER_URL}/download/${previewJob.id}`}
                 controls
                 autoPlay
                 className="w-full aspect-video rounded-lg bg-black border border-[--border-default]"
@@ -367,7 +354,7 @@ export default function JobsPage() {
                 </div>
               </div>
               <a
-                href={`${RENDER}/download/${previewJob.id}`}
+                href={`${RENDER_URL}/download/${previewJob.id}`}
                 download
                 className="flex items-center justify-center gap-2 h-9 rounded-lg bg-purple-500/20 hover:bg-purple-500/30 border border-purple-500/50 text-purple-300 text-sm font-medium transition-colors"
               >

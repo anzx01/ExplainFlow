@@ -18,12 +18,14 @@ export default function StudioPage() {
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<Tab>("graph");
   const [projectName, setProjectName] = useState("未命名项目");
+  const [targetDuration, setTargetDuration] = useState(120);
 
   const handleGenerate = async (prompt: string, markdown: string, duration: number) => {
     setError(null);
     setLoadingGraph(true);
     setGraph(null);
     setStoryboard(null);
+    setTargetDuration(duration);
 
     try {
       const g = await generateGraph(prompt, markdown);
@@ -41,7 +43,7 @@ export default function StudioPage() {
     if (!graph) return;
     setLoadingStoryboard(true);
     try {
-      const sb = await generateStoryboard(graph, 120);
+      const sb = await generateStoryboard(graph, targetDuration);
       setStoryboard(sb);
       sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
     } catch (e) {

@@ -8,13 +8,17 @@
     "server": "node server.mjs"
   },
   "dependencies": {
+    "@fontsource/caveat": "^5.2.8",
     "@remotion/bundler": "^4.0.462",
     "@remotion/cli": "^4.0.462",
+    "@remotion/paths": "^4.0.462",
     "@remotion/player": "^4.0.0",
     "@remotion/renderer": "^4.0.0",
+    "opentype.js": "^2.0.0",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "remotion": "^4.0.462"
+    "remotion": "^4.0.462",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@types/react": "^19",
