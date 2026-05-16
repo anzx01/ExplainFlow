@@ -1,0 +1,162 @@
+[
+  {
+    "id": "eval_001",
+    "topic": "梯度下降",
+    "prompt": "讲解梯度下降算法的原理，包括损失函数、梯度、学习率的概念，以及参数如何逐步收敛到最优解。",
+    "expected_node_count": 5,
+    "expected_concepts": ["损失函数", "梯度", "学习率", "参数更新", "收敛"],
+    "golden_formula": "θ := θ − α · ∇L(θ)"
+  },
+  {
+    "id": "eval_002",
+    "topic": "反向传播",
+    "prompt": "讲解神经网络中的反向传播算法，包括链式法则、前向传播、梯度计算和权重更新的完整流程。",
+    "expected_node_count": 6,
+    "expected_concepts": ["前向传播", "损失计算", "链式法则", "反向传播", "权重更新"],
+    "golden_formula": "∂L/∂w = ∂L/∂y · ∂y/∂w"
+  },
+  {
+    "id": "eval_003",
+    "topic": "Attention 机制",
+    "prompt": "讲解 Transformer 中的 Self-Attention 机制，包括 Query、Key、Value 的概念和 Scaled Dot-Product Attention 的计算过程。",
+    "expected_node_count": 7,
+    "expected_concepts": ["Query", "Key", "Value", "点积", "Softmax", "注意力权重"],
+    "golden_formula": "Attention(Q,K,V) = softmax(QK^T / √d_k) · V"
+  },
+  {
+    "id": "eval_004",
+    "topic": "Transformer 架构",
+    "prompt": "讲解 Transformer 的整体架构，包括编码器、解码器、Multi-Head Attention、Position Encoding 和 Feed Forward 网络。",
+    "expected_node_count": 8,
+    "expected_concepts": ["Encoder", "Decoder", "Multi-Head Attention", "位置编码", "前馈网络", "残差连接"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_005",
+    "topic": "词嵌入与 Embedding",
+    "prompt": "讲解 Word Embedding 的概念，从 One-Hot 编码到 Word2Vec，以及 BERT 的上下文相关 Embedding。",
+    "expected_node_count": 5,
+    "expected_concepts": ["One-Hot", "Word2Vec", "语义空间", "上下文相关", "BERT"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_006",
+    "topic": "激活函数",
+    "prompt": "讲解神经网络中常用的激活函数：Sigmoid、ReLU、GELU，以及为什么需要非线性激活函数。",
+    "expected_node_count": 6,
+    "expected_concepts": ["非线性", "Sigmoid", "ReLU", "GELU", "梯度消失", "稀疏激活"],
+    "golden_formula": "ReLU(x) = max(0, x)"
+  },
+  {
+    "id": "eval_007",
+    "topic": "损失函数",
+    "prompt": "讲解机器学习中常见的损失函数：MSE、Cross-Entropy，以及它们分别适用于回归和分类任务的原因。",
+    "expected_node_count": 5,
+    "expected_concepts": ["MSE", "交叉熵", "回归", "分类", "概率分布"],
+    "golden_formula": "CE = -Σ y_i · log(ŷ_i)"
+  },
+  {
+    "id": "eval_008",
+    "topic": "卷积神经网络 CNN",
+    "prompt": "讲解 CNN 的核心组件：卷积层、池化层、感受野的概念，以及 CNN 如何提取图像特征。",
+    "expected_node_count": 7,
+    "expected_concepts": ["卷积核", "特征图", "感受野", "池化", "平移不变性", "层次特征"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_009",
+    "topic": "循环神经网络 RNN",
+    "prompt": "讲解 RNN 的基本结构和工作原理，包括隐状态、时间展开、以及梯度消失问题和 LSTM 的解决方案。",
+    "expected_node_count": 6,
+    "expected_concepts": ["隐状态", "时序依赖", "梯度消失", "LSTM", "遗忘门", "记忆单元"],
+    "golden_formula": "h_t = tanh(W_h · h_{t-1} + W_x · x_t)"
+  },
+  {
+    "id": "eval_010",
+    "topic": "Diffusion 扩散模型",
+    "prompt": "讲解 Diffusion Model 的基本原理：前向扩散（加噪）过程、反向去噪过程，以及模型如何学习去噪。",
+    "expected_node_count": 6,
+    "expected_concepts": ["前向扩散", "高斯噪声", "反向去噪", "噪声预测", "DDPM", "采样"],
+    "golden_formula": "x_t = √(ᾱ_t)·x_0 + √(1-ᾱ_t)·ε"
+  },
+  {
+    "id": "eval_011",
+    "topic": "Batch Normalization",
+    "prompt": "讲解 Batch Normalization 的原理：为什么需要归一化、如何计算均值方差、γ/β 可学习参数的作用。",
+    "expected_node_count": 5,
+    "expected_concepts": ["均值归一化", "Internal Covariate Shift", "可学习参数", "训练稳定性"],
+    "golden_formula": "x̂ = (x - μ) / √(σ² + ε)"
+  },
+  {
+    "id": "eval_012",
+    "topic": "Dropout 正则化",
+    "prompt": "讲解 Dropout 的工作原理：训练时随机丢弃神经元、推理时的缩放，以及为什么能减少过拟合。",
+    "expected_node_count": 5,
+    "expected_concepts": ["随机丢弃", "过拟合", "集成学习视角", "推理缩放", "正则化"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_013",
+    "topic": "强化学习基础",
+    "prompt": "讲解强化学习的核心概念：智能体、环境、状态、动作、奖励，以及 Q-Learning 的基本思路。",
+    "expected_node_count": 7,
+    "expected_concepts": ["智能体", "环境", "状态", "动作", "奖励", "策略", "Q值"],
+    "golden_formula": "Q(s,a) ← Q(s,a) + α[r + γ·max Q(s',a') - Q(s,a)]"
+  },
+  {
+    "id": "eval_014",
+    "topic": "RLHF（人类反馈强化学习）",
+    "prompt": "讲解 RLHF 的三个阶段：监督微调、奖励模型训练、PPO 策略优化，以及它如何让 LLM 对齐人类偏好。",
+    "expected_node_count": 6,
+    "expected_concepts": ["监督微调", "奖励模型", "PPO", "人类偏好", "KL 散度约束"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_015",
+    "topic": "向量数据库与 RAG",
+    "prompt": "讲解 RAG（检索增强生成）的工作流程：文档向量化、相似度检索、上下文拼接和 LLM 生成。",
+    "expected_node_count": 6,
+    "expected_concepts": ["向量化", "余弦相似度", "向量数据库", "检索", "上下文增强", "生成"],
+    "golden_formula": "cos(A,B) = A·B / (|A|·|B|)"
+  },
+  {
+    "id": "eval_016",
+    "topic": "大语言模型预训练",
+    "prompt": "讲解 LLM 预训练的基本原理：Next Token Prediction、海量语料、参数规模与涌现能力的关系。",
+    "expected_node_count": 5,
+    "expected_concepts": ["Next Token Prediction", "自回归", "涌现能力", "参数规模", "Scaling Law"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_017",
+    "topic": "GAN 生成对抗网络",
+    "prompt": "讲解 GAN 的博弈框架：生成器与判别器的对抗训练过程，以及纳什均衡的概念。",
+    "expected_node_count": 5,
+    "expected_concepts": ["生成器", "判别器", "对抗训练", "纳什均衡", "模式崩塌"],
+    "golden_formula": "min_G max_D V(D,G) = E[log D(x)] + E[log(1-D(G(z)))]"
+  },
+  {
+    "id": "eval_018",
+    "topic": "Layer Normalization",
+    "prompt": "讲解 Layer Normalization 与 Batch Normalization 的区别，以及为什么 Transformer 选择使用 LayerNorm。",
+    "expected_node_count": 5,
+    "expected_concepts": ["层归一化", "沿特征归一化", "序列任务适配", "与BN对比"],
+    "golden_formula": "LayerNorm(x) = γ·(x - μ) / σ + β"
+  },
+  {
+    "id": "eval_019",
+    "topic": "KV Cache",
+    "prompt": "讲解 LLM 推理中的 KV Cache 机制：为什么需要缓存、如何减少重复计算、对推理速度和显存的影响。",
+    "expected_node_count": 5,
+    "expected_concepts": ["自回归推理", "Key-Value 缓存", "重复计算消除", "显存与速度权衡"],
+    "golden_formula": null
+  },
+  {
+    "id": "eval_020",
+    "topic": "LoRA 低秩适配",
+    "prompt": "讲解 LoRA 微调方法的原理：为什么用低秩矩阵分解、参数量对比、以及 LoRA 如何实现高效微调。",
+    "expected_node_count": 5,
+    "expected_concepts": ["低秩矩阵", "参数效率", "矩阵分解", "冻结原始权重", "适配器"],
+    "golden_formula": "W' = W + ΔW = W + B·A (r << d)"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "b0a8f543-2904-4aa2-9b90-afa2ecb8845b": {
+    "status": "done",
+    "outputPath": "D:\\aiapp\\ExplainFlow\\outputs\\Backpropagation_b0a8f543.mp4",
+    "progress": 100
+  },
+  "f494bdd7-430a-4d77-a6ed-cf21e599cd73": {
+    "status": "processing",
+    "outputPath": "D:\\aiapp\\ExplainFlow\\outputs\\梯度下降_f494bdd7.mp4",
+    "progress": 0
+  }
+}
