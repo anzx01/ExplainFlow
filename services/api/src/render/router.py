@@ -2,6 +2,7 @@ import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
+from src.core.llm import LLMUnavailableError, check_llm_connection
 from .models import RenderJobRequest, RenderJobStatus, RenderJobSummary, RenderJobPatch
 
 router = APIRouter(prefix="/render", tags=["render"])
@@ -12,19 +13,31 @@ RENDER_SERVER = "http://localhost:3001"
 @router.post("/job", response_model=RenderJobStatus)
 async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
     try:
+        await check_llm_connection()
         async with httpx.AsyncClient(timeout=10) as client:
             resp = await client.post(
                 f"{RENDER_SERVER}/render",
-                json={"storyboard": req.storyboard.model_dump()},
+                json={
+                    "storyboard": req.storyboard.model_dump(),
+                    "voice": req.voice,
+                    "resolution": req.resolution,
+                },
             )
             resp.raise_for_status()
             data = resp.json()
-            return RenderJobStatus(job_id=data["jobId"], status="processing")
+            return RenderJobStatus(
+                job_id=data["jobId"],
+                status="processing",
+                phase="queued",
+                createdAt=data.get("createdAt"),
+            )
     except httpx.ConnectError:
         raise HTTPException(
             status_code=503,
             detail="Render server not running. Start it with: bash scripts/dev-render.sh",
         )
+    except LLMUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -42,8 +55,11 @@ async def get_render_job(job_id: str) -> RenderJobStatus:
             return RenderJobStatus(
                 job_id=job_id,
                 status=data["status"],
+                progress=data.get("progress", 0),
+                phase=data.get("phase"),
                 video_url=video_url,
                 error=data.get("error"),
+                createdAt=data.get("createdAt"),
             )
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Render server not running")

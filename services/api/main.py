@@ -1,8 +1,9 @@
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.core.config import settings
+from src.core.llm import LLMUnavailableError, check_llm_connection
 from src.core.logging import setup_logging
 from src.explain.router import router as explain_router
 from src.imagegen.router import router as imagegen_router
@@ -42,3 +43,11 @@ app.include_router(render_router)
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": "0.1.0"}
+
+
+@app.get("/health/llm")
+async def llm_health(force: bool = False) -> dict:
+    try:
+        return await check_llm_connection(force=force)
+    except LLMUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc

@@ -8,6 +8,10 @@ class Settings(BaseSettings):
     openai_base_url: str = Field(default="https://api.deepseek.com/v1", env="OPENAI_BASE_URL")
     llm_model: str = Field(default="deepseek-chat", env="LLM_MODEL")
     coder_model: str = Field(default="deepseek-coder", env="CODER_MODEL")
+    remotion_codegen_mode: str = Field(default="compiler", env="REMOTION_CODEGEN_MODE")
+    remotion_llm_repair: bool = Field(default=False, env="REMOTION_LLM_REPAIR")
+    llm_preflight_timeout_s: float = Field(default=8.0, env="LLM_PREFLIGHT_TIMEOUT_S")
+    llm_preflight_ttl_s: float = Field(default=60.0, env="LLM_PREFLIGHT_TTL_S")
 
     # Image generation (Volcengine Ark / Seedream)
     ark_api_key: str = Field(default="", env="ARK_API_KEY")

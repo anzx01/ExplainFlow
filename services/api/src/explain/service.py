@@ -1,6 +1,6 @@
 import logging
 
-from src.core.llm import chat_json
+from src.core.llm import chat_json, check_llm_connection
 from .models import (
     ConceptEdge,
     ConceptNode,
@@ -51,6 +51,8 @@ SYSTEM_PROMPT = """你是一位专业的 AI/ML 教学规划专家。
 
 
 async def generate_explain_graph(req: GenerateGraphRequest) -> ExplainGraph:
+    await check_llm_connection()
+
     user_content = f"主题：{req.prompt}"
     if req.markdown:
         user_content += f"\n\n参考材料：\n{req.markdown}"

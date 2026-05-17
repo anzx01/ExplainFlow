@@ -13,14 +13,17 @@ class RenderJobStatus(BaseModel):
     job_id: str
     status: str  # pending | processing | done | failed
     progress: float = 0.0
+    phase: str | None = None
     video_url: str | None = None
     error: str | None = None
+    createdAt: str | None = None
 
 
 class RenderJobSummary(BaseModel):
     id: str
     status: str
     progress: float = 0.0
+    phase: str | None = None
     topic: str | None = None
     createdAt: str | None = None
     error: str | None = None

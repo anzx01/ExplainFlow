@@ -11,21 +11,27 @@ ExplainFlow E2E 测试
 
 import asyncio
 import json
+import os
+import re
 import sys
 import time
 from pathlib import Path
 from dataclasses import dataclass, field
 
+import httpx
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "api"))
 
 from src.explain.models import GenerateGraphRequest
 from src.explain.service import generate_explain_graph
-from src.planner.models import GenerateStoryboardRequest, Storyboard
-from src.planner.service import generate_storyboard
+from src.planner.models import GenerateRemotionCodeRequest, GenerateStoryboardRequest, Storyboard
+from src.planner.service import generate_remotion_code, generate_storyboard
 from src.imagegen.service import SceneImageRequest, generate_all_scene_images
 
 
 RESULTS_FILE = Path(__file__).parent / "e2e_results.json"
+API_BASE_URL = os.getenv("E2E_API_BASE_URL", "http://localhost:8000")
+RENDER_TIMEOUT_S = int(os.getenv("E2E_RENDER_TIMEOUT_S", "600"))
 
 # 用于 e2e 的精简题目集（3 题，覆盖不同类型）
 E2E_TOPICS = [
@@ -231,7 +237,243 @@ async def stage_imagegen(storyboard: Storyboard, topic: str) -> StageResult:
 
 # ── Runner ───────────────────────────────────────────────────────────────────
 
-async def run_topic(spec: dict, skip_imagegen: bool = False) -> TopicResult:
+def make_render_smoke_storyboard(storyboard: Storyboard, duration_s: int = 18) -> Storyboard:
+    scene_count = max(1, min(2, len(storyboard.scenes)))
+    scene_duration = duration_s / scene_count
+    scenes = []
+    for index, scene in enumerate(storyboard.scenes[:scene_count]):
+        narration = scene.narration.strip()
+        if len(narration) > 90:
+            narration = narration[:90].rstrip("，。,. ") + "。"
+        scenes.append(
+            scene.model_copy(
+                update={
+                    "order": index,
+                    "duration_estimate": scene_duration,
+                    "narration": narration,
+                }
+            )
+        )
+    return storyboard.model_copy(
+        update={
+            "total_duration_estimate": duration_s,
+            "scenes": scenes,
+        }
+    )
+
+
+async def stage_remotion_code(storyboard: Storyboard) -> StageResult:
+    t0 = time.perf_counter()
+    try:
+        req = GenerateRemotionCodeRequest(
+            storyboard=storyboard,
+            fps=30,
+            width=1280,
+            height=720,
+            style_prompt=(
+                "E2E smoke: hand-drawn YouTube whiteboard animation, black ink outlines, "
+                "loose watercolor fills, live handwriting, and live SVG stroke drawing."
+            ),
+        )
+        code = await generate_remotion_code(req)
+        dur = time.perf_counter() - t0
+        tsx = code.tsx
+        checks = {
+            "tsx_length": len(tsx),
+            "duration_in_frames": code.duration_in_frames,
+            "has_generated_video": "GeneratedVideo" in tsx,
+            "uses_frame_api": "useCurrentFrame" in tsx,
+            "uses_sequence": "Sequence" in tsx,
+            "uses_dash_draw": "strokeDasharray" in tsx and "strokeDashoffset" in tsx,
+            "reveals_text": (
+                "glyphPaths" in tsx
+                or re.search(r"\bspec\.text\.(?:slice|substring)\s*\(", tsx) is not None
+                or "clipPath" in tsx
+            ),
+            "uses_glyph_outline_text": (
+                "glyphPaths" in tsx
+                and re.search(r"\b(DrawGlyphPath|GlyphText)\b", tsx) is not None
+                and "fontOutline" in tsx
+            ),
+            "no_handtext_slice_renderer": "HandText" not in tsx and "spec.text.slice" not in tsx,
+            "uses_hand_asset": "hand-real-pen.png" in tsx,
+            "uses_hand_img": "staticFile(" in tsx and "Img" in tsx,
+            "has_hand_pen": "HandPen" in tsx,
+            "has_pen_tip_coordinates": any(token in tsx for token in ["tipX", "tipY", "penX", "penY"]),
+            "has_hand_size_constants": "HAND_WIDTH" in tsx and "PEN_TIP_X" in tsx and "PEN_TIP_Y" in tsx,
+            "has_draw_ops": "drawOps" in tsx,
+            "has_draw_op_points": len(
+                re.findall(
+                    r"\{\s*['\"]?x['\"]?\s*:\s*-?\d+(?:\.\d+)?\s*,\s*['\"]?y['\"]?\s*:\s*-?\d+(?:\.\d+)?\s*\}",
+                    tsx,
+                )
+            )
+            >= 16,
+            "has_text_draw_ops": re.search(r"\b['\"]?kind['\"]?\s*:\s*['\"]text['\"]", tsx) is not None,
+            "has_shape_draw_ops": re.search(r"\b['\"]?kind['\"]?\s*:\s*['\"](?:path|stroke|shape|arrow|box)['\"]", tsx) is not None,
+            "samples_polyline": "pointOnPolyline" in tsx,
+            "uses_active_draw_op": "getActiveDrawOp" in tsx,
+            "hand_from_draw_ops": re.search(r"\bgetPenPosition\s*\(\s*frame\s*\)", tsx) is not None,
+            "no_coarse_tip_interpolate": re.search(
+                r"\bconst\s+(?:tipX|tipY|penX|penY)\s*=\s*interpolate\s*\(\s*frame\s*,\s*\[[^\]]+\]\s*,\s*\[[^\]]+\]",
+                tsx,
+            )
+            is None,
+            "has_hand_visible_flag": "visible" in tsx,
+            "uses_handwriting_font": re.search(
+                r"\b(STXingkai|Xingkai|KaiTi|STKaiti|Kaiti|楷体|华文行楷|华文楷体)\b",
+                tsx,
+                flags=re.IGNORECASE,
+            )
+            is not None,
+            "no_bold_sans_text": re.search(r"\bfontWeight\s*:\s*['\"]?(?:700|800|900|bold)\b", tsx, flags=re.IGNORECASE) is None,
+            "has_anime_doodle": re.search(
+                r"\b(AnimeDoodle|CartoonDiagram|CartoonMascot|DoodleCharacter|anime|cartoon|doodle)\b",
+                tsx,
+                flags=re.IGNORECASE,
+            )
+            is not None,
+            "uses_per_stroke_dash_length": "dashLength" in tsx and "const length = spec.dashLength" in tsx,
+            "no_static_doodle_face": "faceOpacity" not in tsx and "cx=\"78%\"" not in tsx,
+            "has_multiple_doodle_strokes": len(re.findall(r"['\"]?role['\"]?\s*:\s*['\"]doodle['\"]", tsx)) >= 5,
+            "has_content_aware_diagram_kind": bool(
+                set(re.findall(r"['\"]diagramKind['\"]\s*:\s*['\"]([^'\"]+)['\"]", tsx))
+                & {
+                    "process_flow",
+                    "comparison_transform",
+                    "formula_derivation",
+                    "optimization_curve",
+                    "attention_network",
+                    "matrix_transform",
+                    "feedback_loop",
+                }
+            ),
+            "has_contextual_stroke_roles": re.search(
+                r"['\"]?role['\"]?\s*:\s*['\"](?:axis|loss_curve|node|matrix|matrix_grid|loop|formula|change|arrow|arrowhead)['\"]",
+                tsx,
+            )
+            is not None,
+            "has_arrowheads": len(re.findall(r"['\"]?role['\"]?\s*:\s*['\"]arrowhead['\"]", tsx)) >= 2,
+            "rejects_fixed_sun_box_curve": all(
+                token not in tsx
+                for token in [
+                    "sun_cx",
+                    "sun_rx",
+                    "small sun",
+                    "\"role\":\"diagram\",\"d\":\"M 665.6 403.2",
+                    "\"color\":\"#E15D4F\"",
+                ]
+            ),
+            "hand_outside_svg": re.search(
+                r"<svg(?:(?!</svg>).)*<HandPen(?:(?!</svg>).)*</svg>",
+                tsx,
+                flags=re.IGNORECASE | re.DOTALL,
+            )
+            is None,
+            "hand_img_wrapped": re.search(r"HandPen[\s\S]*?<div[\s\S]*?<Img", tsx, flags=re.IGNORECASE) is not None,
+            "no_local_imports": "from \"./" not in tsx and "from './" not in tsx,
+        }
+        passed = all(
+            [
+                checks["tsx_length"] > 500,
+                checks["duration_in_frames"] >= 300,
+                checks["has_generated_video"],
+                checks["uses_frame_api"],
+                checks["uses_sequence"],
+                checks["uses_dash_draw"],
+                checks["reveals_text"],
+                checks["uses_glyph_outline_text"],
+                checks["no_handtext_slice_renderer"],
+                checks["uses_hand_asset"],
+                checks["uses_hand_img"],
+                checks["has_hand_pen"],
+                checks["has_pen_tip_coordinates"],
+                checks["has_hand_size_constants"],
+                checks["has_draw_ops"],
+                checks["has_draw_op_points"],
+                checks["has_text_draw_ops"],
+                checks["has_shape_draw_ops"],
+                checks["samples_polyline"],
+                checks["uses_active_draw_op"],
+                checks["hand_from_draw_ops"],
+                checks["no_coarse_tip_interpolate"],
+                checks["has_hand_visible_flag"],
+                checks["uses_handwriting_font"],
+                checks["no_bold_sans_text"],
+                checks["has_anime_doodle"],
+                checks["uses_per_stroke_dash_length"],
+                checks["no_static_doodle_face"],
+                checks["has_multiple_doodle_strokes"],
+                checks["has_content_aware_diagram_kind"],
+                checks["has_contextual_stroke_roles"],
+                checks["has_arrowheads"],
+                checks["rejects_fixed_sun_box_curve"],
+                checks["hand_outside_svg"],
+                checks["hand_img_wrapped"],
+                checks["no_local_imports"],
+            ]
+        )
+        return StageResult("remotion_code", passed, dur, checks)
+    except Exception as e:
+        return StageResult("remotion_code", False, time.perf_counter() - t0, error=str(e))
+
+
+async def stage_render_smoke(storyboard: Storyboard) -> StageResult:
+    t0 = time.perf_counter()
+    try:
+        payload = {
+            "storyboard": storyboard.model_dump(mode="json"),
+            "voice": "xiaoxiao",
+            "resolution": "1080p",
+        }
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(f"{API_BASE_URL}/render/job", json=payload)
+            response.raise_for_status()
+            job_id = response.json()["job_id"]
+
+        deadline = time.perf_counter() + RENDER_TIMEOUT_S
+        last_status = {}
+        async with httpx.AsyncClient(timeout=30) as client:
+            while time.perf_counter() < deadline:
+                status_response = await client.get(f"{API_BASE_URL}/render/job/{job_id}")
+                status_response.raise_for_status()
+                last_status = status_response.json()
+                if last_status.get("status") in {"done", "failed"}:
+                    break
+                await asyncio.sleep(5)
+
+            if last_status.get("status") != "done":
+                return StageResult(
+                    "render_smoke",
+                    False,
+                    time.perf_counter() - t0,
+                    {"job_id": job_id, "last_status": last_status},
+                    error=last_status.get("error") or "render timed out",
+                )
+
+            download = await client.get(f"{API_BASE_URL}/render/download/{job_id}")
+            download.raise_for_status()
+            content = download.content
+
+        details = {
+            "job_id": job_id,
+            "bytes": len(content),
+            "content_type": download.headers.get("content-type"),
+            "phase": last_status.get("phase"),
+            "progress": last_status.get("progress"),
+            "has_mp4_ftyp": b"ftyp" in content[:32],
+        }
+        passed = details["bytes"] > 100_000 and details["has_mp4_ftyp"]
+        return StageResult("render_smoke", passed, time.perf_counter() - t0, details)
+    except Exception as e:
+        return StageResult("render_smoke", False, time.perf_counter() - t0, error=str(e))
+
+
+async def run_topic(
+    spec: dict,
+    skip_imagegen: bool = False,
+    render_smoke: bool = False,
+) -> TopicResult:
     result = TopicResult(id=spec["id"], topic=spec["topic"])
 
     # Stage 1
@@ -247,11 +489,23 @@ async def run_topic(spec: dict, skip_imagegen: bool = False) -> TopicResult:
         return result
 
     # Stage 3
+    compact_storyboard = make_render_smoke_storyboard(storyboard)
+    s3 = await stage_remotion_code(compact_storyboard)
+    result.stages.append(s3)
+    if not s3.passed:
+        return result
+
+    # Stage 4
+    if render_smoke:
+        s4 = await stage_render_smoke(compact_storyboard)
+        result.stages.append(s4)
+
+    # Legacy optional stage
     if skip_imagegen:
         result.stages.append(StageResult("imagegen", True, 0.0, {"skipped": True}))
     else:
-        s3 = await stage_imagegen(storyboard, spec["topic"])
-        result.stages.append(s3)
+        s5 = await stage_imagegen(storyboard, spec["topic"])
+        result.stages.append(s5)
 
     return result
 
@@ -285,11 +539,33 @@ def print_result(r: TopicResult) -> None:
                 f"rate={rate:.0%}",
                 end="",
             )
+        elif s.name == "remotion_code":
+            print(
+                f"  tsx={s.details.get('tsx_length')} chars  "
+                f"frames={s.details.get('duration_in_frames')}  "
+                f"dash={s.details.get('uses_dash_draw')}  "
+                f"hand={s.details.get('has_hand_pen')}  "
+                f"stroke_ops={s.details.get('has_draw_ops')}  "
+                f"pen_path={s.details.get('hand_from_draw_ops')}  "
+                f"anime={s.details.get('has_anime_doodle')}  "
+                f"doodle_strokes={s.details.get('has_multiple_doodle_strokes')}  "
+                f"content_diagram={s.details.get('has_content_aware_diagram_kind')}  "
+                f"arrowheads={s.details.get('has_arrowheads')}",
+                end="",
+            )
+        elif s.name == "render_smoke":
+            print(
+                f"  job={s.details.get('job_id')}  "
+                f"bytes={s.details.get('bytes')}  "
+                f"ftyp={s.details.get('has_mp4_ftyp')}",
+                end="",
+            )
         print()
 
 
 async def main() -> None:
     skip_imagegen = "--skip-imagegen" in sys.argv
+    render_smoke = "--render-smoke" in sys.argv or "--render" in sys.argv
 
     topics = E2E_TOPICS
     if "--topic" in sys.argv:
@@ -300,14 +576,18 @@ async def main() -> None:
             print(f"[e2e] Topic not found: {name}")
             sys.exit(1)
 
-    mode = "(skip imagegen)" if skip_imagegen else "(with Seedream API)"
+    mode_parts = [
+        "skip imagegen" if skip_imagegen else "with Seedream API",
+        "render smoke" if render_smoke else "codegen only",
+    ]
+    mode = "(" + ", ".join(mode_parts) + ")"
     print(f"[e2e] Starting E2E test: {len(topics)} topics {mode}")
     print("=" * 60)
 
     all_results = []
     for i, spec in enumerate(topics, 1):
         print(f"\n[{i}/{len(topics)}] {spec['topic']} ...", flush=True)
-        r = await run_topic(spec, skip_imagegen=skip_imagegen)
+        r = await run_topic(spec, skip_imagegen=skip_imagegen, render_smoke=render_smoke)
         all_results.append(r)
         print_result(r)
 
@@ -325,6 +605,7 @@ async def main() -> None:
         "failed": failed,
         "total": len(all_results),
         "skip_imagegen": skip_imagegen,
+        "render_smoke": render_smoke,
         "results": [
             {
                 "id": r.id,

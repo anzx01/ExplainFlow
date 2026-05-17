@@ -26,6 +26,15 @@ export interface ExplainGraph {
 
 // ── Storyboard ─────────────────────────────────────────────────
 export type AnimationType =
+  | "write_title"
+  | "write_text"
+  | "write_formula"
+  | "draw_arrow"
+  | "draw_box"
+  | "concept_bubble"
+  | "bullet_list"
+  | "step_reveal"
+  | "highlight_region"
   | "whiteboard_draw"
   | "formula_reveal"
   | "concept_node"
@@ -42,6 +51,9 @@ export interface AnimationInstruction {
   latex?: string | null;
   from_node?: string | null;
   to_node?: string | null;
+  x?: number | null;
+  y?: number | null;
+  items?: string[] | null;
 }
 
 export interface Scene {
@@ -52,6 +64,10 @@ export interface Scene {
   duration_estimate: number;
   animations: AnimationInstruction[];
   node_ids: string[];
+  image_description?: string | null;
+  image_url?: string | null;
+  imageUrl?: string | null;
+  audioUrl?: string | null;
 }
 
 export interface Storyboard {
@@ -65,7 +81,18 @@ export interface RenderJobSummary {
   id: string;
   status: "processing" | "done" | "failed";
   progress: number;
+  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
   topic: string | null;
   createdAt: string | null;
   error: string | null;
+}
+
+export interface RenderJobStatus {
+  job_id: string;
+  status: "processing" | "done" | "failed";
+  progress: number;
+  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
+  video_url?: string | null;
+  error?: string | null;
+  createdAt?: string | null;
 }

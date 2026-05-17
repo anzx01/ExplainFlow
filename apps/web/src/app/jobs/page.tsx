@@ -4,9 +4,11 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
 import { listJobs, deleteJob, updateJobTopic } from "@/lib/api";
 import { RENDER_URL } from "@/lib/constants";
+import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 import type { RenderJobSummary } from "@/lib/types";
 
-function StatusBadge({ status, progress }: { status: RenderJobSummary["status"]; progress: number }) {
+function StatusBadge({ job, now }: { job: RenderJobSummary; now: number }) {
+  const { status, progress } = job;
   if (status === "done") {
     return (
       <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-green-500/15 text-green-400 font-mono">
@@ -21,10 +23,18 @@ function StatusBadge({ status, progress }: { status: RenderJobSummary["status"];
       </span>
     );
   }
+  const remaining = estimateRemainingSeconds({
+    phase: job.phase ?? "queued",
+    progress,
+    elapsed: elapsedSeconds(job.createdAt, now),
+  });
   return (
-    <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs bg-purple-500/15 text-purple-400 font-mono">
-      <span className="w-2 h-2 border border-purple-400 border-t-transparent rounded-full animate-spin inline-block" />
-      渲染中 {progress}%
+    <span className="inline-flex flex-col gap-0.5 px-2 py-1 rounded-md text-xs bg-purple-500/15 text-purple-400 font-mono">
+      <span className="inline-flex items-center gap-1.5">
+        <span className="w-2 h-2 border border-purple-400 border-t-transparent rounded-full animate-spin inline-block" />
+        渲染中 {progress}%
+      </span>
+      <span className="text-[10px] text-[--fg-muted]">{etaLabel(remaining)}</span>
     </span>
   );
 }
@@ -126,6 +136,7 @@ export default function JobsPage() {
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "done" | "processing" | "failed">("all");
   const [previewId, setPreviewId] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
   const hasProcessingRef = useRef(false);
 
   const fetchJobs = useCallback(async () => {
@@ -148,6 +159,11 @@ export default function JobsPage() {
     }, 5000);
     return () => clearInterval(id);
   }, [fetchJobs]);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const handleDeleted = (id: string) => setJobs((prev) => prev.filter((j) => j.id !== id));
   const handleTopicSaved = (id: string, topic: string) =>
@@ -263,7 +279,7 @@ export default function JobsPage() {
                         <TopicCell job={job} onSaved={handleTopicSaved} />
                       </td>
                       <td className="px-4 py-3">
-                        <StatusBadge status={job.status} progress={job.progress} />
+                        <StatusBadge job={job} now={now} />
                         {job.error && (
                           <p className="text-xs text-red-400 mt-0.5 max-w-48 truncate" title={job.error}>
                             {job.error}

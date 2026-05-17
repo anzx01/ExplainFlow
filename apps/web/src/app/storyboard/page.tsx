@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { StoryboardView } from "@/components/storyboard/StoryboardView";
-import type { Storyboard } from "@/lib/types";
+import type { RenderJobStatus, Storyboard } from "@/lib/types";
+import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 
 import { RENDER_URL } from "@/lib/constants";
 
@@ -11,12 +12,16 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type RenderState = "idle" | "submitting" | "polling" | "done" | "failed";
 
-type RenderPhase = "tts" | "imagegen" | "rendering" | null;
+type RenderPhase = "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
 
 const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
+  queued: "排队中",
   tts: "合成语音",
-  imagegen: "生成插图",
+  imagegen: "生成线稿",
+  codegen: "生成动画代码",
+  bundling: "编译 Remotion",
   rendering: "渲染视频",
+  done: "已完成",
 };
 
 function RenderButton({
@@ -31,14 +36,16 @@ function RenderButton({
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<RenderPhase>(null);
+  const [startedAt, setStartedAt] = useState<string | number | null>(null);
 
   const poll = useCallback(
     async (id: string) => {
       const res = await fetch(`${API}/render/job/${id}`);
-      const data = await res.json();
+      const data = (await res.json()) as RenderJobStatus;
       if (data.status === "done") {
         setState("done");
         setProgress(100);
+        if (data.createdAt) setStartedAt(data.createdAt);
         // Direct to render server (3001) for Range request support + no FastAPI proxy overhead
         onVideoReady(`${RENDER_URL}/download/${id}`);
       } else if (data.status === "failed") {
@@ -47,6 +54,7 @@ function RenderButton({
       } else {
         setProgress(data.progress ?? 0);
         setPhase(data.phase ?? null);
+        if (data.createdAt) setStartedAt(data.createdAt);
         setTimeout(() => poll(id), 2000);
       }
     },
@@ -56,6 +64,9 @@ function RenderButton({
   const handleRender = async () => {
     setState("submitting");
     setError(null);
+    setProgress(0);
+    setPhase(null);
+    setStartedAt(Date.now());
     try {
       const res = await fetch(`${API}/render/job`, {
         method: "POST",
@@ -66,8 +77,9 @@ function RenderButton({
         const d = await res.json();
         throw new Error(d.detail ?? "提交失败");
       }
-      const { job_id } = await res.json();
+      const { job_id, createdAt } = (await res.json()) as { job_id: string; createdAt?: string | null };
       setJobId(job_id);
+      if (createdAt) setStartedAt(createdAt);
       setState("polling");
       poll(job_id);
     } catch (e) {
@@ -96,7 +108,18 @@ function RenderButton({
 
   if (state === "submitting" || state === "polling") {
     const phaseLabel = phase ? PHASE_LABEL[phase] : (state === "submitting" ? "提交中" : "准备中");
-    const showProgress = state === "polling" && phase === "rendering" && progress > 0;
+    const showProgress =
+      state === "polling" &&
+      (phase === "bundling" || phase === "rendering") &&
+      progress > 0;
+    const elapsed = elapsedSeconds(startedAt);
+    const remaining = estimateRemainingSeconds({
+      phase: phase ?? "queued",
+      progress,
+      elapsed,
+      storyboard,
+    });
+    const etaText = etaLabel(remaining);
     return (
       <div className="flex items-center gap-3">
         <div className="flex flex-col items-end gap-1">
@@ -115,6 +138,7 @@ function RenderButton({
               />
             </div>
           )}
+          <span className="text-[11px] text-[--fg-muted] font-mono">{etaText}</span>
         </div>
       </div>
     );

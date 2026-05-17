@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
+from src.core.llm import LLMUnavailableError
 from .models import (
     GenerateRemotionCodeRequest,
     GenerateRemotionCodeResponse,
@@ -16,6 +17,8 @@ async def create_storyboard(req: GenerateStoryboardRequest) -> GenerateStoryboar
     try:
         storyboard = await generate_storyboard(req)
         return GenerateStoryboardResponse(storyboard=storyboard)
+    except LLMUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 
@@ -26,5 +29,7 @@ async def create_remotion_code(
 ) -> GenerateRemotionCodeResponse:
     try:
         return await generate_remotion_code(req)
+    except LLMUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
