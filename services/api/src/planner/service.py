@@ -243,6 +243,9 @@ def _remotion_codegen_cache_key(req: GenerateRemotionCodeRequest, mode: str) -> 
             "fps": req.fps,
             "width": req.width,
             "height": req.height,
+            "subtitles_enabled": req.subtitles_enabled,
+            "background_music_url": req.background_music_url,
+            "background_music_volume": round(req.background_music_volume, 3),
             "style_prompt": req.style_prompt,
             "storyboard": req.storyboard.model_dump(mode="json"),
         },
@@ -274,6 +277,8 @@ def _compile_fast_remotion_response(
         req.width,
         req.height,
         req.subtitles_enabled,
+        req.background_music_url,
+        req.background_music_volume,
     )
     return GenerateRemotionCodeResponse(
         tsx=_validate_generated_tsx(fallback_tsx),
@@ -2339,6 +2344,8 @@ def _build_fallback_remotion_tsx(
     width: int,
     height: int,
     subtitles_enabled: bool = False,
+    background_music_url: str | None = None,
+    background_music_volume: float = 0.12,
 ) -> tuple[str, int]:
     scene_specs = [
         _build_fallback_scene_spec(scene, index, fps, width, height)
@@ -2360,6 +2367,8 @@ const PEN_TIP_X = 15;
 const PEN_TIP_Y = 78;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
+const BACKGROUND_MUSIC_URL: string | null = __BACKGROUND_MUSIC_URL__;
+const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
 
 type Point = { x: number; y: number };
@@ -2707,6 +2716,7 @@ export function GeneratedVideo() {
   let from = 0;
   return (
     <>
+      {BACKGROUND_MUSIC_URL ? <Audio src={BACKGROUND_MUSIC_URL} volume={BACKGROUND_MUSIC_VOLUME} loop /> : null}
       {scenes.map((scene, index) => {
         const start = from;
         from += scene.duration;
@@ -2724,6 +2734,8 @@ export function GeneratedVideo() {
         template.replace("__SCENES_JSON__", scenes_json)
         .replace("__VIDEO_WIDTH__", str(width))
         .replace("__VIDEO_HEIGHT__", str(height))
+        .replace("__BACKGROUND_MUSIC_URL__", json.dumps(background_music_url))
+        .replace("__BACKGROUND_MUSIC_VOLUME__", str(max(0.0, min(0.5, background_music_volume))))
         .strip(),
         duration,
     )
@@ -2745,6 +2757,7 @@ Target visual reference:
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
 - Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
 - If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
+- If background_music_url is provided, add one global low-volume looping <Audio> track using that exact URL and background_music_volume. It should sit behind all scene narration and never replace scene voiceover audio.
 
 Hard requirements:
 - Export exactly one named component, either `export const GeneratedVideo = ...` or `export function GeneratedVideo() ...`.
@@ -2783,6 +2796,7 @@ Hard requirements:
 - Do not use fetch, eval, Function, require, filesystem APIs, browser globals, or dangerouslySetInnerHTML.
 - Hardcode the provided storyboard content and audio URLs into the TSX.
 - Use <Audio src="..."> from remotion for scene voiceover when audioUrl exists.
+- Use one additional global <Audio src={background_music_url} volume={background_music_volume} loop /> only when background_music_url is not null.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
 - Use a clean Chinese whiteboard teaching style: plain white background for every scene, black ink outlines, purposeful colored teaching strokes, spacious layout, progressive reveal.
@@ -2816,6 +2830,7 @@ async def generate_remotion_code(
         "using rasterReveal/referenceImageAsset masks when the storyboard provides an original reference image to reveal, "
         "using staticFile('hand-real-pen.png'), <Img>, and getPenPosition(frame) coordinates. "
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
+        "If background_music_url is provided, add it as one low-volume looping background Audio track behind narration. "
         "Use Chinese handwritten fonts and anime/cartoon whiteboard doodles. "
         "No stock images, no templates, no decorative component frames."
     )
@@ -2846,6 +2861,8 @@ async def generate_remotion_code(
             "height": req.height,
             "target_duration_in_frames": target_frames,
             "subtitles_enabled": req.subtitles_enabled,
+            "background_music_url": req.background_music_url,
+            "background_music_volume": req.background_music_volume,
             "style_prompt": style_prompt,
             "storyboard": storyboard_data,
         },
@@ -2905,6 +2922,7 @@ async def generate_remotion_code(
                     "render Chinese text through glyphPaths with GlyphText/DrawGlyphPath so the renderer can "
                     "preprocess font outline paths using opentype.js, "
                     "render scene.narration as bottom HTML subtitles only when subtitles_enabled is true, "
+                    "add one global low-volume looping background Audio track only when background_music_url is provided, "
                     "use STXingkai/华文行楷/KaiTi/STKaiti for Chinese handwriting, never bold sans-serif, "
                     "include limited teaching accent colors and anime/cartoon whiteboard doodles, with a plain white background, "
                     f"render a moving HandPen with <Img src={{staticFile('{HAND_ASSET}')}} />, "

@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { StoryboardView } from "@/components/storyboard/StoryboardView";
-import type { RenderJobStatus, Storyboard } from "@/lib/types";
+import type { BackgroundMusicTrack, RenderJobStatus, Storyboard } from "@/lib/types";
 import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 
 import { RENDER_URL } from "@/lib/constants";
@@ -27,10 +27,16 @@ const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
 function RenderButton({
   storyboard,
   subtitlesEnabled,
+  backgroundMusicEnabled,
+  backgroundMusicId,
+  backgroundMusicVolume,
   onVideoReady,
 }: {
   storyboard: Storyboard;
   subtitlesEnabled: boolean;
+  backgroundMusicEnabled: boolean;
+  backgroundMusicId: string | null;
+  backgroundMusicVolume: number;
   onVideoReady: (url: string) => void;
 }) {
   const [state, setState] = useState<RenderState>("idle");
@@ -78,6 +84,9 @@ function RenderButton({
           voice: "xiaoxiao",
           resolution: "1080p",
           subtitles_enabled: subtitlesEnabled,
+          background_music_enabled: backgroundMusicEnabled,
+          background_music_id: backgroundMusicId,
+          background_music_volume: backgroundMusicVolume,
         }),
       });
       if (!res.ok) {
@@ -239,6 +248,11 @@ export default function StoryboardPage() {
   const [storyboard, setStoryboard] = useState<Storyboard>(DEMO_STORYBOARD);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  const [backgroundMusicEnabled, setBackgroundMusicEnabled] = useState(false);
+  const [musicTracks, setMusicTracks] = useState<BackgroundMusicTrack[]>([]);
+  const [selectedMusicId, setSelectedMusicId] = useState("");
+  const [musicError, setMusicError] = useState<string | null>(null);
+  const backgroundMusicVolume = 0.12;
 
   useEffect(() => {
     const saved = sessionStorage.getItem("explainflow_storyboard");
@@ -251,6 +265,30 @@ export default function StoryboardPage() {
         // ignore parse errors, keep demo
       }
     }
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    fetch(`${API}/render/music`)
+      .then(async (res) => {
+        if (!res.ok) throw new Error("music unavailable");
+        return (await res.json()) as { tracks?: BackgroundMusicTrack[] };
+      })
+      .then((data) => {
+        if (!active) return;
+        const tracks = data.tracks ?? [];
+        setMusicTracks(tracks);
+        setSelectedMusicId((current) => current || tracks[0]?.id || "");
+        setMusicError(null);
+      })
+      .catch(() => {
+        if (!active) return;
+        setMusicTracks([]);
+        setMusicError("音乐库不可用");
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   return (
@@ -305,9 +343,57 @@ export default function StoryboardPage() {
             </span>
             <span className={subtitlesEnabled ? "text-purple-300" : ""}>字幕</span>
           </label>
+          <label className="h-8 px-2.5 rounded-md border border-[--border-default] text-xs text-[--fg-muted] inline-flex items-center gap-2 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={backgroundMusicEnabled}
+              onChange={(event) => setBackgroundMusicEnabled(event.target.checked)}
+              disabled={musicTracks.length === 0}
+              className="sr-only"
+            />
+            <span
+              className={`relative h-4 w-7 rounded-full border transition-colors ${
+                backgroundMusicEnabled && musicTracks.length > 0
+                  ? "bg-purple-500/30 border-purple-500"
+                  : "bg-[--bg-elevated] border-[--border-default]"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-2.5 w-2.5 rounded-full transition-transform ${
+                  backgroundMusicEnabled && musicTracks.length > 0
+                    ? "translate-x-3.5 bg-purple-300"
+                    : "translate-x-0.5 bg-[--fg-subtle]"
+                }`}
+              />
+            </span>
+            <span className={backgroundMusicEnabled ? "text-purple-300" : ""}>音乐</span>
+          </label>
+          {backgroundMusicEnabled && (
+            <select
+              value={selectedMusicId}
+              onChange={(event) => setSelectedMusicId(event.target.value)}
+              disabled={musicTracks.length === 0}
+              className="h-8 max-w-44 rounded-md border border-[--border-default] bg-[--bg-elevated] px-2 text-xs text-[--fg-muted] outline-none hover:border-[--border-subtle] focus:border-purple-500"
+              title={musicTracks.find((track) => track.id === selectedMusicId)?.name ?? "背景音乐"}
+            >
+              {musicTracks.map((track) => (
+                <option key={track.id} value={track.id}>
+                  {track.name}
+                </option>
+              ))}
+            </select>
+          )}
+          {musicError && (
+            <span className="max-w-24 truncate text-xs text-red-400" title={musicError}>
+              {musicError}
+            </span>
+          )}
           <RenderButton
             storyboard={storyboard}
             subtitlesEnabled={subtitlesEnabled}
+            backgroundMusicEnabled={backgroundMusicEnabled && musicTracks.length > 0}
+            backgroundMusicId={selectedMusicId || null}
+            backgroundMusicVolume={backgroundMusicVolume}
             onVideoReady={setVideoUrl}
           />
         </div>

@@ -134,3 +134,10 @@ export interface RenderJobStatus {
   error?: string | null;
   createdAt?: string | null;
 }
+
+export interface BackgroundMusicTrack {
+  id: string;
+  name: string;
+  url: string;
+  size: number;
+}

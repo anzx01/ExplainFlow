@@ -94,6 +94,8 @@ class GenerateRemotionCodeRequest(BaseModel):
     height: int = Field(default=1080, ge=360, le=2160)
     style_prompt: str | None = None
     subtitles_enabled: bool = False
+    background_music_url: str | None = None
+    background_music_volume: float = Field(default=0.12, ge=0.0, le=0.5)
 
 
 class GenerateRemotionCodeResponse(BaseModel):

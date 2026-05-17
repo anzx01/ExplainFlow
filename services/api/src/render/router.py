@@ -4,6 +4,7 @@ from fastapi.responses import StreamingResponse, Response
 
 from src.core.llm import LLMUnavailableError, check_llm_connection
 from .models import (
+    BackgroundMusicLibrary,
     BulkDeleteJobsRequest,
     RenderJobPatch,
     RenderJobRequest,
@@ -28,6 +29,9 @@ async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
                     "voice": req.voice,
                     "resolution": req.resolution,
                     "subtitlesEnabled": req.subtitles_enabled,
+                    "backgroundMusicEnabled": req.background_music_enabled,
+                    "backgroundMusicId": req.background_music_id,
+                    "backgroundMusicVolume": req.background_music_volume,
                 },
             )
             resp.raise_for_status()
@@ -45,6 +49,19 @@ async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
         )
     except LLMUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/music", response_model=BackgroundMusicLibrary)
+async def list_background_music() -> BackgroundMusicLibrary:
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            resp = await client.get(f"{RENDER_SERVER}/music")
+            resp.raise_for_status()
+            return BackgroundMusicLibrary(**resp.json())
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Render server not running")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

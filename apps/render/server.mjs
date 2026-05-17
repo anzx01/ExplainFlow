@@ -13,13 +13,14 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
-import { basename, dirname, join, resolve } from "path";
+import { basename, dirname, extname, join, resolve } from "path";
 import { createHash, randomUUID } from "crypto";
 import { fileURLToPath } from "url";
 import { availableParallelism } from "os";
@@ -35,6 +36,7 @@ const WIDTH = 1920;
 const HEIGHT = 1080;
 const OUTPUT_DIR = join(__dirname, "../../outputs");
 const AUDIO_DIR = join(OUTPUT_DIR, "audio");
+const MUSIC_DIR = resolve(process.env.EXPLAINFLOW_MUSIC_DIR ?? join(OUTPUT_DIR, "music"));
 const JOBS_FILE = join(OUTPUT_DIR, "jobs.json");
 const GENERATED_DIR = join(__dirname, "generated");
 const PUBLIC_DIR = join(__dirname, "public");
@@ -74,6 +76,15 @@ const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
   Number(process.env.REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE ?? 648),
 );
 const HAND_ASSET = "hand-real-pen.png";
+const MUSIC_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"]);
+const MUSIC_MIME_TYPES = new Map([
+  [".mp3", "audio/mpeg"],
+  [".wav", "audio/wav"],
+  [".m4a", "audio/mp4"],
+  [".aac", "audio/aac"],
+  [".ogg", "audio/ogg"],
+  [".webm", "audio/webm"],
+]);
 const GLYPH_FONT_CANDIDATES = [
   process.env.EXPLAINFLOW_GLYPH_FONT,
   "C:\\Windows\\Fonts\\simkai.ttf",
@@ -85,6 +96,7 @@ const ttsInFlight = new Map();
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 mkdirSync(AUDIO_DIR, { recursive: true });
+mkdirSync(MUSIC_DIR, { recursive: true });
 mkdirSync(GENERATED_DIR, { recursive: true });
 mkdirSync(PUBLIC_GENERATED_DIR, { recursive: true });
 
@@ -197,6 +209,55 @@ function getJson(url, timeoutMs = 12000) {
     req.on("error", reject);
     req.end();
   });
+}
+
+function clampNumber(value, min, max, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
+}
+
+function titleFromMusicFilename(filename) {
+  const name = basename(filename, extname(filename)).replace(/-mixkit$/i, "");
+  return name
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function resolveMusicTrack(rawId) {
+  let decoded = "";
+  try {
+    decoded = decodeURIComponent(String(rawId ?? ""));
+  } catch {
+    return null;
+  }
+  const filename = basename(decoded);
+  if (!filename || filename !== decoded) return null;
+  const ext = extname(filename).toLowerCase();
+  if (!MUSIC_EXTENSIONS.has(ext)) return null;
+  const filePath = resolve(MUSIC_DIR, filename);
+  if (!isInside(filePath, MUSIC_DIR) || !existsSync(filePath)) return null;
+  const stat = statSync(filePath);
+  if (!stat.isFile() || stat.size <= 0) return null;
+  return {
+    id: filename,
+    name: titleFromMusicFilename(filename),
+    url: `http://localhost:${PORT}/music/${encodeURIComponent(filename)}`,
+    size: stat.size,
+    contentType: MUSIC_MIME_TYPES.get(ext) ?? "application/octet-stream",
+    filePath,
+  };
+}
+
+function listMusicTracks() {
+  return readdirSync(MUSIC_DIR, { withFileTypes: true })
+    .filter((entry) => entry.isFile())
+    .map((entry) => resolveMusicTrack(entry.name))
+    .filter(Boolean)
+    .map(({ id, name, url, size }) => ({ id, name, url, size }))
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 async function ensureLargeModelAvailable() {
@@ -1648,18 +1709,25 @@ function validateGeneratedTsx(tsx) {
 
 async function generateRemotionCode(storyboard, options = {}) {
   const subtitlesEnabled = Boolean(options.subtitlesEnabled);
+  const backgroundMusicUrl = options.backgroundMusicUrl || null;
+  const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
   const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
     storyboard,
     fps: FPS,
     width: WIDTH,
     height: HEIGHT,
     subtitles_enabled: subtitlesEnabled,
+    background_music_url: backgroundMusicUrl,
+    background_music_volume: backgroundMusicVolume,
     style_prompt:
       "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
       "Every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
       (subtitlesEnabled
         ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
         : "Do not render subtitles or caption overlays. ") +
+      (backgroundMusicUrl
+        ? `Add one global low-volume looping background music Audio track with src="${backgroundMusicUrl}" and volume=${backgroundMusicVolume}; keep it behind narration. `
+        : "Do not add background music. ") +
       "Import Img and staticFile from remotion and render <Img src={staticFile(\"hand-real-pen.png\")} /> " +
       "inside a HandPen component positioned from getPenPosition(frame) coordinates. " +
       "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; " +
@@ -1915,12 +1983,47 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/music") {
+    sendJson(res, 200, { tracks: listMusicTracks() });
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/render") {
     try {
-      const { storyboard, voice, subtitlesEnabled, subtitles_enabled } = JSON.parse(await readBody(req));
+      const {
+        storyboard,
+        voice,
+        subtitlesEnabled,
+        subtitles_enabled,
+        backgroundMusicEnabled,
+        background_music_enabled,
+        backgroundMusicId,
+        background_music_id,
+        backgroundMusicVolume,
+        background_music_volume,
+      } = JSON.parse(await readBody(req));
       if (!storyboard?.scenes?.length) {
         sendJson(res, 400, { error: "storyboard.scenes is required" });
         return;
+      }
+      const useBackgroundMusic = Boolean(backgroundMusicEnabled ?? background_music_enabled);
+      let backgroundMusicTrack = null;
+      let backgroundMusicVolumeValue = 0.12;
+      if (useBackgroundMusic) {
+        const requestedTrackId = backgroundMusicId ?? background_music_id;
+        const availableTracks = listMusicTracks();
+        const trackId = requestedTrackId || availableTracks[0]?.id;
+        backgroundMusicTrack = trackId ? resolveMusicTrack(trackId) : null;
+        if (!backgroundMusicTrack) {
+          sendJson(res, 400, { error: "background music track not found" });
+          return;
+        }
+        backgroundMusicVolumeValue = clampNumber(
+          backgroundMusicVolume ?? background_music_volume,
+          0,
+          0.5,
+          0.12,
+        );
       }
       try {
         await ensureLargeModelAvailable();
@@ -1942,6 +2045,7 @@ const server = http.createServer(async (req, res) => {
         progress: 0,
         phase: "queued",
         topic: storyboard.topic ?? "Untitled",
+        backgroundMusicId: backgroundMusicTrack?.id ?? null,
         createdAt,
       };
       saveJobs();
@@ -1950,6 +2054,8 @@ const server = http.createServer(async (req, res) => {
 
       renderVideo(jobId, storyboard, voice, outputPath, {
         subtitlesEnabled: Boolean(subtitlesEnabled ?? subtitles_enabled),
+        backgroundMusicUrl: backgroundMusicTrack?.url ?? null,
+        backgroundMusicVolume: backgroundMusicVolumeValue,
       })
         .then(() => updateJob(jobId, { status: "done", progress: 100, phase: "done" }))
         .catch((err) => {
@@ -2049,6 +2155,16 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname.startsWith("/audio/")) {
     const filename = basename(url.pathname.slice(7));
     serveStaticFile(res, join(AUDIO_DIR, filename), "audio/mpeg");
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname.startsWith("/music/")) {
+    const track = resolveMusicTrack(url.pathname.slice(7));
+    if (!track) {
+      sendJson(res, 404, { error: "music track not found" });
+      return;
+    }
+    serveStaticFile(res, track.filePath, track.contentType);
     return;
   }
 

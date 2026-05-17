@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.planner.models import Storyboard
 
@@ -8,6 +8,9 @@ class RenderJobRequest(BaseModel):
     voice: str = "xiaoxiao"
     resolution: str = "1080p"
     subtitles_enabled: bool = False
+    background_music_enabled: bool = False
+    background_music_id: str | None = None
+    background_music_volume: float = Field(default=0.12, ge=0.0, le=0.5)
 
 
 class RenderJobStatus(BaseModel):
@@ -36,3 +39,14 @@ class RenderJobPatch(BaseModel):
 
 class BulkDeleteJobsRequest(BaseModel):
     job_ids: list[str]
+
+
+class BackgroundMusicTrack(BaseModel):
+    id: str
+    name: str
+    url: str
+    size: int
+
+
+class BackgroundMusicLibrary(BaseModel):
+    tracks: list[BackgroundMusicTrack]
