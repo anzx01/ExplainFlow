@@ -7,6 +7,7 @@ class RenderJobRequest(BaseModel):
     storyboard: Storyboard
     voice: str = "xiaoxiao"
     resolution: str = "1080p"
+    subtitles_enabled: bool = False
 
 
 class RenderJobStatus(BaseModel):
@@ -31,3 +32,7 @@ class RenderJobSummary(BaseModel):
 
 class RenderJobPatch(BaseModel):
     topic: str | None = None
+
+
+class BulkDeleteJobsRequest(BaseModel):
+    job_ids: list[str]

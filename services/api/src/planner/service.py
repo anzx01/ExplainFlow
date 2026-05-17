@@ -10,11 +10,13 @@ from src.explain.models import ExplainGraph
 from .models import (
     AnimationInstruction,
     AnimationType,
+    DiagramPlan,
     GenerateRemotionCodeRequest,
     GenerateRemotionCodeResponse,
     GenerateStoryboardRequest,
     Scene,
     Storyboard,
+    VisualBeat,
 )
 
 logger = logging.getLogger(__name__)
@@ -271,6 +273,7 @@ def _compile_fast_remotion_response(
         req.fps,
         req.width,
         req.height,
+        req.subtitles_enabled,
     )
     return GenerateRemotionCodeResponse(
         tsx=_validate_generated_tsx(fallback_tsx),
@@ -440,10 +443,289 @@ image_description 设计要点：
 }"""
 
 
+STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规划师，负责把 Explain Graph 和 EnhancedTeachingBrief 变成可绘制、可配音、可同步的中文白板视频分镜。
+
+核心目标：
+1. 解说必须跟随绘图过程。每个 scene 都要有 learning_goal、diagram_plan、visual_beats。
+2. 每个 visual_beat 都必须说明“正在画什么”和“此时说什么”，旁白不能先讲完、图还没画完。
+3. 每个关键点按“现象 -> 原因 -> 结果 -> 类比/总结”展开，避免只写定义和 bullet list。
+4. 优先用状态对比图、过程模拟图、结构图、截面图、箭头和局部放大；少用纯文字列表。
+5. image_description 必须是英文，像给图像生成模型的具体白板线稿说明：布局、标签、箭头、局部放大都要写清楚。
+6. 用优秀老师板书的方式强调重点：关键术语下划线、圈出局部、彩色箭头、局部放大框、对比标记和结论框。
+7. 使用有限教学色彩：red=current/flow, blue=voltage/control, green=channel/valid path, purple=gate/structure, yellow=emphasis underline/callout。
+8. 内容 prompt 与视觉风格分离：这里规划内容和画面，不写模板库、组件库或代码。
+9. 总时长必须服从 target_duration_seconds；如果画面复杂，要提高绘图密度或拆分 beat，不要超过目标时长。
+
+MOS/FinFET 专项要求：
+- 必须包含 MOS Off/On 对比：未加栅压无沟道无电流；V_G > V_th 后形成反型电子通道。
+- 必须画出 V_DS 驱动源漏电流，把 MOS 总结为电压控制开关。
+- 必须解释短沟道效应为什么随着尺寸缩小出现。
+- 必须画出 FinFET 的三维 fin 和 gate 三面包住沟道。
+- 必须画出 FinFET 截面，标注 W_eff = 2H_fin + W_fin，并显示三面感应电荷。
+
+梯度下降专项要求：
+- 必须包含损失曲线、当前位置、梯度方向、负梯度更新、学习率步长、迭代收敛。
+
+输出 JSON：
+{
+  "scenes": [
+    {
+      "id": "scene_0",
+      "order": 0,
+      "title": "短标题",
+      "learning_goal": "这一场要让观众理解什么",
+      "diagram_plan": {
+        "kind": "comparison|process|structure|cross_section|formula|simulation",
+        "layout": "具体画面布局",
+        "required_labels": ["必须写在图里的标签"]
+      },
+      "visual_beats": [
+        {
+          "id": "beat_0",
+          "draw_intent": "正在画什么，包含图形、箭头、标签、变化",
+          "narration": "这一步同步说什么，必须解释因果",
+          "required_labels": ["本 beat 图上要出现的标签"],
+          "duration_estimate": 6
+        }
+      ],
+      "narration": "完整中文旁白，由 visual_beats 串起来，口语化但技术准确",
+      "duration_estimate": 28,
+      "node_ids": ["node_0"],
+      "image_description": "English whiteboard line-art diagram prompt with exact labels, layout, arrows and process changes",
+      "animations": [
+        {
+          "type": "whiteboard_draw",
+          "duration": 8.0,
+          "content": "与 visual beat 对应的绘图动作",
+          "latex": null,
+          "items": ["可选：步骤标签或图中标签"]
+        }
+      ]
+    }
+  ]
+}"""
+
+
+def _clean_text(value: object) -> str:
+    text = "" if value is None else str(value)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _subtitle_text(value: object) -> str | None:
+    text = _clean_text(value)
+    return text or None
+
+
+def _planner_str_list(value: object, limit: int | None = None) -> list[str]:
+    if isinstance(value, list):
+        items = [_clean_text(item) for item in value]
+    elif isinstance(value, str):
+        items = [_clean_text(part) for part in re.split(r"[\n；;]+", value)]
+    else:
+        items = []
+    items = [item for item in items if item]
+    return items[:limit] if limit else items
+
+
+def _parse_diagram_plan(value: object) -> DiagramPlan | None:
+    if isinstance(value, DiagramPlan):
+        return value
+    if isinstance(value, dict):
+        return DiagramPlan(
+            kind=_clean_text(value.get("kind")) or "process",
+            layout=_clean_text(value.get("layout")) or _clean_text(value.get("description")),
+            required_labels=_planner_str_list(value.get("required_labels") or value.get("labels"), limit=12),
+        )
+    if isinstance(value, str) and value.strip():
+        return DiagramPlan(kind="process", layout=_clean_text(value), required_labels=[])
+    return None
+
+
+def _parse_visual_beats(value: object) -> list[VisualBeat]:
+    if not isinstance(value, list):
+        return []
+    beats: list[VisualBeat] = []
+    for index, item in enumerate(value):
+        if isinstance(item, dict):
+            draw_intent = _clean_text(item.get("draw_intent") or item.get("draw") or item.get("visual"))
+            narration = _clean_text(item.get("narration") or item.get("voiceover") or item.get("script"))
+            if not draw_intent and not narration:
+                continue
+            beats.append(
+                VisualBeat(
+                    id=_clean_text(item.get("id")) or f"beat_{index}",
+                    draw_intent=draw_intent or narration,
+                    narration=narration or draw_intent,
+                    required_labels=_planner_str_list(
+                        item.get("required_labels") or item.get("labels") or item.get("must_draw"),
+                        limit=12,
+                    ),
+                    duration_estimate=float(item.get("duration_estimate") or item.get("duration") or 6.0),
+                )
+            )
+        elif isinstance(item, str) and item.strip():
+            text = _clean_text(item)
+            beats.append(
+                VisualBeat(
+                    id=f"beat_{index}",
+                    draw_intent=text,
+                    narration=text,
+                    required_labels=[],
+                    duration_estimate=6.0,
+                )
+            )
+    return beats
+
+
+def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:
+    beat_text = " ".join(beat.narration for beat in beats if beat.narration).strip()
+    narration = _clean_text(narration)
+    if not beat_text:
+        return narration
+    if len(narration) < max(80, len(beat_text) * 0.45):
+        return beat_text
+    missing = [
+        beat.narration
+        for beat in beats
+        if beat.narration and beat.narration[:18] not in narration
+    ]
+    if missing and len(narration) < 180:
+        return _clean_text(f"{narration} {' '.join(missing[:3])}")
+    return narration
+
+
+def _estimate_narration_seconds(narration: str) -> float:
+    cjk_chars = len(re.findall(r"[\u3400-\u9fff]", narration))
+    total_chars = len(narration)
+    # Edge TTS pauses on Chinese punctuation; this slower estimate prevents scene audio being clipped.
+    return max(8.0, cjk_chars / 3.35 + max(0, total_chars - cjk_chars) / 7.2)
+
+
+def _estimate_scene_duration(raw_duration: float, narration: str, beats: list[VisualBeat], animations: list[AnimationInstruction]) -> float:
+    narration_seconds = _estimate_narration_seconds(narration)
+    beat_seconds = sum(max(3.0, beat.duration_estimate) for beat in beats) + (4.0 if beats else 0.0)
+    animation_seconds = sum(animation.duration for animation in animations) + (4.0 if animations else 0.0)
+    minimum = 22.0 if beats else 16.0
+    duration = max(float(raw_duration or 0), narration_seconds + 3.0, beat_seconds, animation_seconds, minimum)
+    return round(min(duration, 55.0), 1)
+
+
+def _scene_floor_duration(scene: Scene) -> float:
+    beat_floor = sum(max(2.4, beat.duration_estimate * 0.75) for beat in scene.visual_beats)
+    animation_floor = sum(max(1.0, animation.duration * 0.8) for animation in scene.animations)
+    narration_floor = _estimate_narration_seconds(scene.narration) + 2.0
+    required = max(12.0, narration_floor, beat_floor + 2.0, animation_floor + 2.0)
+    return round(min(36.0, required), 1)
+
+
+def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> Storyboard:
+    """Treat the UI duration as the final contract without starving narration-heavy scenes."""
+    target = float(max(60, min(180, target_duration)))
+    if not storyboard.scenes:
+        storyboard.total_duration_estimate = target
+        return storyboard
+
+    current = sum(max(0.1, scene.duration_estimate) for scene in storyboard.scenes)
+    if current <= 0:
+        per_scene = target / len(storyboard.scenes)
+        for scene in storyboard.scenes:
+            scene.duration_estimate = round(per_scene, 1)
+        storyboard.total_duration_estimate = target
+        return storyboard
+
+    floors = [_scene_floor_duration(scene) for scene in storyboard.scenes]
+    floor_total = sum(floors)
+    if floor_total <= target:
+        weights = [max(0.1, scene.duration_estimate - floor) for scene, floor in zip(storyboard.scenes, floors)]
+        weight_total = sum(weights) or float(len(storyboard.scenes))
+        remaining = target - floor_total
+        running = 0.0
+        for index, (scene, floor, weight) in enumerate(zip(storyboard.scenes, floors, weights)):
+            if index == len(storyboard.scenes) - 1:
+                duration = max(1.0, target - running)
+            else:
+                duration = floor + remaining * (weight / weight_total)
+                running += duration
+            ratio = duration / max(0.1, scene.duration_estimate)
+            scene.duration_estimate = round(duration, 1)
+            for beat in scene.visual_beats:
+                beat.duration_estimate = round(max(1.0, beat.duration_estimate * ratio), 1)
+            for animation in scene.animations:
+                animation.duration = round(max(0.5, min(15.0, animation.duration * ratio)), 1)
+        rounded_total = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+        delta = round(target - rounded_total, 1)
+        if storyboard.scenes and abs(delta) >= 0.1:
+            storyboard.scenes[-1].duration_estimate = round(max(1.0, storyboard.scenes[-1].duration_estimate + delta), 1)
+        storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+        return storyboard
+
+    scale = target / floor_total
+    running = 0.0
+    for index, scene in enumerate(storyboard.scenes):
+        if index == len(storyboard.scenes) - 1:
+            duration = max(1.0, target - running)
+        else:
+            duration = max(8.0, _scene_floor_duration(scene) * scale)
+            running += duration
+        ratio = duration / max(0.1, scene.duration_estimate)
+        scene.duration_estimate = round(duration, 1)
+        for beat in scene.visual_beats:
+            beat.duration_estimate = round(max(1.0, beat.duration_estimate * ratio), 1)
+        for animation in scene.animations:
+            animation.duration = round(max(0.5, min(15.0, animation.duration * ratio)), 1)
+
+    rounded_total = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    delta = round(target - rounded_total, 1)
+    if storyboard.scenes and abs(delta) >= 0.1:
+        storyboard.scenes[-1].duration_estimate = round(max(1.0, storyboard.scenes[-1].duration_estimate + delta), 1)
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    return storyboard
+
+
+def _graph_enhanced_brief(graph: ExplainGraph) -> dict | None:
+    brief = getattr(graph, "enhanced_brief", None)
+    if not brief:
+        return None
+    if hasattr(brief, "model_dump"):
+        return brief.model_dump(mode="json")
+    if isinstance(brief, dict):
+        return brief
+    return None
+
+
+def _desired_scene_count(graph: ExplainGraph, target_duration: int) -> int:
+    brief = _graph_enhanced_brief(graph) or {}
+    outline = brief.get("recommended_scene_outline") if isinstance(brief, dict) else None
+    outline_count = len(outline) if isinstance(outline, list) else 0
+    topic_blob = " ".join(
+        [
+            graph.topic,
+            graph.summary,
+            " ".join(graph.key_insights),
+            json.dumps(brief, ensure_ascii=False) if brief else "",
+        ]
+    ).lower()
+    if any(term in topic_blob for term in ["mos", "mosfet", "finfet", "晶体管", "栅极", "沟道"]):
+        if target_duration <= 70:
+            return 3
+        if target_duration <= 95:
+            return 4
+        if target_duration <= 150:
+            return 5
+        return max(6, min(8, outline_count or 6))
+    if any(term in topic_blob for term in ["gradient", "descent", "梯度下降", "学习率", "损失"]):
+        return max(4, min(6, outline_count or 4))
+    if outline_count:
+        return max(3, min(8, outline_count))
+    return max(3, min(6, len(graph.nodes), max(3, target_duration // 24)))
+
+
 async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     await check_llm_connection()
 
     graph = req.graph
+    brief_data = _graph_enhanced_brief(graph)
+    desired_scene_count = _desired_scene_count(graph, req.target_duration)
     nodes_desc = "\n".join(
         f"- [{n.node_type.value}] {n.label}（teach_order={n.teach_order}）: {n.description}"
         + (f" LaTeX: {n.latex}" if n.latex else "")
@@ -472,11 +754,47 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
 - 优先使用 write_text + bullet_list/step_reveal 组合
 - 公式场景必须用 write_formula（不要用 write_text 写公式）"""
 
+    user_content = json.dumps(
+        {
+            "topic": graph.topic,
+            "summary": graph.summary,
+            "target_duration_seconds": req.target_duration,
+            "desired_scene_count": desired_scene_count,
+            "enhanced_teaching_brief": brief_data,
+            "concept_nodes": [
+                {
+                    "id": node.id,
+                    "label": node.label,
+                    "node_type": node.node_type.value,
+                    "description": node.description,
+                    "latex": node.latex,
+                    "teach_order": node.teach_order,
+                }
+                for node in sorted(graph.nodes, key=lambda item: item.teach_order)
+            ],
+            "edges": [edge.model_dump(mode="json") for edge in graph.edges],
+            "key_insights": graph.key_insights,
+            "requirements": [
+                "Generate concrete scenes, not generic slide bullets.",
+                "Each scene must include learning_goal, diagram_plan, visual_beats, narration, image_description and animations.",
+                "Every visual_beat must pair draw_intent with narration so voiceover follows drawing.",
+                "Use comparison/process/structure/cross-section diagrams and arrows whenever possible.",
+                "Borrow strong science-video teaching techniques: start with a hook or historical/context clue when useful, expand acronyms visually, use picture-in-picture reference diagrams, and introduce one concrete real-world analogy that maps to the mechanism.",
+                "For abstract mechanisms, show the analogy and the technical diagram side by side, then transfer arrows/labels from the analogy to the device/process.",
+                "Use progressive focus: first show the whole object, then zoom/call out one region, then add colored arrows and labels only when the narration reaches them.",
+                "The total duration must match target_duration_seconds. If content is complex, split the drawing more efficiently instead of exceeding the target.",
+                "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
+                "Underline, circle, or box important concepts like V_G > V_th, electron channel, short-channel effect, FinFET, W_eff, learning rate, and gradient.",
+            ],
+        },
+        ensure_ascii=False,
+    )
+
     logger.info("Generating storyboard for: %s, target=%ds", graph.topic, req.target_duration)
 
     raw = await chat_json(
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": STORYBOARD_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ]
     )
@@ -505,18 +823,24 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                     items=a.get("items"),
                 )
             )
-        dur = float(s.get("duration_estimate", 20))
+        visual_beats = _parse_visual_beats(s.get("visual_beats"))
+        diagram_plan = _parse_diagram_plan(s.get("diagram_plan"))
+        narration = _narration_from_beats(s.get("narration") or "", visual_beats)
+        dur = _estimate_scene_duration(float(s.get("duration_estimate", 20)), narration, visual_beats, animations)
         total_duration += dur
         scenes.append(
             Scene(
                 id=s.get("id") or f"scene_{len(scenes)}",
                 order=s.get("order", len(scenes)),
                 title=s.get("title") or f"场景 {len(scenes) + 1}",
-                narration=s.get("narration") or "",
+                narration=narration,
                 duration_estimate=dur,
                 animations=animations,
                 node_ids=s.get("node_ids") or [],
                 image_description=s.get("image_description") or None,
+                learning_goal=s.get("learning_goal") or None,
+                visual_beats=visual_beats,
+                diagram_plan=diagram_plan,
             )
         )
 
@@ -525,8 +849,366 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         total_duration_estimate=total_duration,
         scenes=scenes,
     )
+    storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
+    storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
 
-    logger.info("Storyboard generated: %d scenes, %.1fs total", len(scenes), total_duration)
+    logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)
+    return storyboard
+
+
+def _storyboard_corpus(storyboard: Storyboard, graph: ExplainGraph) -> str:
+    brief = _graph_enhanced_brief(graph) or {}
+    parts = [graph.topic, graph.summary, " ".join(graph.key_insights), json.dumps(brief, ensure_ascii=False)]
+    for scene in storyboard.scenes:
+        parts.extend([scene.title, scene.narration, scene.learning_goal or "", scene.image_description or ""])
+        if scene.diagram_plan:
+            parts.append(scene.diagram_plan.kind)
+            parts.append(scene.diagram_plan.layout)
+            parts.extend(scene.diagram_plan.required_labels)
+        for beat in scene.visual_beats:
+            parts.extend([beat.draw_intent, beat.narration, *beat.required_labels])
+        for animation in scene.animations:
+            parts.append(animation.content)
+            parts.append(animation.latex or "")
+            if animation.items:
+                parts.extend(animation.items)
+    return " ".join(part for part in parts if part).lower()
+
+
+def _contains_terms(corpus: str, terms: list[str]) -> bool:
+    return any(term.lower() in corpus for term in terms)
+
+
+def _scene_from_spec(index: int, spec: dict) -> Scene:
+    beats = [
+        VisualBeat(
+            id=f"beat_{beat_index}",
+            draw_intent=beat["draw_intent"],
+            narration=beat["narration"],
+            required_labels=beat.get("required_labels", []),
+            duration_estimate=beat.get("duration_estimate", 6.0),
+        )
+        for beat_index, beat in enumerate(spec["visual_beats"])
+    ]
+    animations = [
+        AnimationInstruction(
+            type=AnimationType.WHITEBOARD_DRAW,
+            duration=min(15.0, max(4.0, beat.duration_estimate)),
+            content=beat.draw_intent,
+            items=beat.required_labels or None,
+        )
+        for beat in beats
+    ]
+    if spec.get("formula"):
+        animations.append(
+            AnimationInstruction(
+                type=AnimationType.WRITE_FORMULA,
+                duration=5.0,
+                content=spec["formula"],
+                latex=spec["formula"],
+            )
+        )
+    narration = _narration_from_beats(spec.get("narration", ""), beats)
+    duration = _estimate_scene_duration(float(spec.get("duration_estimate", 28)), narration, beats, animations)
+    diagram = spec.get("diagram_plan") or {}
+    return Scene(
+        id=f"scene_{index}",
+        order=index,
+        title=spec["title"],
+        learning_goal=spec["learning_goal"],
+        diagram_plan=DiagramPlan(
+            kind=diagram.get("kind", "process"),
+            layout=diagram.get("layout", ""),
+            required_labels=diagram.get("required_labels", []),
+        ),
+        visual_beats=beats,
+        narration=narration,
+        duration_estimate=duration,
+        animations=animations,
+        node_ids=spec.get("node_ids", []),
+        image_description=spec["image_description"],
+    )
+
+
+def _semiconductor_story_specs() -> list[dict]:
+    return [
+        {
+            "title": "MOS 结构先搭起来",
+            "learning_goal": "先让观众知道源极、漏极、栅极、氧化层、衬底和沟道区域的位置关系。",
+            "diagram_plan": {
+                "kind": "structure",
+                "layout": "planar MOS cross-section with labels from left to right",
+                "required_labels": ["Source", "Drain", "Gate", "Oxide", "Substrate", "Channel"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "画一条衬底横截面，在左右分别画 Source 和 Drain，中间留出 channel region。",
+                    "narration": "先把平面 MOS 的剖面搭起来：左右是源极和漏极，中间的衬底表面就是未来可能形成沟道的位置。",
+                    "required_labels": ["Source", "Drain", "Channel region"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "在沟道上方画薄氧化层和 Gate，并用虚线电场箭头指向衬底表面。",
+                    "narration": "栅极并不直接接触沟道，它隔着很薄的氧化层，用电场去影响衬底表面的电荷。",
+                    "required_labels": ["Gate", "Oxide", "electric field"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": "whiteboard line drawing of a planar MOS transistor cross-section, source and drain blocks on a substrate, a thin oxide layer and a gate over the channel region, labels Source, Drain, Gate, Oxide, Substrate, Channel region, simple electric field arrows",
+            "duration_estimate": 26,
+        },
+        {
+            "title": "Off/On 两种状态",
+            "learning_goal": "用双图对比解释阈值电压如何决定有没有连续电子沟道。",
+            "diagram_plan": {
+                "kind": "comparison",
+                "layout": "two panels: OFF on the left, ON on the right",
+                "required_labels": ["OFF: V_G < V_th", "ON: V_G > V_th", "no channel", "electron channel"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "左侧画 OFF 状态，源漏之间断开，用叉号标出 no channel / no current。",
+                    "narration": "在 Off 状态，栅压还没有超过阈值，衬底表面没有形成连续电子通道，源极和漏极就像被断开的两端。",
+                    "required_labels": ["OFF", "V_G < V_th", "no channel"],
+                    "duration_estimate": 8,
+                },
+                {
+                    "draw_intent": "右侧画 ON 状态，从栅极向下画电场箭头，再画一条连续 electron channel。",
+                    "narration": "当 V_G 大于 V_th，栅极电场会在衬底表面感应出足够电子，最后连成一条反型沟道。",
+                    "required_labels": ["ON", "V_G > V_th", "electron channel"],
+                    "duration_estimate": 9,
+                },
+            ],
+            "image_description": "two-panel whiteboard comparison of a MOS transistor OFF and ON state, left panel labeled OFF V_G < V_th with no channel and crossed current arrow, right panel labeled ON V_G > V_th with a dark electron channel between source and drain and downward gate electric field arrows",
+            "duration_estimate": 30,
+        },
+        {
+            "title": "电流被电压打开",
+            "learning_goal": "说明 V_DS 只有在沟道形成后才能推动源漏电流，MOS 因此像电压控制开关。",
+            "diagram_plan": {
+                "kind": "process",
+                "layout": "ON MOS diagram with channel, source-drain battery, current arrows and switch analogy",
+                "required_labels": ["V_DS", "I_D", "Voltage-controlled switch"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "在已经形成的沟道两端画 V_DS 电源符号。",
+                    "narration": "有了沟道还不等于自动有电流，源漏之间还需要一个 V_DS 来提供推动载流子的电势差。",
+                    "required_labels": ["V_DS"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "沿沟道画多根电流箭头 I_D，并在旁边画一个被栅压控制的开关图标。",
+                    "narration": "于是电子沿沟道移动，形成漏电流 I_D。直观地说，栅极电压负责开门，源漏电压负责把电流推过去。",
+                    "required_labels": ["I_D", "switch"],
+                    "duration_estimate": 9,
+                },
+            ],
+            "image_description": "whiteboard MOS ON diagram with electron channel between source and drain, a V_DS battery connected across source and drain, arrows labeled I_D flowing through the channel, small voltage-controlled switch analogy icon",
+            "duration_estimate": 29,
+        },
+        {
+            "title": "短沟道效应",
+            "learning_goal": "解释为什么尺寸缩小时平面 MOS 的栅极控制会变弱。",
+            "diagram_plan": {
+                "kind": "comparison",
+                "layout": "long-channel MOS versus short-channel MOS with source/drain fields intruding",
+                "required_labels": ["long channel", "short channel", "short-channel effect"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "画长沟道和平面栅极，标出栅极主要控制中间沟道。",
+                    "narration": "在长沟道器件里，沟道足够长，栅极像一个比较强的总闸门，能主导中间区域的电荷。",
+                    "required_labels": ["long channel", "gate control"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "把沟道画短，源漏电场箭头挤进沟道区域，并画失控提示。",
+                    "narration": "尺寸继续缩小时，源极和漏极离得太近，它们的电场会伸进沟道，抢走一部分控制权，这就是短沟道效应的直观来源。",
+                    "required_labels": ["short channel", "field intrusion"],
+                    "duration_estimate": 9,
+                },
+            ],
+            "image_description": "whiteboard comparison of long-channel and short-channel planar MOS devices, long channel controlled by gate, short channel with source and drain electric field arrows intruding into the channel, warning label short-channel effect",
+            "duration_estimate": 29,
+        },
+        {
+            "title": "FinFET 三面包住沟道",
+            "learning_goal": "看懂 FinFET 为什么把沟道做成竖起的 fin，并让栅极从三面包住它。",
+            "diagram_plan": {
+                "kind": "structure",
+                "layout": "simple 3D fin channel with gate wrapping top and two sidewalls",
+                "required_labels": ["Fin channel", "Gate wraps 3 sides", "Source", "Drain"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "画一个竖起的 fin/channel，两端分别连接 Source 和 Drain。",
+                    "narration": "FinFET 的第一步，是把原来趴在平面上的沟道竖起来，变成一条鳍片状的三维通道。",
+                    "required_labels": ["Fin channel", "Source", "Drain"],
+                    "duration_estimate": 8,
+                },
+                {
+                    "draw_intent": "画 U 形 Gate 从顶部和两侧包住 fin，并从三面画控制箭头。",
+                    "narration": "然后栅极不再只从上方控制，而是像夹子一样包住顶部和两个侧壁，三面同时施加电场，栅控能力就明显增强。",
+                    "required_labels": ["Gate wraps 3 sides", "three-side control"],
+                    "duration_estimate": 10,
+                },
+            ],
+            "image_description": "simple 3D whiteboard sketch of a FinFET: vertical fin channel standing between source and drain, a U-shaped gate wrapping over the top and both sidewalls of the fin, three control arrows, labels Fin channel, Source, Drain, Gate wraps 3 sides",
+            "duration_estimate": 32,
+        },
+        {
+            "title": "截面里的有效宽度",
+            "learning_goal": "用 FinFET 截面解释 W_eff = 2H_fin + W_fin 和三面感应电荷。",
+            "diagram_plan": {
+                "kind": "cross_section",
+                "layout": "FinFET cross-section with U-shaped gate, top width and two sidewall heights",
+                "required_labels": ["H_fin", "W_fin", "W_eff = 2H_fin + W_fin", "induced electrons"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "画 fin 的截面和 U 形栅极，分别标出顶部 W_fin 和两侧 H_fin。",
+                    "narration": "从截面看，FinFET 的沟道不是只有顶部一条线，两侧壁也被栅极包住，所以都能参与导通。",
+                    "required_labels": ["W_fin", "H_fin"],
+                    "duration_estimate": 8,
+                },
+                {
+                    "draw_intent": "在三面画出 induced electrons，再写公式 W_eff = 2H_fin + W_fin。",
+                    "narration": "当栅极加电后，顶部和两侧都能感应出电荷，有效沟道宽度就来自两侧高度加上顶部宽度，也就是 W_eff 等于 2H_fin 加 W_fin。",
+                    "required_labels": ["induced electrons", "W_eff = 2H_fin + W_fin"],
+                    "duration_estimate": 10,
+                },
+            ],
+            "formula": "W_{eff}=2H_{fin}+W_{fin}",
+            "image_description": "FinFET cross-section whiteboard diagram with a U-shaped gate around a rectangular fin, labels H_fin on both sidewalls, W_fin on the top, small induced electron dots on the three gated surfaces, formula W_eff = 2H_fin + W_fin",
+            "duration_estimate": 33,
+        },
+    ]
+
+
+def _semiconductor_story_specs_for_target(target_duration: int) -> list[dict]:
+    specs = _semiconductor_story_specs()
+    if target_duration <= 70:
+        return [specs[1], specs[4], specs[5]]
+    if target_duration <= 95:
+        return [specs[1], specs[3], specs[4], specs[5]]
+    if target_duration <= 150:
+        return [specs[1], specs[2], specs[3], specs[4], specs[5]]
+    return specs
+
+
+def _gradient_story_specs() -> list[dict]:
+    return [
+        {
+            "title": "把损失画成地形",
+            "learning_goal": "让观众知道 loss 曲线的高度代表错误大小。",
+            "diagram_plan": {"kind": "simulation", "layout": "loss curve with axes", "required_labels": ["Loss", "theta"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画 theta 横轴和 Loss 纵轴，再画一条下降的曲线。",
+                    "narration": "先把损失函数画成一条地形曲线，越高代表模型错得越多，越低代表参数更合适。",
+                    "required_labels": ["Loss", "theta"],
+                    "duration_estimate": 7,
+                }
+            ],
+            "image_description": "whiteboard loss curve with theta axis and Loss axis, a current parameter dot on the curve",
+            "duration_estimate": 23,
+        },
+        {
+            "title": "沿负梯度走一步",
+            "learning_goal": "解释梯度方向、负梯度方向和学习率步长。",
+            "diagram_plan": {"kind": "process", "layout": "gradient and negative gradient arrows", "required_labels": ["gradient", "-gradient", "learning rate"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "标出当前位置，画梯度箭头和反方向更新箭头。",
+                    "narration": "梯度指向损失上升最快的方向，所以要往相反方向走。学习率决定这一步到底迈多远。",
+                    "required_labels": ["gradient", "-gradient", "learning rate"],
+                    "duration_estimate": 9,
+                }
+            ],
+            "image_description": "whiteboard diagram of a point on a loss curve with gradient arrow, negative gradient update arrow, learning-rate step length label",
+            "duration_estimate": 25,
+        },
+        {
+            "title": "重复迭代直到收敛",
+            "learning_goal": "展示多次更新如何接近低损失区域。",
+            "diagram_plan": {"kind": "process", "layout": "multiple update dots toward minimum", "required_labels": ["iteration", "minimum", "converge"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "沿曲线画多个迭代点和逐步变短的箭头，最后靠近最低点。",
+                    "narration": "把这一步重复很多次，参数点就会沿着曲线逐渐靠近低损失区域；步长太大可能来回震荡，太小则走得很慢。",
+                    "required_labels": ["iteration", "converge", "minimum"],
+                    "duration_estimate": 10,
+                }
+            ],
+            "image_description": "whiteboard loss curve with several iteration dots moving toward a minimum, arrows shrinking near convergence, labels iteration, converge, minimum",
+            "duration_estimate": 27,
+        },
+    ]
+
+
+def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard:
+    scenes = [_scene_from_spec(index, spec) for index, spec in enumerate(specs)]
+    return Storyboard(
+        topic=storyboard.topic,
+        total_duration_estimate=round(sum(scene.duration_estimate for scene in scenes), 1),
+        scenes=scenes,
+    )
+
+
+def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, target_duration: int) -> Storyboard:
+    corpus = _storyboard_corpus(storyboard, graph)
+    semiconductor = _contains_terms(corpus, ["mos", "mosfet", "finfet", "晶体管", "栅极", "沟道"])
+    gradient = _contains_terms(corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
+
+    if semiconductor:
+        target_specs = _semiconductor_story_specs_for_target(target_duration)
+        if len(storyboard.scenes) > len(target_specs):
+            return _replace_with_specs(storyboard, target_specs)
+        coverage_groups = [
+            ["off", "on", "v_g", "vth", "v_th", "阈值"],
+            ["v_ds", "i_d", "源漏", "电流"],
+            ["短沟道", "short-channel"],
+            ["finfet", "fin", "三面", "包住"],
+            ["w_eff", "2h_fin", "截面", "有效宽度"],
+        ]
+        coverage = sum(1 for group in coverage_groups if _contains_terms(corpus, group))
+        if len(storyboard.scenes) < min(5, len(target_specs)) or coverage < 4:
+            return _replace_with_specs(storyboard, target_specs)
+
+    if gradient:
+        coverage_groups = [
+            ["loss", "损失"],
+            ["gradient", "梯度"],
+            ["learning rate", "学习率"],
+            ["iteration", "迭代", "converge", "收敛"],
+        ]
+        coverage = sum(1 for group in coverage_groups if _contains_terms(corpus, group))
+        if len(storyboard.scenes) < 3 or coverage < 4:
+            return _replace_with_specs(storyboard, _gradient_story_specs())
+
+    for scene in storyboard.scenes:
+        if not scene.visual_beats:
+            labels = []
+            if scene.diagram_plan:
+                labels = scene.diagram_plan.required_labels
+            scene.visual_beats = [
+                VisualBeat(
+                    id="beat_0",
+                    draw_intent=scene.image_description or scene.title,
+                    narration=scene.narration or scene.title,
+                    required_labels=labels,
+                    duration_estimate=max(5.0, min(10.0, scene.duration_estimate * 0.35)),
+                )
+            ]
+        scene.narration = _narration_from_beats(scene.narration, scene.visual_beats)
+        scene.duration_estimate = _estimate_scene_duration(
+            scene.duration_estimate,
+            scene.narration,
+            scene.visual_beats,
+            scene.animations,
+        )
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
 
 
@@ -646,27 +1328,83 @@ def _path_from_points(points: list[dict[str, float]], close: bool = False) -> st
     return " ".join(commands)
 
 
+def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
+    if not draw_ops:
+        return
+    ordered = sorted(
+        enumerate(draw_ops),
+        key=lambda item: (float(item[1].get("startFrame", 0)), item[0]),
+    )
+    spans = [
+        max(0.5, float(op.get("endFrame", 0)) - float(op.get("startFrame", 0)))
+        for _, op in ordered
+    ]
+    start_frame = 0.0
+    target_end = max(start_frame + 1.0, duration - 10.0)
+    target_span = max(1.0, target_end - start_frame)
+    default_gap = 0.35 if len(ordered) > 80 else 0.65
+    gap = min(default_gap, target_span * 0.18 / max(1, len(ordered) - 1))
+    available = max(1.0, target_span - gap * max(0, len(ordered) - 1))
+    min_span = min(0.5, max(0.08, available / max(1, len(ordered)) * 0.8))
+    scale = available / max(1.0, sum(spans))
+    cursor = start_frame
+    for index, ((_, op), span) in enumerate(zip(ordered, spans)):
+        safe_start = min(cursor, max(start_frame, target_end - min_span))
+        next_end = target_end if index == len(ordered) - 1 else min(target_end, safe_start + max(min_span, span * scale))
+        op["startFrame"] = round(safe_start, 2)
+        op["endFrame"] = round(max(safe_start + min_span, next_end), 2)
+        cursor = op["endFrame"] + gap
+
+
 def _animation_lines(scene: Scene) -> list[str]:
     lines: list[str] = []
+    seen: set[str] = set()
+
+    def add_line(value: str | None, max_chars: int = 22) -> None:
+        text = _short_text(value, max_chars)
+        if not text or text in seen:
+            return
+        seen.add(text)
+        lines.append(text)
+
+    if scene.diagram_plan:
+        for label in scene.diagram_plan.required_labels[:4]:
+            add_line(label, 22)
+
+    for beat in getattr(scene, "visual_beats", []) or []:
+        if beat.required_labels:
+            for label in beat.required_labels[:3]:
+                add_line(label, 22)
+        elif beat.narration and len(lines) < 2:
+            add_line(beat.narration, 18)
+        if len(lines) >= 5:
+            break
     for animation in scene.animations:
         raw_type = getattr(animation.type, "value", str(animation.type))
         if raw_type in {"write_formula", "formula_reveal"}:
             value = animation.latex or animation.content
             if value:
-                lines.append(value)
+                add_line(value, 28)
         elif animation.items:
             if animation.content:
-                lines.append(animation.content)
-            lines.extend(animation.items[:3])
+                add_line(animation.content, 20)
+            for item in animation.items[:3]:
+                add_line(item, 20)
         elif animation.content:
-            lines.append(animation.content)
-    if not lines and scene.narration:
-        lines = re.split(r"[，。,.]", scene.narration)[:3]
-    return [_short_text(line, 34) for line in lines if _short_text(line, 34)][:4]
+            add_line(animation.content, 20)
+    if not lines:
+        return []
+    return lines[:4]
 
 
 def _scene_corpus(scene: Scene) -> str:
-    parts: list[str] = [scene.title, scene.narration, scene.image_description or ""]
+    parts: list[str] = [scene.title, scene.narration, scene.learning_goal or "", scene.image_description or ""]
+    if scene.diagram_plan:
+        parts.extend([scene.diagram_plan.kind, scene.diagram_plan.layout])
+        parts.extend(scene.diagram_plan.required_labels)
+    for beat in getattr(scene, "visual_beats", []) or []:
+        parts.extend([beat.draw_intent, beat.narration])
+        parts.extend(beat.required_labels)
     for animation in scene.animations:
         parts.append(getattr(animation.type, "value", str(animation.type)))
         parts.extend(
@@ -692,6 +1430,13 @@ def _contains_any(corpus: str, terms: list[str]) -> bool:
 
 def _scene_steps(scene: Scene) -> list[str]:
     steps: list[str] = []
+    for beat in getattr(scene, "visual_beats", []) or []:
+        if beat.draw_intent:
+            steps.append(beat.draw_intent)
+        if beat.required_labels:
+            steps.extend(beat.required_labels[:2])
+        if len(steps) >= 5:
+            break
     for animation in scene.animations:
         if animation.items:
             steps.extend(animation.items[:5])
@@ -707,6 +1452,33 @@ def _scene_steps(scene: Scene) -> list[str]:
 def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
     corpus = _scene_corpus(scene)
     types = _animation_type_values(scene)
+    if scene.diagram_plan and scene.diagram_plan.kind in {"semiconductor_device", "mos_device", "finfet_device"}:
+        return "semiconductor_device"
+    if _contains_any(
+        corpus,
+        [
+            "mos",
+            "mosfet",
+            "finfet",
+            "source",
+            "drain",
+            "gate",
+            "oxide",
+            "substrate",
+            "channel",
+            "v_g",
+            "v_ds",
+            "w_eff",
+            "晶体管",
+            "栅极",
+            "源极",
+            "漏极",
+            "沟道",
+            "阈值",
+            "短沟道",
+        ],
+    ):
+        return "semiconductor_device"
     has_formula = "write_formula" in types or "formula_reveal" in types or bool(
         re.search(r"(=|∇|Σ|softmax|theta|\\theta|\bloss\b|\battention\s*\()", corpus, flags=re.IGNORECASE)
     )
@@ -794,7 +1566,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     duration = max(fps * 8, round(scene.duration_estimate * fps))
     left = width * 0.07
     top = height * 0.08
-    diagram_left = width * 0.40
+    diagram_left = width * 0.405
     diagram_top = height * 0.22
     accent_colors = ["#F7D77E", "#A8D8F0", "#F4A7A1", "#BFE3C0", "#D7C5F7"]
     accent = accent_colors[scene_index % len(accent_colors)]
@@ -803,6 +1575,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     red = "#D85C4A"
     green = "#3F8F68"
     violet = "#6E58B5"
+    yellow = "#D9A514"
     draw_ops: list[dict] = []
     texts: list[dict] = []
     strokes: list[dict] = []
@@ -837,9 +1610,11 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         start: int,
         frames: int,
         max_width: float | None = None,
+        emphasis: bool | None = None,
+        max_chars: int = 38,
     ) -> None:
         op_id = f"s{scene_index}_text_{len(texts)}"
-        safe_text = _short_text(text, 38)
+        safe_text = _short_text(text, max_chars)
         text_max_width = max_width if max_width is not None else width - x - 70
         safe_start, end = fit_timing(start, frames)
         draw_ops.append(
@@ -862,6 +1637,50 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 "maxWidth": round(text_max_width, 1),
             }
         )
+        emphasis_terms = [
+            "V_G",
+            "V_th",
+            "V_DS",
+            "I_D",
+            "W_eff",
+            "MOS",
+            "FinFET",
+            "Gate",
+            "Source",
+            "Drain",
+            "Channel",
+            "Loss",
+            "gradient",
+            "learning rate",
+            "阈值",
+            "沟道",
+            "短沟道",
+            "电流",
+            "栅极",
+            "学习率",
+            "梯度",
+            "损失",
+        ]
+        should_emphasize = (
+            emphasis
+            if emphasis is not None
+            else len(safe_text) <= 28 and _contains_any(safe_text.lower(), [term.lower() for term in emphasis_terms])
+        )
+        if should_emphasize:
+            estimated_width = min(
+                text_max_width,
+                max(font_size * 1.6, len(safe_text) * font_size * (0.72 if re.search(r"[\u3400-\u9fff]", safe_text) else 0.48)),
+            )
+            underline_y = y + font_size * 1.05
+            underline_points = _curve_points(
+                x,
+                underline_y,
+                x + estimated_width,
+                underline_y,
+                count=10,
+                wave=max(2.0, font_size * 0.035),
+            )
+            add_stroke("emphasis_underline", underline_points, yellow, max(4, round(font_size * 0.10)), end + 1, 8)
 
     def add_stroke(
         role: str,
@@ -1347,10 +2166,125 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             cursor += 6
         return cursor
 
+    def build_semiconductor_device(start: int) -> int:
+        cursor = start
+        corpus = _scene_corpus(scene)
+        x = diagram_left + width * 0.015
+        y = diagram_top + height * 0.12
+        panel_w = width * 0.22
+        panel_h = height * 0.30
+
+        def draw_planar_mos(px: float, py: float, label: str, on_state: bool, start_frame: int) -> int:
+            local = start_frame
+            add_text(label, px, py - height * 0.065, body_size, green if on_state else red, local, 18, panel_w)
+            local += 20
+            substrate_y = py + panel_h * 0.58
+            add_stroke("substrate", _rect_points(px, substrate_y, panel_w, panel_h * 0.18), ink, 4, local, 14, close=True)
+            local += 16
+            source_x = px + panel_w * 0.08
+            drain_x = px + panel_w * 0.68
+            add_stroke("terminal", _rect_points(source_x, py + panel_h * 0.35, panel_w * 0.20, panel_h * 0.21), blue, 4, local, 12, close=True)
+            add_stroke("terminal", _rect_points(drain_x, py + panel_h * 0.35, panel_w * 0.20, panel_h * 0.21), blue, 4, local + 8, 12, close=True)
+            local += 22
+            oxide_y = py + panel_h * 0.28
+            add_stroke("oxide", _line_points(px + panel_w * 0.32, oxide_y, px + panel_w * 0.68, oxide_y, count=8), violet, 4, local, 10)
+            add_stroke("gate", _rect_points(px + panel_w * 0.38, py + panel_h * 0.12, panel_w * 0.24, panel_h * 0.12), ink, 4, local + 8, 12, close=True)
+            local += 22
+            add_text("S", source_x + panel_w * 0.06, py + panel_h * 0.39, max(18, body_size - 6), blue, local, 10, panel_w * 0.10)
+            add_text("D", drain_x + panel_w * 0.06, py + panel_h * 0.39, max(18, body_size - 6), blue, local + 4, 10, panel_w * 0.10)
+            add_text("G", px + panel_w * 0.45, py + panel_h * 0.13, max(18, body_size - 6), ink, local + 8, 10, panel_w * 0.10)
+            local += 18
+            channel_y = py + panel_h * 0.51
+            if on_state:
+                add_stroke("channel", _line_points(px + panel_w * 0.29, channel_y, px + panel_w * 0.73, channel_y, count=12), green, 7, local, 16)
+                add_arrow(_line_points(px + panel_w * 0.30, channel_y + 24, px + panel_w * 0.72, channel_y + 24, count=8), red, 4, local + 15, 16, role="current")
+                add_text("I_D", px + panel_w * 0.47, channel_y + 38, max(16, body_size - 10), red, local + 28, 12, panel_w * 0.20)
+                local += 44
+            else:
+                add_stroke("no_channel", _line_points(px + panel_w * 0.34, channel_y, px + panel_w * 0.65, channel_y, count=5), red, 3, local, 8)
+                add_stroke("no_channel", _line_points(px + panel_w * 0.48, channel_y - 18, px + panel_w * 0.55, channel_y + 18, count=4), red, 4, local + 8, 8)
+                add_stroke("no_channel", _line_points(px + panel_w * 0.55, channel_y - 18, px + panel_w * 0.48, channel_y + 18, count=4), red, 4, local + 15, 8)
+                local += 28
+            return local
+
+        if _contains_any(corpus, ["w_eff", "2h_fin", "cross-section", "cross section", "截面", "有效宽度"]):
+            fin_x = x + panel_w * 0.86
+            fin_y = y + panel_h * 0.18
+            fin_w = width * 0.10
+            fin_h = height * 0.34
+            add_stroke("fin", _rect_points(fin_x, fin_y, fin_w, fin_h), green, 5, cursor, 18, close=True)
+            cursor += 20
+            gate_points = [
+                _point(fin_x - width * 0.045, fin_y - height * 0.025),
+                _point(fin_x - width * 0.045, fin_y + fin_h + height * 0.025),
+                _point(fin_x + fin_w + width * 0.045, fin_y + fin_h + height * 0.025),
+                _point(fin_x + fin_w + width * 0.045, fin_y - height * 0.025),
+            ]
+            add_stroke("gate_wrap", gate_points, violet, 6, cursor, 22)
+            cursor += 26
+            add_arrow(_line_points(fin_x - width * 0.10, fin_y + fin_h * 0.48, fin_x - 8, fin_y + fin_h * 0.48, count=7), blue, 3, cursor, 12)
+            add_arrow(_line_points(fin_x + fin_w + width * 0.10, fin_y + fin_h * 0.52, fin_x + fin_w + 8, fin_y + fin_h * 0.52, count=7), blue, 3, cursor + 8, 12)
+            add_arrow(_line_points(fin_x + fin_w * 0.5, fin_y - height * 0.10, fin_x + fin_w * 0.5, fin_y - 6, count=7), blue, 3, cursor + 16, 12)
+            cursor += 34
+            add_text("H_fin", fin_x - width * 0.105, fin_y + fin_h * 0.42, body_size, blue, cursor, 20, width * 0.12)
+            add_text("W_fin", fin_x + fin_w * 0.10, fin_y - height * 0.085, body_size, blue, cursor + 8, 20, width * 0.13)
+            add_text("W_eff = 2H_fin + W_fin", x, y + panel_h + height * 0.10, body_size, violet, cursor + 18, 36, width * 0.42)
+            cursor += 60
+            for offset in [0.18, 0.5, 0.82]:
+                add_stroke("charge", _circle_points(fin_x + fin_w * offset, fin_y + fin_h * 0.10, 8, 8, count=10), red, 3, cursor, 6)
+                cursor += 7
+            return cursor
+
+        if _contains_any(corpus, ["finfet", "fin channel", "wrap", "三面", "包住", "鳍"]):
+            base_y = y + panel_h * 0.64
+            fin_x = x + panel_w * 0.55
+            fin_y = y + panel_h * 0.18
+            add_stroke("source", _rect_points(x + panel_w * 0.05, base_y - 40, panel_w * 0.30, 80), blue, 4, cursor, 16, close=True)
+            add_stroke("drain", _rect_points(x + panel_w * 1.15, base_y - 40, panel_w * 0.30, 80), blue, 4, cursor + 10, 16, close=True)
+            cursor += 28
+            add_stroke("fin", _rect_points(fin_x, fin_y, panel_w * 0.45, panel_h * 0.55), green, 5, cursor, 18, close=True)
+            cursor += 22
+            add_stroke("gate_wrap", _rect_points(fin_x - 28, fin_y + 20, panel_w * 0.56, panel_h * 0.34), violet, 6, cursor, 20, close=True)
+            cursor += 26
+            add_text("Source", x + panel_w * 0.06, base_y + 54, body_size, blue, cursor, 18, width * 0.12)
+            add_text("Drain", x + panel_w * 1.17, base_y + 54, body_size, blue, cursor + 7, 18, width * 0.12)
+            add_text("Gate wraps 3 sides", fin_x - width * 0.04, fin_y - height * 0.08, body_size, violet, cursor + 16, 28, width * 0.28)
+            cursor += 50
+            for side_x in [fin_x - 48, fin_x + panel_w * 0.22, fin_x + panel_w * 0.50]:
+                add_arrow(_line_points(side_x, fin_y - height * 0.06, fin_x + panel_w * 0.22, fin_y + panel_h * 0.20, count=7), red, 3, cursor, 12)
+                cursor += 13
+            return cursor
+
+        if _contains_any(corpus, ["short-channel", "short channel", "短沟道"]):
+            left_end = draw_planar_mos(x, y, "Long channel", False, cursor)
+            right_x = x + panel_w * 1.25
+            cursor = max(left_end, cursor + 70)
+            add_arrow(_curve_points(x + panel_w + 8, y + panel_h * 0.40, right_x - 24, y + panel_h * 0.40, count=12, wave=height * 0.03), ink, 4, cursor, 18)
+            cursor += 24
+            right_end = draw_planar_mos(right_x, y, "Short channel", False, cursor)
+            cursor = max(cursor, right_end)
+            add_arrow(_line_points(right_x + panel_w * 0.12, y + panel_h * 0.50, right_x + panel_w * 0.45, y + panel_h * 0.50, count=7), red, 4, cursor, 12)
+            add_arrow(_line_points(right_x + panel_w * 0.88, y + panel_h * 0.50, right_x + panel_w * 0.55, y + panel_h * 0.50, count=7), red, 4, cursor + 8, 12)
+            add_text("field intrusion", right_x + panel_w * 0.22, y + panel_h * 0.74, body_size, red, cursor + 18, 24, panel_w * 0.70)
+            return cursor + 50
+
+        if _contains_any(corpus, ["off", "on", "v_g", "vth", "v_th", "阈值"]):
+            left_end = draw_planar_mos(x, y, "OFF: V_G < V_th", False, cursor)
+            right_x = x + panel_w * 1.30
+            cursor = max(left_end, cursor + 70)
+            add_arrow(_curve_points(x + panel_w + 6, y + panel_h * 0.40, right_x - 22, y + panel_h * 0.40, count=16, wave=height * 0.035), ink, 4, cursor, 18)
+            cursor += 24
+            right_end = draw_planar_mos(right_x, y, "ON: V_G > V_th", True, cursor)
+            return max(cursor, right_end)
+
+        cursor = draw_planar_mos(x + panel_w * 0.35, y, fallback_label(0, "MOS structure"), True, cursor)
+        add_text(fallback_label(1, "Gate controls channel"), x, y + panel_h + height * 0.09, body_size, violet, cursor, 30, width * 0.42)
+        return cursor + 36
+
     cursor = 8
-    title_size = 62 if width >= 1600 else 46
-    body_size = 39 if width >= 1600 else 29
-    add_text(scene.title or f"Scene {scene_index + 1}", left, top, title_size, blue, cursor, 52)
+    title_size = 54 if width >= 1600 else 42
+    body_size = 34 if width >= 1600 else 27
+    add_text(scene.title or f"Scene {scene_index + 1}", left, top, title_size, blue, cursor, 48, emphasis=True, max_chars=24)
     cursor += 60
 
     builders = {
@@ -1361,6 +2295,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "attention_network": build_attention_network,
         "matrix_transform": build_matrix_transform,
         "feedback_loop": build_feedback_loop,
+        "semiconductor_device": build_semiconductor_device,
     }
     if raster_strokes and reference_image_asset:
         cursor = build_raster_reveal(cursor)
@@ -1369,16 +2304,18 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     else:
         cursor = builders.get(diagram_kind, build_process_flow)(cursor)
 
-    note_y = top + height * 0.28
-    for note_index, line in enumerate(core_lines[:3]):
+    note_y = top + height * 0.30
+    note_lines = [] if diagram_kind == "semiconductor_device" or raster_reveal_spec else core_lines[:2]
+    for note_index, line in enumerate(note_lines):
         if cursor + 42 > duration - 8:
             break
-        add_text(line, left + 34, note_y + note_index * (body_size + 16), body_size, ink, cursor, 34, width * 0.34)
-        cursor += 47
+        add_text(line, left + 34, note_y + note_index * (body_size + 28), body_size, ink, cursor, 30, width * 0.30, max_chars=18)
+        cursor += 43
 
     if len(texts) < 2 and cursor + 42 <= duration - 8:
-        add_text(_short_text(scene.narration, 32), left + 34, top + height * 0.38, body_size, ink, cursor, 42)
+        add_text(_short_text(scene.narration, 24), left + 34, top + height * 0.38, body_size, ink, cursor, 36, width * 0.30, max_chars=18)
 
+    _retime_draw_ops_to_fill_scene(draw_ops, duration)
     wash_points = _rect_points(diagram_left - 28, diagram_top + height * 0.02, width * 0.48, height * 0.48)
     return {
         "title": scene.title,
@@ -1401,11 +2338,14 @@ def _build_fallback_remotion_tsx(
     fps: int,
     width: int,
     height: int,
+    subtitles_enabled: bool = False,
 ) -> tuple[str, int]:
     scene_specs = [
         _build_fallback_scene_spec(scene, index, fps, width, height)
         for index, scene in enumerate(storyboard.scenes[:6])
     ]
+    for scene_spec, scene in zip(scene_specs, storyboard.scenes[:6]):
+        scene_spec["subtitleText"] = _subtitle_text(scene.narration) if subtitles_enabled else None
     if not scene_specs:
         raise ValueError("Cannot build fallback Remotion TSX without storyboard scenes")
     duration = sum(scene["duration"] for scene in scene_specs)
@@ -1442,6 +2382,7 @@ type SceneSpec = {
   strokes: StrokeSpec[];
   referenceImageAsset?: string | null;
   rasterReveal?: RasterRevealSpec | null;
+  subtitleText?: string | null;
 };
 
 const scenes = __SCENES_JSON__ as SceneSpec[];
@@ -1502,6 +2443,79 @@ const HandPen = ({ tipX, tipY, visible }: { tipX: number; tipY: number; visible:
     <Img src={staticFile("hand-real-pen.png")} style={{ width: HAND_WIDTH, height: HAND_HEIGHT }} />
   </div>
 );
+
+const captionWeight = (value: string) =>
+  Array.from(value).reduce((sum, char) => sum + (char.charCodeAt(0) > 255 ? 2 : 1), 0);
+
+const splitSubtitleText = (value: string): string[] => {
+  const source = value.replace(/\s+/g, " ").trim();
+  if (!source) return [];
+  const chunks: string[] = [];
+  let current = "";
+  for (const char of Array.from(source)) {
+    const candidate = current + char;
+    const shouldBreak = current && captionWeight(candidate) > 54;
+    if (shouldBreak) {
+      chunks.push(current.trim());
+      current = char.trimStart();
+    } else {
+      current = candidate;
+    }
+    if (/[。！？；.!?;]/.test(char) && captionWeight(current) >= 28) {
+      chunks.push(current.trim());
+      current = "";
+    }
+  }
+  if (current.trim()) chunks.push(current.trim());
+  return chunks.filter(Boolean);
+};
+
+const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
+  const frame = useCurrentFrame();
+  const text = scene.subtitleText?.trim();
+  if (!text) return null;
+  const chunks = splitSubtitleText(text);
+  if (chunks.length === 0) return null;
+  const progress = clamp01(frame / Math.max(1, scene.duration - 1));
+  const index = Math.min(chunks.length - 1, Math.floor(progress * chunks.length));
+  const opacity = interpolate(frame, [0, 8, Math.max(9, scene.duration - 10), Math.max(10, scene.duration - 2)], [0, 1, 1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: 0,
+        right: 0,
+        bottom: 42,
+        display: "flex",
+        justifyContent: "center",
+        pointerEvents: "none",
+        zIndex: 30,
+        opacity,
+      }}
+    >
+      <div
+        style={{
+          maxWidth: VIDEO_WIDTH * 0.78,
+          padding: "0 24px",
+          color: "#111318",
+          fontFamily: "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
+          fontSize: 34,
+          fontWeight: 500,
+          lineHeight: 1.42,
+          letterSpacing: 0,
+          textAlign: "center",
+          textShadow: "0 1px 0 #fff, 0 0 8px #fff, 0 0 16px #fff",
+          whiteSpace: "pre-wrap",
+        }}
+      >
+        {chunks[index]}
+      </div>
+    </div>
+  );
+};
 
 const DrawGlyphPath = ({ spec, op }: { spec: GlyphPathSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
@@ -1661,7 +2675,7 @@ const CartoonDiagram = ({ scene }: { scene: SceneSpec }) => (
 const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
   const drawOps = scene.drawOps;
-  const backgroundColor = scene.rasterReveal ? "#FFFFFF" : "#FBFAF5";
+  const backgroundColor = "#FFFFFF";
   const getActiveDrawOp = (frame: number) =>
     drawOps.find((op) => frame >= op.startFrame && frame <= op.endFrame);
   const getPenPosition = (frame: number) => {
@@ -1677,13 +2691,13 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
     <AbsoluteFill style={{ backgroundColor, overflow: "hidden" }}>
       {scene.audioUrl ? <Audio src={scene.audioUrl} /> : null}
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
-        {scene.rasterReveal ? null : <path d={scene.washD} fill={scene.accent} opacity={0.24} />}
         <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />
         <GlyphText scene={scene} />
       </svg>
       <RasterFinalOverlay scene={scene} />
+      <SubtitleOverlay scene={scene} />
       <HandPen tipX={pen.x} tipY={pen.y} visible={pen.visible} />
     </AbsoluteFill>
   );
@@ -1722,12 +2736,15 @@ Generate ONE self-contained TSX module for a complete educational whiteboard vid
 Target visual reference:
 - A sparse white canvas where a real visible hand holds a marker and writes/draws every visible element live.
 - The hand must be on screen during drawing, with the pen tip touching the active text stroke, line, arrow, box, equation, or diagram.
-- Use black marker outlines with limited blue marker text. Use very light fill washes only as separate closed shapes behind strokes, never as fill on an open animated path.
+- Use black marker outlines plus purposeful teaching colors: red for current/flow, blue for voltage/control arrows, green for channels/valid paths, purple for gate/structure, and yellow underlines/callouts for key ideas. Keep the canvas plain white; do not add colored background washes, paper tints, or colored panels behind diagrams.
 - Text should feel handwritten: irregular but readable, large, dark/blue marker strokes, revealed character-by-character or word-by-word while the hand follows the reveal.
 - For Chinese text, fontFamily must start with a handwriting-style Chinese font stack like "KaiTi, STKaiti, Kaiti SC, cursive". Do not rely on default bold sans-serif Chinese.
 - Graphics should feel hand-sketched: speech bubbles, arrows, boxes, curves, icons, charts, characters, objects, and concept diagrams are revealed by strokes being drawn.
 - Preserve lots of empty white space. Avoid slide-deck cards, polished UI panels, gradients, stock images, and decorative template layouts.
 - Prefer one meaningful illustrated explanation per scene over dense bullet lists.
+- Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
+- Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
+- If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
 
 Hard requirements:
 - Export exactly one named component, either `export const GeneratedVideo = ...` or `export function GeneratedVideo() ...`.
@@ -1737,7 +2754,9 @@ Hard requirements:
 - Do not use CSS animations/transitions. All motion must use Remotion frame APIs: useCurrentFrame(), interpolate(), Easing, spring(), Sequence, AbsoluteFill.
 - The TSX must explicitly use useCurrentFrame(), Sequence, and at least one of interpolate() or spring().
 - Every scene must draw text and shapes over time. Define inline helper components such as HandText, DrawPath, SketchBubble, SketchArrow, or DiagramStroke inside the same TSX module.
+- Board text must use glyphPaths; optional subtitles may use normal HTML text as a separate overlay because they are captions rather than handwritten board content.
 - The central animation model must be a `drawOps` array. Each op must have `kind`, `startFrame`, `endFrame`, and a `points: {x:number; y:number}[]` polyline that represents the actual stroke path the marker tip follows.
+- The drawOps timeline should fill each scene with drawing work and avoid dead air. The final drawOp of a scene should end near the scene duration, leaving only a short natural beat before the next Sequence.
 - Define `pointOnPolyline(points, progress)`, `getActiveDrawOp(frame)`, and `getPenPosition(frame)`. The rendered `<HandPen>` must use `const pen = getPenPosition(frame)` and pass `tipX={pen.x}` and `tipY={pen.y}`. Hand visibility must come from whether an active draw op exists.
 - The pen must move up, down, left, and right inside words and drawings. Do not make the hand travel along a single straight baseline for text. Text ops must include zig-zag or stroke-like points for each word/phrase so the marker visibly writes within glyph shapes.
 - Never define `const tipX = interpolate(frame, [...])` or `const tipY = interpolate(frame, [...])` at scene level. Pen coordinates must be sampled from active `drawOps.points`.
@@ -1753,20 +2772,20 @@ Hard requirements:
 - The hand should be large enough to resemble the reference video, roughly 240-300 px wide on a 1920x1080 canvas, not a tiny cursor.
 - SVG line drawings must use strokeDasharray and strokeDashoffset driven by useCurrentFrame()/interpolate().
 - If a scene includes rasterReveal and referenceImageAsset, reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. Do not fade in or directly display the full reference image as the main animation. After all raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
-- Animated dashed paths must have `fill="none"`. If a wash/fill is needed, draw a separate closed shape behind the animated stroke without strokeDasharray/strokeDashoffset.
+- Animated dashed paths must have `fill="none"`. Do not use background washes or colored panels; use color only on teaching strokes, arrows, underlines, callouts, and small emphasis marks.
 - Text must be progressively revealed with slice(), substring(), or a frame-driven clipPath. Do not show full paragraphs instantly.
 - For Chinese text, define a `glyphPaths` array and render it with inline `GlyphText` / `DrawGlyphPath` helpers using SVG `<path>` plus strokeDasharray/strokeDashoffset. The render server will preprocess these glyph paths from a local Chinese font with opentype.js, so include text specs and matching text drawOps instead of static SVG `<text>`.
 - Do not use an HTML `HandText` slice-only renderer as the final text drawing path. The pen must follow glyph outline/path points that can be replaced by the renderer.
 - Opacity fade may be used only as a secondary polish, never as the main animation for text or diagrams.
 - Do not use SVG SMIL tags such as <animate>. Even SVG details must be driven by Remotion frame values.
-- Include at least one non-black/white muted watercolor accent fill or wash in non-raster scenes, such as warm yellow, red, blue, tan, or gray. For rasterReveal/referenceImageAsset scenes, do not add color washes or colored panels behind the image; keep the source image asset transparent over a plain white canvas.
+- Include multiple limited instructional colors in non-raster scenes, such as red current arrows, blue voltage/control arrows, green channel paths, purple gate/structure strokes, and yellow key underlines/callouts. Do not add color washes or colored panels behind any diagram; keep image assets transparent over a plain white canvas.
 - Do not use transition, animation, @keyframes, Tailwind animate-* class names, setTimeout, setInterval, requestAnimationFrame, Date.now(), or Math.random().
 - Do not use fetch, eval, Function, require, filesystem APIs, browser globals, or dangerouslySetInnerHTML.
 - Hardcode the provided storyboard content and audio URLs into the TSX.
 - Use <Audio src="..."> from remotion for scene voiceover when audioUrl exists.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
-- Use a clean Chinese whiteboard teaching style: off-white background for drawn diagram scenes; plain white background for rasterReveal/referenceImageAsset scenes; black ink outlines, loose muted color fills where appropriate, spacious layout, progressive reveal.
+- Use a clean Chinese whiteboard teaching style: plain white background for every scene, black ink outlines, purposeful colored teaching strokes, spacious layout, progressive reveal.
 - Keep text inside safe bounds for 1920x1080.
 - Keep helpers deterministic. If you need hand-drawn jitter, compute it from indexes or fixed arrays, never Math.random().
 
@@ -1796,6 +2815,7 @@ async def generate_remotion_code(
         "using glyphPaths/GlyphText/DrawGlyphPath so the renderer can replace Chinese text with opentype.js font outlines, "
         "using rasterReveal/referenceImageAsset masks when the storyboard provides an original reference image to reveal, "
         "using staticFile('hand-real-pen.png'), <Img>, and getPenPosition(frame) coordinates. "
+        "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
         "Use Chinese handwritten fonts and anime/cartoon whiteboard doodles. "
         "No stock images, no templates, no decorative component frames."
     )
@@ -1825,6 +2845,7 @@ async def generate_remotion_code(
             "width": req.width,
             "height": req.height,
             "target_duration_in_frames": target_frames,
+            "subtitles_enabled": req.subtitles_enabled,
             "style_prompt": style_prompt,
             "storyboard": storyboard_data,
         },
@@ -1883,8 +2904,9 @@ async def generate_remotion_code(
                     "draw SVG lines with strokeDasharray/strokeDashoffset, reveal text progressively, "
                     "render Chinese text through glyphPaths with GlyphText/DrawGlyphPath so the renderer can "
                     "preprocess font outline paths using opentype.js, "
+                    "render scene.narration as bottom HTML subtitles only when subtitles_enabled is true, "
                     "use STXingkai/华文行楷/KaiTi/STKaiti for Chinese handwriting, never bold sans-serif, "
-                    "include muted watercolor accent colors and anime/cartoon whiteboard doodles, "
+                    "include limited teaching accent colors and anime/cartoon whiteboard doodles, with a plain white background, "
                     f"render a moving HandPen with <Img src={{staticFile('{HAND_ASSET}')}} />, "
                     "use HAND_WIDTH >= 220 and PEN_TIP_X/PEN_TIP_Y offsets so the marker tip touches the active stroke, "
                     "define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), "
@@ -1929,8 +2951,7 @@ async def generate_remotion_code(
                     "duration_in_frames": response.duration_in_frames,
                     "notes": response.notes,
                 }
-    duration = int(raw.get("duration_in_frames") or target_frames)
-    duration = max(req.fps * 10, min(duration, req.fps * 240))
+    duration = max(req.fps * 10, min(target_frames, req.fps * 240))
 
     return _cache_remotion_response(
         cache_key,

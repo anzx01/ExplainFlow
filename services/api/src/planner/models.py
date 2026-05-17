@@ -5,16 +5,14 @@ from src.explain.models import ExplainGraph
 
 
 class AnimationType(str, Enum):
-    # 新动画类型
-    WRITE_TEXT = "write_text"             # 逐字手写文本
-    WRITE_FORMULA = "write_formula"       # 公式逐步显现
-    DRAW_ARROW = "draw_arrow"             # 画箭头
-    DRAW_BOX = "draw_box"                 # 画矩形框
-    CONCEPT_BUBBLE = "concept_bubble"     # 概念气泡
-    BULLET_LIST = "bullet_list"           # 要点列表
-    STEP_REVEAL = "step_reveal"           # 步骤揭示
-    HIGHLIGHT_REGION = "highlight_region" # 黄色高亮区域
-    # 向后兼容别名
+    WRITE_TEXT = "write_text"
+    WRITE_FORMULA = "write_formula"
+    DRAW_ARROW = "draw_arrow"
+    DRAW_BOX = "draw_box"
+    CONCEPT_BUBBLE = "concept_bubble"
+    BULLET_LIST = "bullet_list"
+    STEP_REVEAL = "step_reveal"
+    HIGHLIGHT_REGION = "highlight_region"
     WHITEBOARD_DRAW = "whiteboard_draw"
     FORMULA_REVEAL = "formula_reveal"
     CONCEPT_NODE = "concept_node"
@@ -34,7 +32,25 @@ class AnimationInstruction(BaseModel):
     to_node: str | None = None
     x: float | None = None
     y: float | None = None
-    items: list[str] | None = None   # bullet_list / step_reveal 条目
+    items: list[str] | None = None
+
+
+class VisualBeat(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str | None = None
+    draw_intent: str
+    narration: str
+    required_labels: list[str] = Field(default_factory=list)
+    duration_estimate: float = Field(default=6.0, ge=1.0, le=30.0)
+
+
+class DiagramPlan(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    kind: str = "process"
+    layout: str = ""
+    required_labels: list[str] = Field(default_factory=list)
 
 
 class Scene(BaseModel):
@@ -47,8 +63,11 @@ class Scene(BaseModel):
     duration_estimate: float
     animations: list[AnimationInstruction] = Field(default_factory=list)
     node_ids: list[str] = Field(default_factory=list)
-    image_description: str | None = None  # 英文，描述该场景要生成的插图内容
-    image_url: str | None = None          # Seedream 生成后注入
+    image_description: str | None = None
+    image_url: str | None = None
+    learning_goal: str | None = None
+    visual_beats: list[VisualBeat] = Field(default_factory=list)
+    diagram_plan: DiagramPlan | None = None
 
 
 class Storyboard(BaseModel):
@@ -74,6 +93,7 @@ class GenerateRemotionCodeRequest(BaseModel):
     width: int = Field(default=1920, ge=640, le=3840)
     height: int = Field(default=1080, ge=360, le=2160)
     style_prompt: str | None = None
+    subtitles_enabled: bool = False
 
 
 class GenerateRemotionCodeResponse(BaseModel):

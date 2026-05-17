@@ -20,12 +20,21 @@ export default function StudioPage() {
   const [projectName, setProjectName] = useState("未命名项目");
   const [targetDuration, setTargetDuration] = useState(120);
 
-  const handleGenerate = async (prompt: string, markdown: string, duration: number) => {
+  const handleDurationChange = (duration: number) => {
+    setTargetDuration(duration);
+    if (storyboard) {
+      setStoryboard(null);
+      sessionStorage.removeItem("explainflow_storyboard");
+      setTab("graph");
+    }
+  };
+
+  const handleGenerate = async (prompt: string, markdown: string) => {
     setError(null);
     setLoadingGraph(true);
     setGraph(null);
     setStoryboard(null);
-    setTargetDuration(duration);
+    sessionStorage.removeItem("explainflow_storyboard");
 
     try {
       const g = await generateGraph(prompt, markdown);
@@ -118,7 +127,12 @@ export default function StudioPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Left panel */}
         <div className="w-96 flex-shrink-0 bg-[--bg-surface] border-r border-[--border-subtle] flex flex-col overflow-hidden">
-          <LeftPanel onGenerate={handleGenerate} loading={loadingGraph} />
+          <LeftPanel
+            onGenerate={handleGenerate}
+            loading={loadingGraph}
+            duration={targetDuration}
+            onDurationChange={handleDurationChange}
+          />
         </div>
 
         {/* Right panel */}

@@ -10,12 +10,21 @@ from src.core.config import settings
 logger = logging.getLogger(__name__)
 
 _STYLE_SUFFIX = (
-    "whiteboard sketch illustration style, black outline drawing on clean white background, "
-    "simple line art, no shading, no color fill, educational diagram, minimal clean style, "
-    "hand-drawn marker look, bold black lines, clear labels"
+    "whiteboard sketch illustration style, black outline drawing on a plain white or transparent-looking background, "
+    "simple line art, minimal clean style, educational diagram, "
+    "use limited teaching colors: red for current or flow, blue for voltage/control arrows, "
+    "green for conductive channels or valid paths, purple for gate/structure, yellow for key underlines and callouts, "
+    "hand-drawn marker look, bold black lines, clear labels, "
+    "follow every requested label exactly, draw the specific mechanism described, "
+    "include process arrows, state comparison panels, cross-section callouts, and local zoom-in details when requested, "
+    "when helpful include a small picture-in-picture reference sketch or real-world analogy diagram that maps to the technical mechanism, "
+    "show progressive focus with large readable labels, arrows added only to the relevant region, and acronym expansion when the concept has an acronym, "
+    "underline or circle important terms like an excellent teacher's board notes, "
+    "do not use colored paper, yellow background, pastel panels, background washes, frames, or tinted rectangles, "
+    "avoid generic icons or placeholder shapes"
 )
 
-_NEGATIVE = "photo, realistic, colorful, 3d render, painting, watercolor, complex background"
+_NEGATIVE = "photo, realistic, full-color poster, 3d render, painting, complex background, decorative template, yellow background, beige paper, colored paper, pastel panel, background wash, tinted rectangle"
 
 
 @dataclass

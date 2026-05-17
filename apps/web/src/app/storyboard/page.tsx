@@ -26,9 +26,11 @@ const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
 
 function RenderButton({
   storyboard,
+  subtitlesEnabled,
   onVideoReady,
 }: {
   storyboard: Storyboard;
+  subtitlesEnabled: boolean;
   onVideoReady: (url: string) => void;
 }) {
   const [state, setState] = useState<RenderState>("idle");
@@ -71,7 +73,12 @@ function RenderButton({
       const res = await fetch(`${API}/render/job`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ storyboard, voice: "xiaoxiao", resolution: "1080p" }),
+        body: JSON.stringify({
+          storyboard,
+          voice: "xiaoxiao",
+          resolution: "1080p",
+          subtitles_enabled: subtitlesEnabled,
+        }),
       });
       if (!res.ok) {
         const d = await res.json();
@@ -231,6 +238,7 @@ const DEMO_STORYBOARD: Storyboard = {
 export default function StoryboardPage() {
   const [storyboard, setStoryboard] = useState<Storyboard>(DEMO_STORYBOARD);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
 
   useEffect(() => {
     const saved = sessionStorage.getItem("explainflow_storyboard");
@@ -273,7 +281,35 @@ export default function StoryboardPage() {
           <span className="text-xs font-mono text-[--fg-muted]">
             共 {storyboard.scenes.length} 场 · {Math.round(storyboard.total_duration_estimate)}s
           </span>
-          <RenderButton storyboard={storyboard} onVideoReady={setVideoUrl} />
+          <label className="h-8 px-2.5 rounded-md border border-[--border-default] text-xs text-[--fg-muted] inline-flex items-center gap-2 select-none cursor-pointer">
+            <input
+              type="checkbox"
+              checked={subtitlesEnabled}
+              onChange={(event) => setSubtitlesEnabled(event.target.checked)}
+              className="sr-only"
+            />
+            <span
+              className={`relative h-4 w-7 rounded-full border transition-colors ${
+                subtitlesEnabled
+                  ? "bg-purple-500/30 border-purple-500"
+                  : "bg-[--bg-elevated] border-[--border-default]"
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-2.5 w-2.5 rounded-full transition-transform ${
+                  subtitlesEnabled
+                    ? "translate-x-3.5 bg-purple-300"
+                    : "translate-x-0.5 bg-[--fg-subtle]"
+                }`}
+              />
+            </span>
+            <span className={subtitlesEnabled ? "text-purple-300" : ""}>字幕</span>
+          </label>
+          <RenderButton
+            storyboard={storyboard}
+            subtitlesEnabled={subtitlesEnabled}
+            onVideoReady={setVideoUrl}
+          />
         </div>
       </header>
 

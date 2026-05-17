@@ -48,6 +48,13 @@ export async function deleteJob(jobId: string): Promise<void> {
   await request<{ ok: boolean }>(`/render/job/${jobId}`, { method: "DELETE" });
 }
 
+export async function deleteJobs(jobIds: string[]): Promise<{ deleted: string[]; missing: string[] }> {
+  return request<{ ok: boolean; deleted: string[]; missing: string[] }>("/render/jobs/delete", {
+    method: "POST",
+    body: JSON.stringify({ job_ids: jobIds }),
+  });
+}
+
 export async function updateJobTopic(jobId: string, topic: string): Promise<void> {
   await request<{ ok: boolean }>(`/render/job/${jobId}`, {
     method: "PATCH",

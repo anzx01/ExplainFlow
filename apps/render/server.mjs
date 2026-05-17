@@ -110,6 +110,7 @@ function saveJobs() {
 }
 
 function updateJob(jobId, patch) {
+  if (!jobs[jobId]) return;
   jobs[jobId] = { ...jobs[jobId], ...patch };
   saveJobs();
 }
@@ -875,11 +876,18 @@ async function makeTransparentLineArtAsset(imageBuffer) {
     const r = data[source];
     const g = data[source + 1];
     const b = data[source + 2];
-    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-    const alpha = clamp(Math.round((232 - gray) * 5.4), 0, 255);
-    rgba[target] = r;
-    rgba[target + 1] = g;
-    rgba[target + 2] = b;
+    const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    const chroma = Math.max(r, g, b) - Math.min(r, g, b);
+    const darkAlpha = clamp(Math.round((225 - luminance) * 6.0), 0, 255);
+    const colorInkAlpha =
+      chroma > 70 && luminance < 235
+        ? clamp(Math.round((chroma - 45) * 3.5 + (235 - luminance) * 1.4), 0, 255)
+        : 0;
+    const paperLike = luminance > 230 && chroma < 75;
+    const alpha = paperLike ? 0 : Math.max(darkAlpha, colorInkAlpha);
+    rgba[target] = alpha === 0 ? 255 : r;
+    rgba[target + 1] = alpha === 0 ? 255 : g;
+    rgba[target + 2] = alpha === 0 ? 255 : b;
     rgba[target + 3] = alpha;
   }
 
@@ -1638,15 +1646,20 @@ function validateGeneratedTsx(tsx) {
   return code;
 }
 
-async function generateRemotionCode(storyboard) {
+async function generateRemotionCode(storyboard, options = {}) {
+  const subtitlesEnabled = Boolean(options.subtitlesEnabled);
   const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
     storyboard,
     fps: FPS,
     width: WIDTH,
     height: HEIGHT,
+    subtitles_enabled: subtitlesEnabled,
     style_prompt:
       "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
-      "Every visible text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
+      "Every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
+      (subtitlesEnabled
+        ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
+        : "Do not render subtitles or caption overlays. ") +
       "Import Img and staticFile from remotion and render <Img src={staticFile(\"hand-real-pen.png\")} /> " +
       "inside a HandPen component positioned from getPenPosition(frame) coordinates. " +
       "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; " +
@@ -1660,8 +1673,8 @@ async function generateRemotionCode(storyboard) {
       "using staticFile(scene.referenceImageAsset), drive the hand from the same raster drawOps centerline points, " +
       "keep the transparent line-art image on a plain white canvas without yellow panels or color washes, " +
       "and after all raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
-      "Use a sparse off-white canvas, black marker outlines, blue marker titles, light washes only when useful, " +
-      "animated dashed paths must use fill=\"none\"; use separate closed wash shapes behind strokes. " +
+      "Use a sparse plain white canvas, black marker outlines, blue marker titles, and purposeful colored teaching strokes only, " +
+      "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
       "and lots of negative space. " +
       "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
       "Make the graphics anime/cartoon whiteboard doodles with at least one simple mascot, face, or expressive icon. " +
@@ -1800,7 +1813,7 @@ async function bundleAndRender(jobId, entryPath, outputPath) {
   }
 }
 
-async function renderVideo(jobId, storyboard, voice, outputPath) {
+async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   updateJob(jobId, { phase: "tts", progress: 0 });
   console.log(`[tts] Synthesizing ${storyboard.scenes.length} scenes...`);
   const storyboardWithAudio = await injectAudio(storyboard, voice);
@@ -1812,7 +1825,7 @@ async function renderVideo(jobId, storyboard, voice, outputPath) {
 
   updateJob(jobId, { phase: "codegen", progress: 0 });
   console.log("[codegen] Generating Remotion TSX via LLM...");
-  const generated = await generateRemotionCode(storyboardWithTraces);
+  const generated = await generateRemotionCode(storyboardWithTraces, options);
   const { projectDir, entryPath } = writeGeneratedProject(jobId, generated);
   updateJob(jobId, { generatedDir: projectDir });
   console.log("[codegen] Generated project:", projectDir);
@@ -1848,6 +1861,20 @@ function removePublicGeneratedDir(dir) {
   try {
     rmSync(dir, { recursive: true, force: true });
   } catch {}
+}
+
+function deleteJobRecord(jobId) {
+  const job = jobs[jobId];
+  if (!job) return false;
+  if (job.outputPath && isInside(job.outputPath, OUTPUT_DIR)) {
+    try {
+      unlinkSync(job.outputPath);
+    } catch {}
+  }
+  removeGeneratedDir(job.generatedDir);
+  removePublicGeneratedDir(job.publicAssetDir ?? join(PUBLIC_GENERATED_DIR, jobId));
+  delete jobs[jobId];
+  return true;
 }
 
 function sendJson(res, statusCode, payload) {
@@ -1890,7 +1917,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/render") {
     try {
-      const { storyboard, voice } = JSON.parse(await readBody(req));
+      const { storyboard, voice, subtitlesEnabled, subtitles_enabled } = JSON.parse(await readBody(req));
       if (!storyboard?.scenes?.length) {
         sendJson(res, 400, { error: "storyboard.scenes is required" });
         return;
@@ -1921,7 +1948,9 @@ const server = http.createServer(async (req, res) => {
 
       sendJson(res, 202, { jobId, createdAt });
 
-      renderVideo(jobId, storyboard, voice, outputPath)
+      renderVideo(jobId, storyboard, voice, outputPath, {
+        subtitlesEnabled: Boolean(subtitlesEnabled ?? subtitles_enabled),
+      })
         .then(() => updateJob(jobId, { status: "done", progress: 100, phase: "done" }))
         .catch((err) => {
           updateJob(jobId, { status: "failed", error: err.message });
@@ -1946,6 +1975,25 @@ const server = http.createServer(async (req, res) => {
       }))
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
     sendJson(res, 200, { jobs: list });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/jobs/delete") {
+    try {
+      const payload = JSON.parse(await readBody(req, 1024 * 1024));
+      const jobIds = Array.isArray(payload.jobIds) ? payload.jobIds : [];
+      const deleted = [];
+      const missing = [];
+      for (const rawId of jobIds) {
+        const jobId = String(rawId);
+        if (deleteJobRecord(jobId)) deleted.push(jobId);
+        else missing.push(jobId);
+      }
+      saveJobs();
+      sendJson(res, 200, { ok: true, deleted, missing });
+    } catch {
+      sendJson(res, 400, { error: "invalid JSON" });
+    }
     return;
   }
 
@@ -1988,19 +2036,11 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "DELETE" && url.pathname.startsWith("/job/")) {
     const jobId = url.pathname.slice(5);
-    const job = jobs[jobId];
-    if (!job) {
+    if (!jobs[jobId]) {
       sendJson(res, 404, { error: "not found" });
       return;
     }
-    if (job.outputPath) {
-      try {
-        unlinkSync(job.outputPath);
-      } catch {}
-    }
-    removeGeneratedDir(job.generatedDir);
-    removePublicGeneratedDir(job.publicAssetDir ?? join(PUBLIC_GENERATED_DIR, jobId));
-    delete jobs[jobId];
+    deleteJobRecord(jobId);
     saveJobs();
     sendJson(res, 200, { ok: true });
     return;

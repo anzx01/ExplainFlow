@@ -44,6 +44,20 @@ export interface AnimationInstruction {
   itemPaths?: (SvgTextPath | null)[] | null;
 }
 
+export interface VisualBeat {
+  id?: string | null;
+  draw_intent: string;
+  narration: string;
+  required_labels: string[];
+  duration_estimate: number;
+}
+
+export interface DiagramPlan {
+  kind: string;
+  layout: string;
+  required_labels: string[];
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -55,6 +69,9 @@ export interface Scene {
   audioUrl?: string | null;
   imageUrl?: string | null;
   image_description?: string | null;
+  learning_goal?: string | null;
+  visual_beats?: VisualBeat[];
+  diagram_plan?: DiagramPlan | null;
   // 由 server.mjs injectTextPaths() 注入
   titlePath?: SvgTextPath | null;
 }

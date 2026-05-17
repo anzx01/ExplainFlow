@@ -22,6 +22,27 @@ export interface ExplainGraph {
   nodes: ConceptNode[];
   edges: ConceptEdge[];
   key_insights: string[];
+  enhanced_brief?: EnhancedTeachingBrief | null;
+}
+
+export interface TeachingBriefSceneOutline {
+  title: string;
+  learning_goal: string;
+  diagram_plan: string;
+  must_draw: string[];
+  narration_focus?: string | null;
+}
+
+export interface EnhancedTeachingBrief {
+  original_prompt: string;
+  audience_level: string;
+  topic_type: string;
+  learning_objectives: string[];
+  core_explanation_chain: string[];
+  must_include_points: string[];
+  visual_metaphors: string[];
+  recommended_scene_outline: TeachingBriefSceneOutline[];
+  common_misconceptions: string[];
 }
 
 // ── Storyboard ─────────────────────────────────────────────────
@@ -56,6 +77,20 @@ export interface AnimationInstruction {
   items?: string[] | null;
 }
 
+export interface VisualBeat {
+  id?: string | null;
+  draw_intent: string;
+  narration: string;
+  required_labels: string[];
+  duration_estimate: number;
+}
+
+export interface DiagramPlan {
+  kind: string;
+  layout: string;
+  required_labels: string[];
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -68,6 +103,9 @@ export interface Scene {
   image_url?: string | null;
   imageUrl?: string | null;
   audioUrl?: string | null;
+  learning_goal?: string | null;
+  visual_beats?: VisualBeat[];
+  diagram_plan?: DiagramPlan | null;
 }
 
 export interface Storyboard {

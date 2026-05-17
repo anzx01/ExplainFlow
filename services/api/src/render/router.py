@@ -3,7 +3,13 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse, Response
 
 from src.core.llm import LLMUnavailableError, check_llm_connection
-from .models import RenderJobRequest, RenderJobStatus, RenderJobSummary, RenderJobPatch
+from .models import (
+    BulkDeleteJobsRequest,
+    RenderJobPatch,
+    RenderJobRequest,
+    RenderJobStatus,
+    RenderJobSummary,
+)
 
 router = APIRouter(prefix="/render", tags=["render"])
 
@@ -21,6 +27,7 @@ async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
                     "storyboard": req.storyboard.model_dump(),
                     "voice": req.voice,
                     "resolution": req.resolution,
+                    "subtitlesEnabled": req.subtitles_enabled,
                 },
             )
             resp.raise_for_status()
@@ -131,6 +138,22 @@ async def delete_render_job(job_id: str) -> dict:
             return {"ok": True}
     except HTTPException:
         raise
+    except httpx.ConnectError:
+        raise HTTPException(status_code=503, detail="Render server not running")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/jobs/delete")
+async def bulk_delete_render_jobs(req: BulkDeleteJobsRequest) -> dict:
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{RENDER_SERVER}/jobs/delete",
+                json={"jobIds": req.job_ids},
+            )
+            resp.raise_for_status()
+            return resp.json()
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Render server not running")
     except Exception as e:

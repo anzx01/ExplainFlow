@@ -4,18 +4,26 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 
 interface Props {
-  onGenerate: (prompt: string, markdown: string, duration: number) => void;
+  onGenerate: (prompt: string, markdown: string) => void;
   loading: boolean;
+  duration: number;
+  onDurationChange: (duration: number) => void;
 }
 
-export function LeftPanel({ onGenerate, loading }: Props) {
+function durationLabel(seconds: number) {
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  if (rest === 0) return `${minutes} 分钟`;
+  return `${minutes}分${rest.toString().padStart(2, "0")}秒`;
+}
+
+export function LeftPanel({ onGenerate, loading, duration, onDurationChange }: Props) {
   const [prompt, setPrompt] = useState("");
   const [markdown, setMarkdown] = useState("");
-  const [duration, setDuration] = useState(120);
 
   const handleSubmit = () => {
     if (!prompt.trim()) return;
-    onGenerate(prompt.trim(), markdown.trim(), duration);
+    onGenerate(prompt.trim(), markdown.trim());
   };
 
   return (
@@ -61,7 +69,7 @@ export function LeftPanel({ onGenerate, loading }: Props) {
           <div className="space-y-1">
             <div className="flex justify-between text-xs">
               <span className="text-[--fg-default]">视频时长</span>
-              <span className="font-mono text-purple-400">{Math.round(duration / 60)} 分钟</span>
+              <span className="font-mono text-purple-400">{durationLabel(duration)}</span>
             </div>
             <input
               type="range"
@@ -69,7 +77,7 @@ export function LeftPanel({ onGenerate, loading }: Props) {
               max={180}
               step={10}
               value={duration}
-              onChange={(e) => setDuration(Number(e.target.value))}
+              onChange={(e) => onDurationChange(Number(e.target.value))}
               className="w-full accent-purple-500"
             />
             <div className="flex justify-between text-xs text-[--fg-subtle]">

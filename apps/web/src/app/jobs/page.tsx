@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
-import { listJobs, deleteJob, updateJobTopic } from "@/lib/api";
+import { listJobs, deleteJob, deleteJobs, updateJobTopic } from "@/lib/api";
 import { RENDER_URL } from "@/lib/constants";
 import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 import type { RenderJobSummary } from "@/lib/types";
@@ -137,6 +137,8 @@ export default function JobsPage() {
   const [filter, setFilter] = useState<"all" | "done" | "processing" | "failed">("all");
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const hasProcessingRef = useRef(false);
 
   const fetchJobs = useCallback(async () => {
@@ -165,7 +167,15 @@ export default function JobsPage() {
     return () => clearInterval(id);
   }, []);
 
-  const handleDeleted = (id: string) => setJobs((prev) => prev.filter((j) => j.id !== id));
+  const handleDeleted = (id: string) => {
+    setJobs((prev) => prev.filter((j) => j.id !== id));
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    if (previewId === id) setPreviewId(null);
+  };
   const handleTopicSaved = (id: string, topic: string) =>
     setJobs((prev) => prev.map((j) => (j.id === id ? { ...j, topic } : j)));
 
@@ -174,6 +184,54 @@ export default function JobsPage() {
     if (search && !(j.topic ?? "").toLowerCase().includes(search.toLowerCase()) && !j.id.includes(search)) return false;
     return true;
   });
+
+  const filteredIds = filtered.map((job) => job.id);
+  const selectedFilteredCount = filteredIds.filter((id) => selectedIds.has(id)).length;
+  const allFilteredSelected = filteredIds.length > 0 && selectedFilteredCount === filteredIds.length;
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const toggleAllFiltered = () => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allFilteredSelected) {
+        for (const id of filteredIds) next.delete(id);
+      } else {
+        for (const id of filteredIds) next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const handleBulkDelete = async () => {
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const ok = window.confirm(`确认删除选中的 ${ids.length} 个视频？此操作不可恢复。`);
+    if (!ok) return;
+    setBulkDeleting(true);
+    try {
+      const result = await deleteJobs(ids);
+      const deleted = new Set(result.deleted);
+      setJobs((prev) => prev.filter((job) => !deleted.has(job.id)));
+      setSelectedIds((prev) => {
+        const next = new Set(prev);
+        for (const id of result.deleted) next.delete(id);
+        return next;
+      });
+      if (previewId && deleted.has(previewId)) setPreviewId(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "批量删除失败");
+    } finally {
+      setBulkDeleting(false);
+    }
+  };
 
   const previewJob = previewId ? jobs.find((j) => j.id === previewId) : null;
 
@@ -231,6 +289,15 @@ export default function JobsPage() {
                 </button>
               ))}
             </div>
+            {selectedIds.size > 0 && (
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkDeleting}
+                className="h-7 px-3 rounded text-xs text-red-300 bg-red-500/15 hover:bg-red-500/25 border border-red-500/40 disabled:opacity-50 transition-colors"
+              >
+                {bulkDeleting ? "删除中..." : `批量删除 ${selectedIds.size}`}
+              </button>
+            )}
             <button
               onClick={fetchJobs}
               className="ml-auto h-7 px-3 rounded text-xs text-[--fg-muted] hover:text-[--fg-default] border border-[--border-default] hover:border-[--border-subtle] transition-colors"
@@ -260,6 +327,15 @@ export default function JobsPage() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-[--border-subtle] text-xs text-[--fg-muted] uppercase tracking-wider">
+                    <th className="w-10 px-4 py-2">
+                      <input
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleAllFiltered}
+                        aria-label="选择当前列表"
+                        className="accent-purple-500"
+                      />
+                    </th>
                     <th className="text-left px-6 py-2 font-medium">标题</th>
                     <th className="text-left px-4 py-2 font-medium">状态</th>
                     <th className="text-left px-4 py-2 font-medium">创建时间</th>
@@ -275,6 +351,15 @@ export default function JobsPage() {
                         previewId === job.id ? "bg-purple-500/5" : ""
                       }`}
                     >
+                      <td className="px-4 py-3">
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(job.id)}
+                          onChange={() => toggleSelected(job.id)}
+                          aria-label={`选择 ${job.topic ?? job.id}`}
+                          className="accent-purple-500"
+                        />
+                      </td>
                       <td className="px-6 py-3">
                         <TopicCell job={job} onSaved={handleTopicSaved} />
                       </td>
