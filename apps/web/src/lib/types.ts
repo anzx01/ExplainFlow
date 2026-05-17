@@ -122,6 +122,7 @@ export interface RenderJobSummary {
   phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
   topic: string | null;
   createdAt: string | null;
+  actualDurationSeconds?: number | null;
   error: string | null;
 }
 
@@ -133,6 +134,7 @@ export interface RenderJobStatus {
   video_url?: string | null;
   error?: string | null;
   createdAt?: string | null;
+  actualDurationSeconds?: number | null;
 }
 
 export interface BackgroundMusicTrack {

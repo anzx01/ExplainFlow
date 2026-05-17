@@ -45,11 +45,15 @@ function RenderButton({
   const [progress, setProgress] = useState(0);
   const [phase, setPhase] = useState<RenderPhase>(null);
   const [startedAt, setStartedAt] = useState<string | number | null>(null);
+  const [actualDurationSeconds, setActualDurationSeconds] = useState<number | null>(null);
 
   const poll = useCallback(
     async (id: string) => {
       const res = await fetch(`${API}/render/job/${id}`);
       const data = (await res.json()) as RenderJobStatus;
+      if (typeof data.actualDurationSeconds === "number") {
+        setActualDurationSeconds(data.actualDurationSeconds);
+      }
       if (data.status === "done") {
         setState("done");
         setProgress(100);
@@ -74,6 +78,7 @@ function RenderButton({
     setError(null);
     setProgress(0);
     setPhase(null);
+    setActualDurationSeconds(null);
     setStartedAt(Date.now());
     try {
       const res = await fetch(`${API}/render/job`, {
@@ -154,7 +159,10 @@ function RenderButton({
               />
             </div>
           )}
-          <span className="text-[11px] text-[--fg-muted] font-mono">{etaText}</span>
+          <span className="text-[11px] text-[--fg-muted] font-mono">
+            {etaText}
+            {actualDurationSeconds ? ` · 视频约 ${Math.round(actualDurationSeconds)}s` : ""}
+          </span>
         </div>
       </div>
     );

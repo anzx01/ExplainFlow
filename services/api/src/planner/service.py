@@ -267,6 +267,38 @@ def _cached_remotion_response(key: str) -> GenerateRemotionCodeResponse | None:
     return deepcopy(cached) if cached else None
 
 
+def _storyboard_has_audio_segments(storyboard: Storyboard) -> bool:
+    for scene in storyboard.scenes:
+        value = getattr(scene, "audioSegments", None) or getattr(scene, "audio_segments", None)
+        if value:
+            return True
+        extra = getattr(scene, "model_extra", None)
+        if isinstance(extra, dict) and (extra.get("audioSegments") or extra.get("audio_segments")):
+            return True
+    return False
+
+
+def _validate_beat_timing_usage(code: str) -> None:
+    required = ("audioSegments", "durationInFrames", "beatId")
+    for token in required:
+        if not re.search(rf"\b{token}\b", code):
+            raise ValueError(
+                "Generated Remotion code must use scene.audioSegments and beatId timing "
+                "when beat-level audio is present"
+            )
+    if not re.search(r"<\s*Sequence\b[\s\S]{0,180}<\s*Audio\b", code) and not re.search(
+        r"<\s*Audio\b[\s\S]{0,180}<\s*/\s*Sequence\s*>", code
+    ):
+        raise ValueError("Generated Remotion code must wrap beat audio in <Sequence> windows")
+
+
+def _validate_generated_tsx_for_request(tsx: str, req: GenerateRemotionCodeRequest) -> str:
+    code = _validate_generated_tsx(tsx)
+    if _storyboard_has_audio_segments(req.storyboard):
+        _validate_beat_timing_usage(code)
+    return code
+
+
 def _compile_fast_remotion_response(
     req: GenerateRemotionCodeRequest,
     note: str,
@@ -282,7 +314,7 @@ def _compile_fast_remotion_response(
     )
     return GenerateRemotionCodeResponse(
         tsx=_validate_generated_tsx(fallback_tsx),
-        duration_in_frames=min(fallback_duration, req.fps * 240),
+        duration_in_frames=fallback_duration,
         fps=req.fps,
         width=req.width,
         height=req.height,
@@ -1333,7 +1365,12 @@ def _path_from_points(points: list[dict[str, float]], close: bool = False) -> st
     return " ".join(commands)
 
 
-def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
+def _retime_draw_ops_in_window(
+    draw_ops: list[dict],
+    start_frame: float,
+    end_frame: float,
+    beat_id: str | None = None,
+) -> None:
     if not draw_ops:
         return
     ordered = sorted(
@@ -1344,8 +1381,7 @@ def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
         max(0.5, float(op.get("endFrame", 0)) - float(op.get("startFrame", 0)))
         for _, op in ordered
     ]
-    start_frame = 0.0
-    target_end = max(start_frame + 1.0, duration - 10.0)
+    target_end = max(start_frame + 1.0, end_frame)
     target_span = max(1.0, target_end - start_frame)
     default_gap = 0.35 if len(ordered) > 80 else 0.65
     gap = min(default_gap, target_span * 0.18 / max(1, len(ordered) - 1))
@@ -1358,7 +1394,52 @@ def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
         next_end = target_end if index == len(ordered) - 1 else min(target_end, safe_start + max(min_span, span * scale))
         op["startFrame"] = round(safe_start, 2)
         op["endFrame"] = round(max(safe_start + min_span, next_end), 2)
+        if beat_id:
+            op["beatId"] = beat_id
         cursor = op["endFrame"] + gap
+
+
+def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
+    _retime_draw_ops_in_window(draw_ops, 0.0, max(1.0, duration - 10.0))
+
+
+def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: list[dict], duration: int) -> None:
+    if not draw_ops:
+        return
+    segments = [
+        segment
+        for segment in audio_segments
+        if isinstance(segment, dict)
+        and float(segment.get("endFrame", 0) or 0) > float(segment.get("startFrame", 0) or 0)
+    ]
+    if not segments:
+        _retime_draw_ops_to_fill_scene(draw_ops, duration)
+        return
+    ordered = sorted(
+        draw_ops,
+        key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
+    )
+    weights = [max(1.0, float(segment.get("drawBudgetFrames") or segment.get("duration") or 1)) for segment in segments]
+    total_weight = sum(weights) or float(len(segments))
+    cursor = 0
+    for index, segment in enumerate(segments):
+        remaining_ops = len(ordered) - cursor
+        remaining_segments = len(segments) - index
+        if remaining_ops <= 0:
+            break
+        if index == len(segments) - 1:
+            take = remaining_ops
+        else:
+            target = round(len(ordered) * (weights[index] / total_weight))
+            take = max(1, min(remaining_ops - (remaining_segments - 1), target))
+        group = ordered[cursor : cursor + take]
+        cursor += take
+        start = float(segment.get("startFrame", 0) or 0)
+        end = float(segment.get("endFrame", duration) or duration)
+        window_end = min(max(start + 1.0, end - 4.0), max(1.0, duration - 2.0))
+        _retime_draw_ops_in_window(group, start, window_end, str(segment.get("id") or f"beat_{index}"))
+    if cursor < len(ordered):
+        _retime_draw_ops_in_window(ordered[cursor:], 0.0, max(1.0, duration - 10.0))
 
 
 def _animation_lines(scene: Scene) -> list[str]:
@@ -1539,6 +1620,63 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
     return ["process_flow", "comparison_transform", "feedback_loop"][scene_index % 3]
 
 
+def _scene_extra(scene: Scene, name: str, default: object = None) -> object:
+    value = getattr(scene, name, None)
+    if value is not None:
+        return value
+    extra = getattr(scene, "model_extra", None)
+    if isinstance(extra, dict):
+        return extra.get(name, default)
+    return default
+
+
+def _audio_segments_for_scene(scene: Scene, fps: int) -> tuple[list[dict], int, int]:
+    raw_segments = (
+        _scene_extra(scene, "audioSegments")
+        or _scene_extra(scene, "audio_segments")
+        or _scene_extra(scene, "audio_segments_json")
+        or []
+    )
+    raw_timing = _scene_extra(scene, "timingPlan") or _scene_extra(scene, "timing_plan") or {}
+    transition_frames = 10
+    if isinstance(raw_timing, dict):
+        transition_frames = max(0, min(18, int(raw_timing.get("transitionFrames") or raw_timing.get("transition_frames") or 10)))
+    segments: list[dict] = []
+    if isinstance(raw_segments, list):
+        for index, raw in enumerate(raw_segments):
+            if not isinstance(raw, dict):
+                continue
+            start = max(0, int(round(float(raw.get("startFrame") or raw.get("start_frame") or 0))))
+            duration = int(round(float(raw.get("duration") or 0)))
+            end = int(round(float(raw.get("endFrame") or raw.get("end_frame") or 0)))
+            if duration <= 0 and end > start:
+                duration = end - start
+            if duration <= 0:
+                duration = max(fps * 3, int(round(float(raw.get("audioDurationFrames") or fps * 3))) + 12)
+            end = max(start + 1, start + duration)
+            audio_duration = max(1, int(round(float(raw.get("audioDurationFrames") or raw.get("audio_duration_frames") or duration))))
+            segments.append(
+                {
+                    "id": _clean_text(raw.get("id")) or f"beat_{index}",
+                    "index": index,
+                    "startFrame": start,
+                    "endFrame": end,
+                    "duration": end - start,
+                    "audioUrl": raw.get("audioUrl") or raw.get("audio_url"),
+                    "audioDurationFrames": audio_duration,
+                    "drawBudgetFrames": max(1, int(round(float(raw.get("drawBudgetFrames") or raw.get("draw_budget_frames") or (end - start - 8))))),
+                    "subtitleText": _subtitle_text(raw.get("subtitleText") or raw.get("subtitle_text") or raw.get("narration")),
+                    "drawIntent": _clean_text(raw.get("drawIntent") or raw.get("draw_intent")),
+                }
+            )
+    duration_frames = 0
+    if isinstance(raw_timing, dict):
+        duration_frames = int(round(float(raw_timing.get("durationFrames") or raw_timing.get("duration_frames") or 0)))
+    if segments:
+        duration_frames = max(duration_frames, max(segment["endFrame"] for segment in segments) + transition_frames)
+    return segments, duration_frames, transition_frames
+
+
 def _arc_points(
     cx: float,
     cy: float,
@@ -1568,7 +1706,8 @@ def _diamond_points(cx: float, cy: float, width: float, height: float) -> list[d
 
 
 def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: int, height: int) -> dict:
-    duration = max(fps * 8, round(scene.duration_estimate * fps))
+    audio_segments, timing_duration, transition_frames = _audio_segments_for_scene(scene, fps)
+    duration = max(fps * 8, round(scene.duration_estimate * fps), timing_duration)
     left = width * 0.07
     top = height * 0.08
     diagram_left = width * 0.405
@@ -1588,14 +1727,14 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     diagram_kind = _diagram_kind_for_scene(scene, scene_index)
     core_lines = _animation_lines(scene)
     steps = _scene_steps(scene)
-    raw_trace_strokes = getattr(scene, "trace_strokes", None) or getattr(scene, "traceStrokes", None) or []
+    raw_trace_strokes = _scene_extra(scene, "trace_strokes") or _scene_extra(scene, "traceStrokes") or []
     trace_strokes = raw_trace_strokes if isinstance(raw_trace_strokes, list) else []
-    raw_raster_reveal = getattr(scene, "rasterReveal", None) or getattr(scene, "raster_reveal", None) or {}
+    raw_raster_reveal = _scene_extra(scene, "rasterReveal") or _scene_extra(scene, "raster_reveal") or {}
     raster_reveal = raw_raster_reveal if isinstance(raw_raster_reveal, dict) else {}
     raster_strokes = raster_reveal.get("strokes") if isinstance(raster_reveal.get("strokes"), list) else []
     reference_image_asset = (
-        getattr(scene, "referenceImageAsset", None)
-        or getattr(scene, "reference_image_asset", None)
+        _scene_extra(scene, "referenceImageAsset")
+        or _scene_extra(scene, "reference_image_asset")
         or raster_reveal.get("asset")
     )
 
@@ -2320,13 +2459,15 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     if len(texts) < 2 and cursor + 42 <= duration - 8:
         add_text(_short_text(scene.narration, 24), left + 34, top + height * 0.38, body_size, ink, cursor, 36, width * 0.30, max_chars=18)
 
-    _retime_draw_ops_to_fill_scene(draw_ops, duration)
+    _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
     wash_points = _rect_points(diagram_left - 28, diagram_top + height * 0.02, width * 0.48, height * 0.48)
     return {
         "title": scene.title,
         "diagramKind": diagram_kind,
         "duration": duration,
-        "audioUrl": getattr(scene, "audioUrl", None) or getattr(scene, "audio_url", None),
+        "audioUrl": _scene_extra(scene, "audioUrl") or _scene_extra(scene, "audio_url"),
+        "audioSegments": audio_segments,
+        "transitionFrames": transition_frames,
         "accent": accent,
         "washD": _path_from_points(wash_points, close=True),
         "drawOps": draw_ops,
@@ -2372,17 +2513,20 @@ const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
 
 type Point = { x: number; y: number };
-type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease" };
+type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string };
 type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number };
 type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
 type RasterStrokeSpec = { opId: string; d: string; revealWidth: number; dashLength: number };
 type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[] };
+type AudioSegmentSpec = { id: string; startFrame: number; endFrame: number; duration: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
 type SceneSpec = {
   title: string;
   diagramKind?: string;
   duration: number;
   audioUrl?: string | null;
+  audioSegments?: AudioSegmentSpec[];
+  transitionFrames?: number;
   accent: string;
   washD: string;
   drawOps: DrawOp[];
@@ -2481,13 +2625,17 @@ const splitSubtitleText = (value: string): string[] => {
 
 const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
-  const text = scene.subtitleText?.trim();
+  const segments = scene.audioSegments ?? [];
+  const activeSegment = segments.find((segment) => frame >= segment.startFrame && frame < segment.endFrame);
+  const text = (activeSegment?.subtitleText || scene.subtitleText)?.trim();
   if (!text) return null;
   const chunks = splitSubtitleText(text);
   if (chunks.length === 0) return null;
-  const progress = clamp01(frame / Math.max(1, scene.duration - 1));
+  const localFrame = activeSegment ? frame - activeSegment.startFrame : frame;
+  const localDuration = activeSegment ? activeSegment.duration : scene.duration;
+  const progress = clamp01(localFrame / Math.max(1, localDuration - 1));
   const index = Math.min(chunks.length - 1, Math.floor(progress * chunks.length));
-  const opacity = interpolate(frame, [0, 8, Math.max(9, scene.duration - 10), Math.max(10, scene.duration - 2)], [0, 1, 1, 0], {
+  const opacity = interpolate(localFrame, [0, 8, Math.max(9, localDuration - 10), Math.max(10, localDuration - 2)], [0, 1, 1, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -2681,6 +2829,49 @@ const CartoonDiagram = ({ scene }: { scene: SceneSpec }) => (
   </>
 );
 
+const SceneAudio = ({ scene }: { scene: SceneSpec }) => {
+  const segments = scene.audioSegments ?? [];
+  if (segments.length > 0) {
+    return (
+      <>
+        {segments.map((segment) =>
+          segment.audioUrl ? (
+            <Sequence key={segment.id} from={segment.startFrame} durationInFrames={segment.duration} layout="none">
+              <Audio src={segment.audioUrl} />
+            </Sequence>
+          ) : null,
+        )}
+      </>
+    );
+  }
+  return scene.audioUrl ? <Audio src={scene.audioUrl} /> : null;
+};
+
+const SceneTransitionWipe = ({ scene }: { scene: SceneSpec }) => {
+  const frame = useCurrentFrame();
+  const transition = Math.max(0, scene.transitionFrames ?? 10);
+  if (transition <= 0) return null;
+  const start = Math.max(0, scene.duration - transition);
+  const progress = interpolate(frame, [start, Math.max(start + 1, scene.duration - 1)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 0,
+        bottom: 0,
+        left: 0,
+        width: `${progress * 100}%`,
+        backgroundColor: "#FFFFFF",
+        pointerEvents: "none",
+        zIndex: 40,
+      }}
+    />
+  );
+};
+
 const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
   const drawOps = scene.drawOps;
@@ -2698,7 +2889,7 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
 
   return (
     <AbsoluteFill style={{ backgroundColor, overflow: "hidden" }}>
-      {scene.audioUrl ? <Audio src={scene.audioUrl} /> : null}
+      <SceneAudio scene={scene} />
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
         <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
@@ -2708,6 +2899,7 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
       <RasterFinalOverlay scene={scene} />
       <SubtitleOverlay scene={scene} />
       <HandPen tipX={pen.x} tipY={pen.y} visible={pen.visible} />
+      <SceneTransitionWipe scene={scene} />
     </AbsoluteFill>
   );
 };
@@ -2757,6 +2949,7 @@ Target visual reference:
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
 - Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
 - If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
+- When scenes include audioSegments, use those beat-level startFrame/endFrame windows for Audio, subtitles, and drawOps. Never play a whole-scene narration over unrelated drawing when beat audio is available.
 - If background_music_url is provided, add one global low-volume looping <Audio> track using that exact URL and background_music_volume. It should sit behind all scene narration and never replace scene voiceover audio.
 
 Hard requirements:
@@ -2770,6 +2963,7 @@ Hard requirements:
 - Board text must use glyphPaths; optional subtitles may use normal HTML text as a separate overlay because they are captions rather than handwritten board content.
 - The central animation model must be a `drawOps` array. Each op must have `kind`, `startFrame`, `endFrame`, and a `points: {x:number; y:number}[]` polyline that represents the actual stroke path the marker tip follows.
 - The drawOps timeline should fill each scene with drawing work and avoid dead air. The final drawOp of a scene should end near the scene duration, leaving only a short natural beat before the next Sequence.
+- If a drawOp belongs to a beat, set beatId and keep its startFrame/endFrame inside that beat's audioSegment. A scene may exceed the requested target duration if real TTS and drawing need it.
 - Define `pointOnPolyline(points, progress)`, `getActiveDrawOp(frame)`, and `getPenPosition(frame)`. The rendered `<HandPen>` must use `const pen = getPenPosition(frame)` and pass `tipX={pen.x}` and `tipY={pen.y}`. Hand visibility must come from whether an active draw op exists.
 - The pen must move up, down, left, and right inside words and drawings. Do not make the hand travel along a single straight baseline for text. Text ops must include zig-zag or stroke-like points for each word/phrase so the marker visibly writes within glyph shapes.
 - Never define `const tipX = interpolate(frame, [...])` or `const tipY = interpolate(frame, [...])` at scene level. Pen coordinates must be sampled from active `drawOps.points`.
@@ -2796,6 +2990,7 @@ Hard requirements:
 - Do not use fetch, eval, Function, require, filesystem APIs, browser globals, or dangerouslySetInnerHTML.
 - Hardcode the provided storyboard content and audio URLs into the TSX.
 - Use <Audio src="..."> from remotion for scene voiceover when audioUrl exists.
+- Prefer beat-level audio: for each scene.audioSegments item with audioUrl, render <Audio> inside a <Sequence from={segment.startFrame} durationInFrames={segment.duration}>.
 - Use one additional global <Audio src={background_music_url} volume={background_music_volume} loop /> only when background_music_url is not null.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
@@ -2829,6 +3024,7 @@ async def generate_remotion_code(
         "using glyphPaths/GlyphText/DrawGlyphPath so the renderer can replace Chinese text with opentype.js font outlines, "
         "using rasterReveal/referenceImageAsset masks when the storyboard provides an original reference image to reveal, "
         "using staticFile('hand-real-pen.png'), <Img>, and getPenPosition(frame) coordinates. "
+        "When scene.audioSegments exist, synchronize Audio, subtitles, and drawOps to those beat windows. "
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
         "If background_music_url is provided, add it as one low-volume looping background Audio track behind narration. "
         "Use Chinese handwritten fonts and anime/cartoon whiteboard doodles. "
@@ -2891,7 +3087,7 @@ async def generate_remotion_code(
         )
 
     try:
-        tsx = _validate_generated_tsx(raw.get("tsx") or raw.get("code") or "")
+        tsx = _validate_generated_tsx_for_request(raw.get("tsx") or raw.get("code") or "", req)
     except ValueError as first_error:
         logger.warning("Generated Remotion TSX failed validation: %s", first_error)
         if not settings.remotion_llm_repair and codegen_mode != "llm_repair":
@@ -2922,6 +3118,7 @@ async def generate_remotion_code(
                     "render Chinese text through glyphPaths with GlyphText/DrawGlyphPath so the renderer can "
                     "preprocess font outline paths using opentype.js, "
                     "render scene.narration as bottom HTML subtitles only when subtitles_enabled is true, "
+                    "synchronize beat-level Audio, subtitles, and drawOps to scene.audioSegments when present, "
                     "add one global low-volume looping background Audio track only when background_music_url is provided, "
                     "use STXingkai/华文行楷/KaiTi/STKaiti for Chinese handwriting, never bold sans-serif, "
                     "include limited teaching accent colors and anime/cartoon whiteboard doodles, with a plain white background, "
@@ -2954,7 +3151,7 @@ async def generate_remotion_code(
         candidate_tsx = raw.get("tsx") or raw.get("code")
         if candidate_tsx:
             try:
-                tsx = _validate_generated_tsx(candidate_tsx)
+                tsx = _validate_generated_tsx_for_request(candidate_tsx, req)
             except ValueError as second_error:
                 logger.warning("Repaired Remotion TSX failed validation: %s", second_error)
                 response = _compile_fast_remotion_response(
@@ -2969,7 +3166,11 @@ async def generate_remotion_code(
                     "duration_in_frames": response.duration_in_frames,
                     "notes": response.notes,
                 }
-    duration = max(req.fps * 10, min(target_frames, req.fps * 240))
+    try:
+        raw_duration_frames = int(raw.get("duration_in_frames") or 0)
+    except (TypeError, ValueError):
+        raw_duration_frames = 0
+    duration = max(req.fps * 10, target_frames, raw_duration_frames)
 
     return _cache_remotion_response(
         cache_key,

@@ -8,6 +8,7 @@
  * Remotion. It must not import the old local primitive/component library.
  */
 import http from "http";
+import { execFile } from "child_process";
 import { createServer as createNetServer } from "net";
 import {
   createReadStream,
@@ -23,6 +24,7 @@ import {
 import { basename, dirname, extname, join, resolve } from "path";
 import { createHash, randomUUID } from "crypto";
 import { fileURLToPath } from "url";
+import { promisify } from "util";
 import { availableParallelism } from "os";
 import opentype from "opentype.js";
 import sharp from "sharp";
@@ -30,6 +32,7 @@ import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition, RenderInternals } from "@remotion/renderer";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const execFileAsync = promisify(execFile);
 const PORT = Number(process.env.RENDER_PORT ?? 3001);
 const FPS = 30;
 const WIDTH = 1920;
@@ -45,6 +48,7 @@ const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const DEFAULT_CHROME =
   "C:\\Users\\DELL\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1223\\chrome-headless-shell-win64\\chrome-headless-shell.exe";
 const BROWSER_EXECUTABLE = process.env.REMOTION_CHROME_HEADLESS_SHELL || DEFAULT_CHROME;
+const FFPROBE_BINARY = process.env.FFPROBE_PATH || "ffprobe";
 const COMPOSITION_ID = "GeneratedVideo";
 const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3002);
 const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism() - 2));
@@ -93,6 +97,10 @@ const GLYPH_FONT_CANDIDATES = [
   "C:\\Windows\\Fonts\\simsun.ttc",
 ].filter(Boolean);
 const ttsInFlight = new Map();
+const TTS_CONCURRENCY = Math.max(1, Math.min(2, Number(process.env.TTS_CONCURRENCY ?? 1) || 1));
+const TTS_MAX_ATTEMPTS = Math.max(1, Math.min(5, Number(process.env.TTS_MAX_ATTEMPTS ?? 4) || 4));
+let activeTtsRequests = 0;
+const ttsWaiters = [];
 
 mkdirSync(OUTPUT_DIR, { recursive: true });
 mkdirSync(AUDIO_DIR, { recursive: true });
@@ -302,12 +310,115 @@ function postBuffer(url, payload, timeoutMs = 120000) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
+}
+
+async function acquireTtsSlot() {
+  if (activeTtsRequests < TTS_CONCURRENCY) {
+    activeTtsRequests += 1;
+    return;
+  }
+  await new Promise((resolvePromise) => ttsWaiters.push(resolvePromise));
+  activeTtsRequests += 1;
+}
+
+function releaseTtsSlot() {
+  activeTtsRequests = Math.max(0, activeTtsRequests - 1);
+  const next = ttsWaiters.shift();
+  if (next) next();
+}
+
+async function withTtsSlot(fn) {
+  await acquireTtsSlot();
+  try {
+    return await fn();
+  } finally {
+    releaseTtsSlot();
+  }
+}
+
+function normalizeTextForTts(text) {
+  return String(text ?? "")
+    .replace(/\bV_G\b/g, "V G")
+    .replace(/\bV_th\b/gi, "V threshold")
+    .replace(/\bV_DS\b/g, "V D S")
+    .replace(/\bI_D\b/g, "I D")
+    .replace(/\bW_eff\b/g, "W effective")
+    .replace(/>=/g, " greater than or equal to ")
+    .replace(/<=/g, " less than or equal to ")
+    .replace(/>/g, " greater than ")
+    .replace(/</g, " less than ")
+    .replace(/=/g, " equals ")
+    .replace(/[{}[\]`*_#~^|\\]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+async function requestTtsAudio(narration, voice, sceneId) {
+  const speechText = normalizeTextForTts(narration);
+  let lastError = null;
+  for (let attempt = 1; attempt <= TTS_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const audio = await withTtsSlot(() =>
+        postBuffer(`${PYTHON_API}/narration/synthesize`, {
+          text: speechText || narration,
+          voice,
+        }),
+      );
+      if (!Buffer.isBuffer(audio) || audio.length < 512) {
+        throw new Error("No usable audio was received from TTS");
+      }
+      return audio;
+    } catch (err) {
+      lastError = err;
+      if (attempt < TTS_MAX_ATTEMPTS) {
+        console.warn(`[tts] retry ${attempt}/${TTS_MAX_ATTEMPTS - 1} for ${sceneId}: ${err.message}`);
+        await sleep(1200 + attempt * 1800);
+      }
+    }
+  }
+  throw lastError ?? new Error("TTS failed");
+}
+
 function ttsCacheFilename(text, voice) {
   const hash = createHash("sha1")
     .update(JSON.stringify({ text: String(text ?? ""), voice: String(voice ?? "") }))
     .digest("hex")
     .slice(0, 20);
   return `tts_${hash}.mp3`;
+}
+
+function estimateNarrationSeconds(text) {
+  const source = String(text ?? "").trim();
+  if (!source) return 0;
+  const cjk = [...source].filter((char) => /[\u3400-\u9fff]/.test(char)).length;
+  const latinWords = (source.match(/[A-Za-z0-9]+/g) ?? []).length;
+  const punctuationPauses = (source.match(/[。！？；.!?;]/g) ?? []).length * 0.25;
+  return Math.max(2.0, cjk * 0.18 + latinWords * 0.32 + punctuationPauses + 0.8);
+}
+
+async function probeAudioDurationSeconds(filePath) {
+  try {
+    const { stdout } = await execFileAsync(
+      FFPROBE_BINARY,
+      [
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        filePath,
+      ],
+      { windowsHide: true, timeout: 30000 },
+    );
+    const parsed = Number.parseFloat(String(stdout).trim());
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
+  } catch (err) {
+    console.warn(`[tts] ffprobe failed for ${basename(filePath)}: ${err.message}`);
+    return 0;
+  }
 }
 
 async function synthesizeScene(sceneId, text, voice) {
@@ -318,45 +429,132 @@ async function synthesizeScene(sceneId, text, voice) {
   const audioUrl = `http://localhost:${PORT}/audio/${filename}`;
   if (existsSync(outPath) && statSync(outPath).size > 0) {
     console.log(`[tts] cache hit: ${sceneId}`);
-    return audioUrl;
+    const durationSeconds = await probeAudioDurationSeconds(outPath);
+    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   }
   if (ttsInFlight.has(filename)) {
     await ttsInFlight.get(filename);
-    return audioUrl;
+    const durationSeconds = await probeAudioDurationSeconds(outPath);
+    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   }
 
-  const pending = postBuffer(`${PYTHON_API}/narration/synthesize`, {
-    text: narration,
-    voice,
-  }).then((audio) => {
+  const pending = requestTtsAudio(narration, voice, sceneId).then((audio) => {
     writeFileSync(outPath, audio);
   });
   ttsInFlight.set(filename, pending);
   try {
     await pending;
-    return audioUrl;
+    const durationSeconds = await probeAudioDurationSeconds(outPath);
+    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   } finally {
     ttsInFlight.delete(filename);
   }
 }
 
+function sceneBeatSpecs(scene) {
+  const visualBeats = Array.isArray(scene.visual_beats) ? scene.visual_beats : [];
+  const beats = visualBeats.length > 0
+    ? visualBeats
+    : [
+        {
+          id: "beat_0",
+          draw_intent: scene.image_description || scene.title || "",
+          narration: scene.narration || scene.title || "",
+          required_labels: [],
+          duration_estimate: scene.duration_estimate || 8,
+        },
+      ];
+  return beats.map((beat, index) => {
+    const text = String(beat?.narration || beat?.draw_intent || scene.narration || scene.title || "").trim();
+    return {
+      id: String(beat?.id || `beat_${index}`),
+      index,
+      text,
+      drawIntent: String(beat?.draw_intent || beat?.drawIntent || scene.title || "").trim(),
+      durationEstimate: Math.max(1, Number(beat?.duration_estimate ?? beat?.duration ?? 6) || 6),
+    };
+  });
+}
+
 async function injectAudio(storyboard, voice) {
   const voiceKey = voice ?? "xiaoxiao";
-  const results = await Promise.allSettled(
-    storyboard.scenes.map((scene) =>
-      synthesizeScene(scene.id, scene.narration || scene.title || "", voiceKey),
-    ),
+  const sceneResults = await Promise.allSettled(
+    storyboard.scenes.map(async (scene, sceneIndex) => {
+      const beatSpecs = sceneBeatSpecs(scene);
+      const segmentResults = await Promise.allSettled(
+        beatSpecs.map((beat) =>
+          synthesizeScene(`${scene.id || `scene_${sceneIndex}`}_${beat.id}`, beat.text, voiceKey),
+        ),
+      );
+
+      let cursor = 0;
+      const audioSegments = segmentResults.map((result, index) => {
+        const beat = beatSpecs[index];
+        const audio = result.status === "fulfilled" ? result.value : null;
+        const durationSeconds = audio?.durationSeconds || estimateNarrationSeconds(beat.text);
+        const audioDurationFrames = Math.max(1, Math.ceil(durationSeconds * FPS));
+        const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
+        const durationFrames = Math.max(FPS * 3, audioDurationFrames + 12, estimateFrames);
+        const startFrame = cursor;
+        const endFrame = startFrame + durationFrames;
+        cursor = endFrame;
+        return {
+          id: beat.id,
+          index,
+          startFrame,
+          endFrame,
+          duration: durationFrames,
+          audioUrl: audio?.audioUrl ?? null,
+          audioDurationFrames,
+          drawBudgetFrames: Math.max(1, durationFrames - 8),
+          subtitleText: beat.text,
+          narration: beat.text,
+          drawIntent: beat.drawIntent,
+        };
+      });
+
+      const transitionFrames = 10;
+      const durationFrames = Math.max(
+        Math.round((Number(scene.duration_estimate) || 0) * FPS),
+        cursor + transitionFrames,
+        FPS * 8,
+      );
+      const fallbackAudio = audioSegments.find((segment) => segment.audioUrl)?.audioUrl ?? null;
+      const failedSegments = segmentResults.filter((result) => result.status === "rejected");
+      if (failedSegments.length > 0) {
+        console.warn(
+          `[tts] ${failedSegments.length} beat segment(s) failed for ${scene.id}:`,
+          failedSegments.map((result) => result.reason?.message),
+        );
+      }
+      return {
+        ...scene,
+        audioUrl: fallbackAudio,
+        audioSegments,
+        timingPlan: {
+          fps: FPS,
+          durationFrames,
+          transitionFrames,
+          allowOverTarget: true,
+          segments: audioSegments,
+        },
+        duration_estimate: Math.max(Number(scene.duration_estimate) || 0, durationFrames / FPS),
+      };
+    }),
   );
 
   const scenes = storyboard.scenes.map((scene, index) => {
-    const result = results[index];
-    return {
-      ...scene,
-      audioUrl: result.status === "fulfilled" ? result.value : null,
-    };
+    const result = sceneResults[index];
+    return result.status === "fulfilled"
+      ? result.value
+      : {
+          ...scene,
+          audioUrl: null,
+          audioSegments: [],
+        };
   });
 
-  const failed = results.filter((result) => result.status === "rejected");
+  const failed = sceneResults.filter((result) => result.status === "rejected");
   if (failed.length > 0) {
     console.warn(
       `[tts] ${failed.length} scene(s) failed:`,
@@ -364,7 +562,20 @@ async function injectAudio(storyboard, voice) {
     );
   }
 
-  return { ...storyboard, scenes };
+  const totalFrames = scenes.reduce(
+    (sum, scene) => sum + Math.max(FPS * 8, Number(scene.timingPlan?.durationFrames ?? Math.round((scene.duration_estimate || 0) * FPS))),
+    0,
+  );
+  return {
+    ...storyboard,
+    scenes,
+    total_duration_estimate: Math.max(Number(storyboard.total_duration_estimate) || 0, totalFrames / FPS),
+    timingPlan: {
+      fps: FPS,
+      durationFrames: totalFrames,
+      allowOverTarget: true,
+    },
+  };
 }
 
 function normalizeBase64Image(value) {
@@ -1734,6 +1945,7 @@ async function generateRemotionCode(storyboard, options = {}) {
       "position with left: tipX - PEN_TIP_X and top: tipY - PEN_TIP_Y so the marker tip touches the active stroke. " +
       "HandPen must return an absolutely positioned HTML div wrapping Img, and <HandPen> must be rendered as a sibling after the SVG, never inside SVG. " +
       "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). " +
+      "If scenes include audioSegments, render each segment's audioUrl in its own Sequence and keep matching drawOps inside the same beat window. " +
       "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
       "Use glyphPaths/GlyphText/DrawGlyphPath for Chinese text so the renderer can preprocess opentype.js font outline paths, " +
       "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
@@ -1885,6 +2097,9 @@ async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   updateJob(jobId, { phase: "tts", progress: 0 });
   console.log(`[tts] Synthesizing ${storyboard.scenes.length} scenes...`);
   const storyboardWithAudio = await injectAudio(storyboard, voice);
+  updateJob(jobId, {
+    actualDurationSeconds: Math.round((storyboardWithAudio.total_duration_estimate ?? 0) * 10) / 10,
+  });
   console.log("[tts] Done");
 
   updateJob(jobId, { phase: "imagegen", progress: 0 });
@@ -2077,6 +2292,7 @@ const server = http.createServer(async (req, res) => {
         phase: job.phase ?? null,
         topic: job.topic ?? null,
         createdAt: job.createdAt ?? null,
+        actualDurationSeconds: job.actualDurationSeconds ?? null,
         error: job.error ?? null,
       }))
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
@@ -2115,6 +2331,7 @@ const server = http.createServer(async (req, res) => {
       progress: job.progress ?? 0,
       phase: job.phase ?? null,
       createdAt: job.createdAt ?? null,
+      actualDurationSeconds: job.actualDurationSeconds ?? null,
       error: job.error ?? null,
     });
     return;

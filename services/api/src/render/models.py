@@ -21,6 +21,7 @@ class RenderJobStatus(BaseModel):
     video_url: str | None = None
     error: str | None = None
     createdAt: str | None = None
+    actualDurationSeconds: float | None = None
 
 
 class RenderJobSummary(BaseModel):
@@ -30,6 +31,7 @@ class RenderJobSummary(BaseModel):
     phase: str | None = None
     topic: str | None = None
     createdAt: str | None = None
+    actualDurationSeconds: float | None = None
     error: str | None = None
 
 
