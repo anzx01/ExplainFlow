@@ -37,6 +37,8 @@ const OUTPUT_DIR = join(__dirname, "../../outputs");
 const AUDIO_DIR = join(OUTPUT_DIR, "audio");
 const JOBS_FILE = join(OUTPUT_DIR, "jobs.json");
 const GENERATED_DIR = join(__dirname, "generated");
+const PUBLIC_DIR = join(__dirname, "public");
+const PUBLIC_GENERATED_DIR = join(PUBLIC_DIR, "generated");
 const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const DEFAULT_CHROME =
   "C:\\Users\\DELL\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1223\\chrome-headless-shell-win64\\chrome-headless-shell.exe";
@@ -47,9 +49,30 @@ const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism(
 const RENDER_CONCURRENCY = Number.isFinite(Number(process.env.REMOTION_CONCURRENCY))
   ? Math.max(1, Number(process.env.REMOTION_CONCURRENCY))
   : DEFAULT_RENDER_CONCURRENCY;
+const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
+  ? Math.max(1, Math.min(51, Number(process.env.REMOTION_CRF)))
+  : 8;
+const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "slow";
+const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv444p";
 const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
 const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 3));
 const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
+const RASTER_REVEAL_MAX_STROKES = Math.max(
+  24,
+  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 150),
+);
+const RASTER_REVEAL_TRACE_WIDTH = Math.max(
+  240,
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_WIDTH ?? 960),
+);
+const RASTER_REVEAL_TRACE_HEIGHT = Math.max(
+  180,
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_HEIGHT ?? 540),
+);
+const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
+  640,
+  Number(process.env.REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE ?? 648),
+);
 const HAND_ASSET = "hand-real-pen.png";
 const GLYPH_FONT_CANDIDATES = [
   process.env.EXPLAINFLOW_GLYPH_FONT,
@@ -63,6 +86,7 @@ const ttsInFlight = new Map();
 mkdirSync(OUTPUT_DIR, { recursive: true });
 mkdirSync(AUDIO_DIR, { recursive: true });
 mkdirSync(GENERATED_DIR, { recursive: true });
+mkdirSync(PUBLIC_GENERATED_DIR, { recursive: true });
 
 function loadJobs() {
   try {
@@ -368,9 +392,8 @@ function traceEdgePaths(edge, width, height, maxPaths) {
   return paths;
 }
 
-async function traceWhiteboardImageBase64(imageBase64) {
-  const image = Buffer.from(normalizeBase64Image(imageBase64), "base64");
-  const { data, info } = await sharp(image)
+async function traceWhiteboardImageBuffer(image) {
+  const { data, info } = await sharp(image, { failOn: "none" })
     .resize({ width: 420, height: 260, fit: "inside", withoutEnlargement: true })
     .flatten({ background: "#ffffff" })
     .grayscale()
@@ -416,51 +439,616 @@ async function traceWhiteboardImageBase64(imageBase64) {
     .filter((path) => path.length >= 2);
 }
 
-async function injectImageTraces(storyboard) {
+async function traceWhiteboardImageBase64(imageBase64) {
+  return traceWhiteboardImageBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"));
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function safeAssetSegment(value, fallback) {
+  return (
+    String(value ?? fallback)
+      .normalize("NFKC")
+      .replace(/[^a-zA-Z0-9_-]+/g, "_")
+      .replace(/^_+|_+$/g, "")
+      .slice(0, 80) || fallback
+  );
+}
+
+function isProbablyBase64Image(value) {
+  const text = String(value ?? "").trim();
+  if (text.startsWith("data:image/")) return true;
+  if (text.length < 120) return false;
+  return /^[a-zA-Z0-9+/=\r\n]+$/.test(text);
+}
+
+function sceneLocalImageBuffer(scene) {
+  const candidates = [
+    scene.reference_image_path,
+    scene.referenceImagePath,
+    scene.image_path,
+    scene.imagePath,
+    scene.image_url,
+    scene.imageUrl,
+    scene.reference_image_base64,
+    scene.referenceImageBase64,
+    scene.image_base64,
+    scene.imageBase64,
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    const value = String(candidate).trim();
+    if (!value) continue;
+    if (isProbablyBase64Image(value)) {
+      try {
+        return Buffer.from(normalizeBase64Image(value), "base64");
+      } catch {}
+    }
+    if (/^https?:\/\//i.test(value)) continue;
+
+    const possiblePaths = [resolve(value), resolve(__dirname, "../..", value)];
+    for (const possiblePath of possiblePaths) {
+      if (existsSync(possiblePath)) {
+        return readFileSync(possiblePath);
+      }
+    }
+  }
+  return null;
+}
+
+function pixelNeighbors(index, width, height, pixels) {
+  const x = index % width;
+  const y = Math.floor(index / width);
+  const neighbors = [];
+  for (let dy = -1; dy <= 1; dy += 1) {
+    for (let dx = -1; dx <= 1; dx += 1) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const next = ny * width + nx;
+      if (pixels[next]) neighbors.push(next);
+    }
+  }
+  return neighbors;
+}
+
+function cleanMaskComponents(mask, width, height) {
+  const visited = new Uint8Array(mask.length);
+  const cleaned = new Uint8Array(mask.length);
+  const stack = [];
+  for (let start = 0; start < mask.length; start += 1) {
+    if (!mask[start] || visited[start]) continue;
+    const component = [];
+    visited[start] = 1;
+    stack.push(start);
+    while (stack.length > 0) {
+      const current = stack.pop();
+      component.push(current);
+      for (const next of pixelNeighbors(current, width, height, mask)) {
+        if (visited[next]) continue;
+        visited[next] = 1;
+        stack.push(next);
+      }
+    }
+    if (component.length >= 5) {
+      for (const index of component) cleaned[index] = 1;
+    }
+  }
+  return cleaned;
+}
+
+function zhangSuenThin(mask, width, height) {
+  const image = new Uint8Array(mask);
+  const toRemove = [];
+  const transitions = (p2, p3, p4, p5, p6, p7, p8, p9) => {
+    const values = [p2, p3, p4, p5, p6, p7, p8, p9, p2];
+    let count = 0;
+    for (let i = 0; i < values.length - 1; i += 1) {
+      if (values[i] === 0 && values[i + 1] === 1) count += 1;
+    }
+    return count;
+  };
+
+  let changed = true;
+  let iterations = 0;
+  while (changed && iterations < 80) {
+    changed = false;
+    iterations += 1;
+
+    for (let pass = 0; pass < 2; pass += 1) {
+      toRemove.length = 0;
+      for (let y = 1; y < height - 1; y += 1) {
+        for (let x = 1; x < width - 1; x += 1) {
+          const i = y * width + x;
+          if (!image[i]) continue;
+          const p2 = image[i - width] ? 1 : 0;
+          const p3 = image[i - width + 1] ? 1 : 0;
+          const p4 = image[i + 1] ? 1 : 0;
+          const p5 = image[i + width + 1] ? 1 : 0;
+          const p6 = image[i + width] ? 1 : 0;
+          const p7 = image[i + width - 1] ? 1 : 0;
+          const p8 = image[i - 1] ? 1 : 0;
+          const p9 = image[i - width - 1] ? 1 : 0;
+          const neighborCount = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+          if (neighborCount < 2 || neighborCount > 6) continue;
+          if (transitions(p2, p3, p4, p5, p6, p7, p8, p9) !== 1) continue;
+          if (pass === 0) {
+            if (p2 * p4 * p6 !== 0 || p4 * p6 * p8 !== 0) continue;
+          } else if (p2 * p4 * p8 !== 0 || p2 * p6 * p8 !== 0) {
+            continue;
+          }
+          toRemove.push(i);
+        }
+      }
+      if (toRemove.length > 0) {
+        changed = true;
+        for (const index of toRemove) image[index] = 0;
+      }
+    }
+  }
+  return image;
+}
+
+function edgeKey(a, b) {
+  return a < b ? `${a}:${b}` : `${b}:${a}`;
+}
+
+function pathMetrics(path) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  let length = 0;
+  for (let i = 0; i < path.length; i += 1) {
+    const point = path[i];
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+    if (i > 0) length += distance(path[i - 1], point);
+  }
+  return {
+    minX,
+    minY,
+    maxX,
+    maxY,
+    length,
+    centerX: (minX + maxX) / 2,
+    centerY: (minY + maxY) / 2,
+  };
+}
+
+function traceSkeletonPaths(skeleton, width, height) {
+  const indices = [];
+  const degrees = new Map();
+  for (let i = 0; i < skeleton.length; i += 1) {
+    if (!skeleton[i]) continue;
+    indices.push(i);
+    degrees.set(i, pixelNeighbors(i, width, height, skeleton).length);
+  }
+
+  const visitedEdges = new Set();
+  const paths = [];
+  const pointForIndex = (index) => ({ x: index % width, y: Math.floor(index / width) });
+  const walk = (start, next) => {
+    const path = [pointForIndex(start)];
+    let previous = start;
+    let current = next;
+    let guard = 0;
+    while (guard < 4000) {
+      guard += 1;
+      visitedEdges.add(edgeKey(previous, current));
+      path.push(pointForIndex(current));
+      const degree = degrees.get(current) ?? 0;
+      if (degree !== 2) break;
+      const candidates = pixelNeighbors(current, width, height, skeleton).filter(
+        (candidate) => candidate !== previous,
+      );
+      const candidate = candidates.find((value) => !visitedEdges.has(edgeKey(current, value)));
+      if (candidate === undefined) break;
+      previous = current;
+      current = candidate;
+    }
+    if (path.length >= 2) paths.push(path);
+  };
+
+  const starts = indices
+    .filter((index) => (degrees.get(index) ?? 0) !== 2)
+    .sort((a, b) => Math.floor(a / width) - Math.floor(b / width) || (a % width) - (b % width));
+
+  for (const start of starts) {
+    for (const next of pixelNeighbors(start, width, height, skeleton)) {
+      if (!visitedEdges.has(edgeKey(start, next))) walk(start, next);
+    }
+  }
+
+  for (const start of indices) {
+    for (const next of pixelNeighbors(start, width, height, skeleton)) {
+      if (!visitedEdges.has(edgeKey(start, next))) walk(start, next);
+    }
+  }
+
+  return paths;
+}
+
+function perpendicularDistanceToLine(point, start, end) {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const denominator = dx * dx + dy * dy;
+  if (denominator === 0) return distance(point, start);
+  const t = clamp(((point.x - start.x) * dx + (point.y - start.y) * dy) / denominator, 0, 1);
+  return distance(point, { x: start.x + dx * t, y: start.y + dy * t });
+}
+
+function simplifyPolyline(points, epsilon = 1.25) {
+  if (points.length <= 3) return points;
+  let maxDistance = 0;
+  let index = 0;
+  const start = points[0];
+  const end = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i += 1) {
+    const value = perpendicularDistanceToLine(points[i], start, end);
+    if (value > maxDistance) {
+      index = i;
+      maxDistance = value;
+    }
+  }
+  if (maxDistance <= epsilon) return [start, end];
+  const left = simplifyPolyline(points.slice(0, index + 1), epsilon);
+  const right = simplifyPolyline(points.slice(index), epsilon);
+  return left.slice(0, -1).concat(right);
+}
+
+function distanceToBackground(mask, width, height, x, y, maxRadius = 18) {
+  const cx = Math.round(x);
+  const cy = Math.round(y);
+  for (let radius = 1; radius <= maxRadius; radius += 1) {
+    for (let dy = -radius; dy <= radius; dy += 1) {
+      for (let dx = -radius; dx <= radius; dx += 1) {
+        if (Math.abs(dx) !== radius && Math.abs(dy) !== radius) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) return radius;
+        if (!mask[ny * width + nx]) return radius;
+      }
+    }
+  }
+  return maxRadius;
+}
+
+function estimateRevealWidth(mask, width, height, path) {
+  const samples = [];
+  const sampleCount = Math.min(28, path.length);
+  for (let i = 0; i < sampleCount; i += 1) {
+    const point = path[Math.round((i * (path.length - 1)) / Math.max(1, sampleCount - 1))];
+    samples.push(distanceToBackground(mask, width, height, point.x, point.y));
+  }
+  samples.sort((a, b) => a - b);
+  const median = samples[Math.floor(samples.length / 2)] || 2;
+  const pixelWidth = clamp(median * 4 + 76, 72, 128);
+  return Number((pixelWidth / Math.max(width, height)).toFixed(5));
+}
+
+function selectRevealPaths(paths, maxPaths, width, height) {
+  if (paths.length <= maxPaths) return paths;
+  const bands = 8;
+  const byBand = Array.from({ length: bands }, () => []);
+  for (const path of paths) {
+    const metric = pathMetrics(path);
+    const band = clamp(Math.floor((metric.centerY / Math.max(1, height)) * bands), 0, bands - 1);
+    byBand[band].push({ path, metric });
+  }
+
+  const selected = new Set();
+  const perBand = Math.max(5, Math.floor(maxPaths / bands));
+  for (const band of byBand) {
+    band.sort((a, b) => b.metric.length - a.metric.length);
+    for (const item of band.slice(0, perBand)) selected.add(item.path);
+  }
+
+  const remaining = paths
+    .filter((path) => !selected.has(path))
+    .map((path) => ({ path, metric: pathMetrics(path) }))
+    .sort((a, b) => b.metric.length - a.metric.length);
+  for (const item of remaining) {
+    if (selected.size >= maxPaths) break;
+    selected.add(item.path);
+  }
+
+  return paths.filter((path) => selected.has(path));
+}
+
+function sortRevealPaths(paths) {
+  const pending = paths.map((path, id) => ({ id, path, metric: pathMetrics(path) }));
+  pending.sort((a, b) => a.metric.minY - b.metric.minY || a.metric.minX - b.metric.minX);
+  const sorted = [];
+  let current = pending.shift();
+  while (current) {
+    sorted.push(current.path);
+    const end = current.path[current.path.length - 1];
+    if (pending.length === 0) break;
+    let bestIndex = 0;
+    let bestScore = Infinity;
+    const searchLimit = Math.min(36, pending.length);
+    for (let i = 0; i < searchLimit; i += 1) {
+      const candidate = pending[i];
+      const start = candidate.path[0];
+      const score =
+        distance(end, start) +
+        Math.abs(candidate.metric.centerY - current.metric.centerY) * 0.35 +
+        Math.max(0, candidate.metric.minY - current.metric.minY) * 0.12;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+    current = pending.splice(bestIndex, 1)[0];
+  }
+  return sorted;
+}
+
+async function traceRasterRevealImage(imageBuffer) {
+  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
+    .resize({
+      width: RASTER_REVEAL_TRACE_WIDTH,
+      height: RASTER_REVEAL_TRACE_HEIGHT,
+      fit: "inside",
+      withoutEnlargement: false,
+    })
+    .flatten({ background: "#ffffff" })
+    .grayscale()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const { width, height } = info;
+  const mask = new Uint8Array(width * height);
+  let darkPixels = 0;
+  for (let i = 0; i < width * height; i += 1) {
+    if (data[i] < 205) {
+      mask[i] = 1;
+      darkPixels += 1;
+    }
+  }
+  if (darkPixels < 40) {
+    return { strokes: [], traceWidth: width, traceHeight: height, darkPixels, skeletonPixels: 0 };
+  }
+
+  const cleanMask = cleanMaskComponents(mask, width, height);
+  const skeleton = zhangSuenThin(cleanMask, width, height);
+  let skeletonPixels = 0;
+  for (const value of skeleton) {
+    if (value) skeletonPixels += 1;
+  }
+
+  const rawPaths = traceSkeletonPaths(skeleton, width, height)
+    .map((path) => simplifyPolyline(path, 1.35))
+    .filter((path) => path.length >= 2 && pathMetrics(path).length >= 4);
+
+  const selected = sortRevealPaths(selectRevealPaths(rawPaths, RASTER_REVEAL_MAX_STROKES, width, height));
+  const strokes = selected
+    .map((path, index) => {
+      const sampled = samplePath(path, 86);
+      const lengthPx = polylineLength(sampled);
+      return {
+        id: `reveal_${index}`,
+        points: sampled.map((point) => ({
+          x: Number((point.x / Math.max(1, width - 1)).toFixed(4)),
+          y: Number((point.y / Math.max(1, height - 1)).toFixed(4)),
+        })),
+        revealWidth: estimateRevealWidth(cleanMask, width, height, path),
+        dashLength: Number((lengthPx / Math.max(width, height)).toFixed(4)),
+      };
+    })
+    .filter((stroke) => stroke.points.length >= 2);
+
+  return {
+    strokes,
+    traceWidth: width,
+    traceHeight: height,
+    darkPixels,
+    skeletonPixels,
+    maskCoverage: Number((darkPixels / Math.max(1, width * height)).toFixed(5)),
+  };
+}
+
+async function makeTransparentLineArtAsset(imageBuffer) {
+  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
+    .rotate()
+    .resize({
+      width: RASTER_REVEAL_ASSET_MAX_SIZE,
+      height: RASTER_REVEAL_ASSET_MAX_SIZE,
+      fit: "inside",
+      withoutEnlargement: true,
+    })
+    .flatten({ background: "#ffffff" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+
+  const { width, height, channels } = info;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const source = i * channels;
+    const target = i * 4;
+    const r = data[source];
+    const g = data[source + 1];
+    const b = data[source + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    const alpha = clamp(Math.round((232 - gray) * 5.4), 0, 255);
+    rgba[target] = r;
+    rgba[target + 1] = g;
+    rgba[target + 2] = b;
+    rgba[target + 3] = alpha;
+  }
+
+  const buffer = await sharp(rgba, {
+    raw: {
+      width,
+      height,
+      channels: 4,
+    },
+  })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+
+  return { buffer, width, height };
+}
+
+async function buildRasterRevealFromBuffer(imageBuffer, jobId, sceneId) {
+  const assetDir = join(PUBLIC_GENERATED_DIR, jobId);
+  mkdirSync(assetDir, { recursive: true });
+
+  const transparentAsset = await makeTransparentLineArtAsset(imageBuffer);
+  const assetBuffer = transparentAsset.buffer;
+  const safeSceneId = safeAssetSegment(sceneId, "scene");
+  const filename = `${safeSceneId}.png`;
+  writeFileSync(join(assetDir, filename), assetBuffer);
+
+  const trace = await traceRasterRevealImage(assetBuffer);
+  if (trace.strokes.length < 6) {
+    throw new Error(`raster reveal produced too few path(s): ${trace.strokes.length}`);
+  }
+
+  const asset = `generated/${jobId}/${filename}`;
+  return {
+    referenceImageAsset: asset,
+    rasterReveal: {
+      asset,
+      imageWidth: transparentAsset.width,
+      imageHeight: transparentAsset.height,
+      transparentBackground: true,
+      traceWidth: trace.traceWidth,
+      traceHeight: trace.traceHeight,
+      maskCoverage: trace.maskCoverage,
+      skeletonPixels: trace.skeletonPixels,
+      strokes: trace.strokes,
+    },
+    trace_strokes: trace.strokes.map((stroke) => stroke.points),
+  };
+}
+
+async function injectImageTraces(storyboard, jobId) {
   if (!ENABLE_IMAGE_TRACE || IMAGE_TRACE_MAX_SCENES <= 0) return storyboard;
 
+  const rasterBySceneId = {};
+  const tracesBySceneId = {};
+  const localImageSceneIds = new Set();
+  for (const scene of storyboard.scenes) {
+    if (scene.rasterReveal || scene.raster_reveal) continue;
+    const imageBuffer = sceneLocalImageBuffer(scene);
+    if (!imageBuffer) continue;
+    localImageSceneIds.add(scene.id);
+    try {
+      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene.id);
+      rasterBySceneId[scene.id] = raster;
+      console.log(
+        `[image-trace] ${scene.id}: raster reveal from local image, ${raster.rasterReveal.strokes.length} path(s)`,
+      );
+    } catch (err) {
+      console.warn(`[image-trace] ${scene.id}: local raster reveal skipped: ${err.message}`);
+      const traceStrokes = await traceWhiteboardImageBuffer(imageBuffer);
+      if (traceStrokes.length > 0) {
+        tracesBySceneId[scene.id] = traceStrokes;
+        console.log(`[image-trace] ${scene.id}: ${traceStrokes.length} local fallback drawable path(s)`);
+      }
+    }
+  }
+
   const candidates = storyboard.scenes
-    .filter((scene) => scene.image_description && !scene.trace_strokes && !scene.traceStrokes)
+    .filter(
+      (scene) =>
+        scene.image_description &&
+        !localImageSceneIds.has(scene.id) &&
+        !rasterBySceneId[scene.id] &&
+        !scene.rasterReveal &&
+        !scene.raster_reveal &&
+        !scene.trace_strokes &&
+        !scene.traceStrokes,
+    )
     .slice(0, IMAGE_TRACE_MAX_SCENES);
-  if (candidates.length === 0) return storyboard;
+  if (
+    candidates.length === 0 &&
+    Object.keys(rasterBySceneId).length === 0 &&
+    Object.keys(tracesBySceneId).length === 0
+  ) {
+    return storyboard;
+  }
 
   try {
-    console.log(`[image-trace] Generating ${candidates.length} Seedream reference image(s)...`);
-    const response = await postJson(
-      `${PYTHON_API}/imagegen/scenes`,
-      {
-        scenes: candidates.map((scene) => ({
-          scene_id: scene.id,
-          topic: storyboard.topic ?? "",
-          title: scene.title ?? "",
-          image_description: scene.image_description,
-        })),
-      },
-      180000,
-    );
+    let response = { images: {} };
+    if (candidates.length > 0) {
+      console.log(`[image-trace] Generating ${candidates.length} Seedream reference image(s)...`);
+      response = await postJson(
+        `${PYTHON_API}/imagegen/scenes`,
+        {
+          scenes: candidates.map((scene) => ({
+            scene_id: scene.id,
+            topic: storyboard.topic ?? "",
+            title: scene.title ?? "",
+            image_description: scene.image_description,
+          })),
+        },
+        180000,
+      );
+    }
 
-    const tracesBySceneId = {};
     for (const scene of candidates) {
       const imageBase64 = response.images?.[scene.id];
       if (!imageBase64) continue;
-      const traceStrokes = await traceWhiteboardImageBase64(imageBase64);
-      if (traceStrokes.length > 0) {
-        tracesBySceneId[scene.id] = traceStrokes;
-        console.log(`[image-trace] ${scene.id}: ${traceStrokes.length} drawable path(s)`);
+      try {
+        const raster = await buildRasterRevealFromBuffer(
+          Buffer.from(normalizeBase64Image(imageBase64), "base64"),
+          jobId,
+          scene.id,
+        );
+        rasterBySceneId[scene.id] = raster;
+        console.log(
+          `[image-trace] ${scene.id}: raster reveal from Seedream, ${raster.rasterReveal.strokes.length} path(s)`,
+        );
+      } catch (err) {
+        console.warn(`[image-trace] ${scene.id}: raster reveal skipped, falling back to SVG trace: ${err.message}`);
+        const traceStrokes = await traceWhiteboardImageBase64(imageBase64);
+        if (traceStrokes.length > 0) {
+          tracesBySceneId[scene.id] = traceStrokes;
+          console.log(`[image-trace] ${scene.id}: ${traceStrokes.length} drawable path(s)`);
+        }
       }
     }
 
-    if (Object.keys(tracesBySceneId).length === 0) return storyboard;
+    if (Object.keys(tracesBySceneId).length === 0 && Object.keys(rasterBySceneId).length === 0) {
+      return storyboard;
+    }
     return {
       ...storyboard,
       scenes: storyboard.scenes.map((scene) => ({
         ...scene,
-        trace_strokes: tracesBySceneId[scene.id] ?? scene.trace_strokes ?? scene.traceStrokes ?? null,
+        ...(rasterBySceneId[scene.id] ?? {}),
+        trace_strokes:
+          rasterBySceneId[scene.id]?.trace_strokes ??
+          tracesBySceneId[scene.id] ??
+          scene.trace_strokes ??
+          scene.traceStrokes ??
+          null,
       })),
     };
   } catch (err) {
     console.warn(`[image-trace] Seedream trace skipped: ${err.message}`);
-    return storyboard;
+    if (Object.keys(rasterBySceneId).length === 0 && Object.keys(tracesBySceneId).length === 0) return storyboard;
+    return {
+      ...storyboard,
+      scenes: storyboard.scenes.map((scene) => ({
+        ...scene,
+        ...(rasterBySceneId[scene.id] ?? {}),
+        trace_strokes:
+          rasterBySceneId[scene.id]?.trace_strokes ??
+          tracesBySceneId[scene.id] ??
+          scene.trace_strokes ??
+          scene.traceStrokes ??
+          null,
+      })),
+    };
   }
 }
 
@@ -859,6 +1447,27 @@ function validateHandwrittenAnimeStyle(code) {
   }
 }
 
+function validateStaticFileUsage(code) {
+  const allowedAsset = /^(?:hand-real-pen\.png|generated\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$/;
+  const literalCalls = [...code.matchAll(/\bstaticFile\s*\(\s*["']([^"']+)["']\s*\)/g)];
+  for (const match of literalCalls) {
+    if (!allowedAsset.test(match[1])) {
+      throw new Error(`Generated TSX references disallowed static asset: ${match[1]}`);
+    }
+  }
+
+  const calls = [...code.matchAll(/\bstaticFile\s*\(([^)]*)\)/g)];
+  for (const match of calls) {
+    const arg = match[1].trim();
+    if (/^["']/.test(arg)) continue;
+    if (
+      !/^(?:HAND_ASSET|referenceImageAsset|scene\.referenceImageAsset|reveal\.asset)$/.test(arg)
+    ) {
+      throw new Error(`Generated TSX uses uncontrolled staticFile() argument: ${arg}`);
+    }
+  }
+}
+
 function validateGeneratedTsx(tsx) {
   let code = String(tsx ?? "").trim().replace(/^```(?:tsx|ts)?\s*/, "").replace(/\s*```$/, "");
   const hasNamedExport = () =>
@@ -942,6 +1551,7 @@ function validateGeneratedTsx(tsx) {
   if (!/\bstaticFile\s*\(/.test(code)) {
     throw new Error("Generated TSX must reference the hand asset with staticFile()");
   }
+  validateStaticFileUsage(code);
   if (!/\bImg\b/.test(code)) {
     throw new Error("Generated TSX must render the visible hand with Remotion <Img>");
   }
@@ -1046,6 +1656,10 @@ async function generateRemotionCode(storyboard) {
       "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
       "Use glyphPaths/GlyphText/DrawGlyphPath for Chinese text so the renderer can preprocess opentype.js font outline paths, " +
       "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
+      "If storyboard scenes include rasterReveal and referenceImageAsset, reveal the original reference image through animated SVG masks " +
+      "using staticFile(scene.referenceImageAsset), drive the hand from the same raster drawOps centerline points, " +
+      "keep the transparent line-art image on a plain white canvas without yellow panels or color washes, " +
+      "and after all raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
       "Use a sparse off-white canvas, black marker outlines, blue marker titles, light washes only when useful, " +
       "animated dashed paths must use fill=\"none\"; use separate closed wash shapes behind strokes. " +
       "and lots of negative space. " +
@@ -1167,6 +1781,10 @@ async function bundleAndRender(jobId, entryPath, outputPath) {
       composition,
       serveUrl,
       codec: "h264",
+      imageFormat: "png",
+      crf: RENDER_CRF,
+      x264Preset: RENDER_X264_PRESET,
+      pixelFormat: RENDER_PIXEL_FORMAT,
       outputLocation: outputPath,
       concurrency: RENDER_CONCURRENCY,
       ...browserOptions(),
@@ -1189,7 +1807,8 @@ async function renderVideo(jobId, storyboard, voice, outputPath) {
   console.log("[tts] Done");
 
   updateJob(jobId, { phase: "imagegen", progress: 0 });
-  const storyboardWithTraces = await injectImageTraces(storyboardWithAudio);
+  updateJob(jobId, { publicAssetDir: join(PUBLIC_GENERATED_DIR, jobId) });
+  const storyboardWithTraces = await injectImageTraces(storyboardWithAudio, jobId);
 
   updateJob(jobId, { phase: "codegen", progress: 0 });
   console.log("[codegen] Generating Remotion TSX via LLM...");
@@ -1218,6 +1837,14 @@ function isInside(child, parent) {
 function removeGeneratedDir(dir) {
   if (!dir) return;
   if (!isInside(dir, GENERATED_DIR)) return;
+  try {
+    rmSync(dir, { recursive: true, force: true });
+  } catch {}
+}
+
+function removePublicGeneratedDir(dir) {
+  if (!dir) return;
+  if (!isInside(dir, PUBLIC_GENERATED_DIR)) return;
   try {
     rmSync(dir, { recursive: true, force: true });
   } catch {}
@@ -1372,6 +1999,7 @@ const server = http.createServer(async (req, res) => {
       } catch {}
     }
     removeGeneratedDir(job.generatedDir);
+    removePublicGeneratedDir(job.publicAssetDir ?? join(PUBLIC_GENERATED_DIR, jobId));
     delete jobs[jobId];
     saveJobs();
     sendJson(res, 200, { ok: true });

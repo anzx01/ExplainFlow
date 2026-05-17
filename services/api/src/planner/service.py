@@ -165,6 +165,22 @@ def _validate_handwritten_anime_style(code: str) -> None:
         )
 
 
+def _validate_static_file_usage(code: str) -> None:
+    allowed_asset = re.compile(
+        r"^(?:hand-real-pen\.png|generated/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$"
+    )
+    for asset in re.findall(r"\bstaticFile\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", code):
+        if not allowed_asset.match(asset):
+            raise ValueError(f"Generated code references disallowed static asset: {asset}")
+
+    for arg in re.findall(r"\bstaticFile\s*\(([^)]*)\)", code):
+        value = arg.strip()
+        if value.startswith(("'", '"')):
+            continue
+        if value not in {"HAND_ASSET", "referenceImageAsset", "scene.referenceImageAsset", "reveal.asset"}:
+            raise ValueError(f"Generated code uses uncontrolled staticFile() argument: {value}")
+
+
 def _strip_code_fence(value: str) -> str:
     text = value.strip()
     if text.startswith("```"):
@@ -258,7 +274,7 @@ def _compile_fast_remotion_response(
     )
     return GenerateRemotionCodeResponse(
         tsx=_validate_generated_tsx(fallback_tsx),
-        duration_in_frames=max(req.fps * 10, min(fallback_duration, req.fps * 240)),
+        duration_in_frames=min(fallback_duration, req.fps * 240),
         fps=req.fps,
         width=req.width,
         height=req.height,
@@ -300,6 +316,7 @@ def _validate_generated_tsx(tsx: str) -> str:
         raise ValueError(f"Generated Remotion code must use staticFile('{HAND_ASSET}') for the visible hand holding a pen")
     if not re.search(r"\bstaticFile\s*\(", code):
         raise ValueError("Generated Remotion code must reference the hand asset with staticFile()")
+    _validate_static_file_usage(code)
     if not re.search(r"\bImg\b", code):
         raise ValueError("Generated Remotion code must render the visible hand with Remotion <Img>")
     if not re.search(r"\bHandPen\b", code):
@@ -789,11 +806,20 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     draw_ops: list[dict] = []
     texts: list[dict] = []
     strokes: list[dict] = []
+    raster_reveal_spec: dict | None = None
     diagram_kind = _diagram_kind_for_scene(scene, scene_index)
     core_lines = _animation_lines(scene)
     steps = _scene_steps(scene)
     raw_trace_strokes = getattr(scene, "trace_strokes", None) or getattr(scene, "traceStrokes", None) or []
     trace_strokes = raw_trace_strokes if isinstance(raw_trace_strokes, list) else []
+    raw_raster_reveal = getattr(scene, "rasterReveal", None) or getattr(scene, "raster_reveal", None) or {}
+    raster_reveal = raw_raster_reveal if isinstance(raw_raster_reveal, dict) else {}
+    raster_strokes = raster_reveal.get("strokes") if isinstance(raster_reveal.get("strokes"), list) else []
+    reference_image_asset = (
+        getattr(scene, "referenceImageAsset", None)
+        or getattr(scene, "reference_image_asset", None)
+        or raster_reveal.get("asset")
+    )
 
     def fit_timing(start: int, frames: int) -> tuple[int, int]:
         safe_start = min(max(0, start), max(0, duration - 8))
@@ -937,6 +963,103 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         cursor += 8
         add_stroke("doodle", _line_points(x + 70, y + 4, x + 112, y + 4, count=4), blue, 3, cursor, 7)
         return cursor + 8
+
+    def build_raster_reveal(start: int) -> int:
+        nonlocal raster_reveal_spec
+        if not reference_image_asset or not raster_strokes:
+            return builders.get(diagram_kind, build_process_flow)(start)
+
+        image_w = float(raster_reveal.get("imageWidth") or raster_reveal.get("image_width") or 1)
+        image_h = float(raster_reveal.get("imageHeight") or raster_reveal.get("image_height") or 1)
+        image_aspect = max(0.1, image_w / max(1.0, image_h))
+        region_x = diagram_left + width * 0.005
+        region_y = diagram_top - height * 0.015
+        region_w = width * 0.52
+        region_h = height * 0.60
+        region_aspect = region_w / max(1.0, region_h)
+        if image_aspect >= region_aspect:
+            draw_w = region_w
+            draw_h = region_w / image_aspect
+        else:
+            draw_h = region_h
+            draw_w = region_h * image_aspect
+        draw_x = region_x + (region_w - draw_w) * 0.5
+        draw_y = region_y + (region_h - draw_h) * 0.5
+
+        prepared: list[dict] = []
+        for raw_path in raster_strokes:
+            if not isinstance(raw_path, dict):
+                continue
+            raw_points = raw_path.get("points")
+            if not isinstance(raw_points, list) or len(raw_points) < 2:
+                continue
+            points: list[dict[str, float]] = []
+            for raw_point in raw_points:
+                if not isinstance(raw_point, dict):
+                    continue
+                px = raw_point.get("x")
+                py = raw_point.get("y")
+                if not isinstance(px, (int, float)) or not isinstance(py, (int, float)):
+                    continue
+                points.append(
+                    _point(
+                        draw_x + max(0.0, min(1.0, float(px))) * draw_w,
+                        draw_y + max(0.0, min(1.0, float(py))) * draw_h,
+                    )
+                )
+            if len(points) < 2:
+                continue
+            normalized_width = raw_path.get("revealWidth") or raw_path.get("reveal_width") or 0.018
+            reveal_width = max(36.0, min(128.0, float(normalized_width) * max(draw_w, draw_h)))
+            prepared.append(
+                {
+                    "points": points,
+                    "revealWidth": round(reveal_width, 1),
+                    "dashLength": round(_polyline_length(points), 1),
+                    "weight": math.sqrt(max(1.0, _polyline_length(points))),
+                }
+            )
+
+        if not prepared:
+            return builders.get(diagram_kind, build_process_flow)(start)
+
+        window_start = min(max(0, start), max(0, duration - 32))
+        window_end = max(window_start + 12.0, duration - 24.0)
+        total_weight = sum(item["weight"] for item in prepared) or float(len(prepared))
+        cursor_float = float(window_start)
+        raster_paths: list[dict] = []
+        for index, item in enumerate(prepared):
+            op_id = f"s{scene_index}_raster_{index}"
+            span = max(0.45, (window_end - window_start) * item["weight"] / total_weight)
+            end_float = window_end if index == len(prepared) - 1 else min(window_end, cursor_float + span)
+            draw_ops.append(
+                {
+                    "id": op_id,
+                    "kind": "path",
+                    "startFrame": round(cursor_float, 2),
+                    "endFrame": round(max(cursor_float + 0.35, end_float), 2),
+                    "points": item["points"],
+                }
+            )
+            raster_paths.append(
+                {
+                    "opId": op_id,
+                    "d": _path_from_points(item["points"]),
+                    "revealWidth": item["revealWidth"],
+                    "dashLength": item["dashLength"],
+                }
+            )
+            cursor_float = end_float
+
+        raster_reveal_spec = {
+            "asset": str(reference_image_asset),
+            "x": round(draw_x, 1),
+            "y": round(draw_y, 1),
+            "width": round(draw_w, 1),
+            "height": round(draw_h, 1),
+            "strokes": raster_paths,
+        }
+        return min(duration - 8, int(math.ceil(window_end + 6)))
 
     def build_reference_trace(start: int) -> int:
         trace_x = diagram_left + width * 0.025
@@ -1239,7 +1362,9 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "matrix_transform": build_matrix_transform,
         "feedback_loop": build_feedback_loop,
     }
-    if trace_strokes:
+    if raster_strokes and reference_image_asset:
+        cursor = build_raster_reveal(cursor)
+    elif trace_strokes:
         cursor = build_reference_trace(cursor)
     else:
         cursor = builders.get(diagram_kind, build_process_flow)(cursor)
@@ -1266,6 +1391,8 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "texts": texts,
         "glyphPaths": [],
         "strokes": strokes,
+        "referenceImageAsset": str(reference_image_asset) if reference_image_asset else None,
+        "rasterReveal": raster_reveal_spec,
     }
 
 
@@ -1300,6 +1427,8 @@ type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame:
 type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number };
 type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
+type RasterStrokeSpec = { opId: string; d: string; revealWidth: number; dashLength: number };
+type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[] };
 type SceneSpec = {
   title: string;
   diagramKind?: string;
@@ -1311,6 +1440,8 @@ type SceneSpec = {
   texts: TextSpec[];
   glyphPaths?: GlyphPathSpec[];
   strokes: StrokeSpec[];
+  referenceImageAsset?: string | null;
+  rasterReveal?: RasterRevealSpec | null;
 };
 
 const scenes = __SCENES_JSON__ as SceneSpec[];
@@ -1417,6 +1548,92 @@ const DrawStroke = ({ spec, op }: { spec: StrokeSpec; op: DrawOp }) => {
   );
 };
 
+const RasterMaskStroke = ({ spec, op }: { spec: RasterStrokeSpec; op: DrawOp }) => {
+  const frame = useCurrentFrame();
+  const progress = progressForOp(frame, op);
+  const length = spec.dashLength;
+  return (
+    <path
+      d={spec.d}
+      fill="none"
+      stroke="white"
+      strokeWidth={spec.revealWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeDasharray={length}
+      strokeDashoffset={length * (1 - progress)}
+    />
+  );
+};
+
+const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
+  const frame = useCurrentFrame();
+  const reveal = scene.rasterReveal;
+  if (!reveal || !scene.referenceImageAsset) return null;
+  const maskId = `raster-reveal-mask-${sceneIndex}`;
+  const referenceImageAsset = scene.referenceImageAsset;
+  const coverageStart = reveal.strokes.reduce((latest, stroke) => {
+    const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
+    return op ? Math.max(latest, op.endFrame) : latest;
+  }, 0);
+  const finalCoverageOpacity = interpolate(frame, [coverageStart, coverageStart + 8], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <g>
+      <defs>
+        <mask id={maskId} maskUnits="userSpaceOnUse">
+          <rect x="0" y="0" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} fill="black" />
+          {reveal.strokes.map((stroke) => {
+            const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
+            return op ? <RasterMaskStroke key={stroke.opId} spec={stroke} op={op} /> : null;
+          })}
+        </mask>
+      </defs>
+      <image
+        href={staticFile(referenceImageAsset)}
+        x={reveal.x}
+        y={reveal.y}
+        width={reveal.width}
+        height={reveal.height}
+        preserveAspectRatio="none"
+        mask={`url(#${maskId})`}
+        opacity={1 - finalCoverageOpacity}
+      />
+    </g>
+  );
+};
+
+const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
+  const frame = useCurrentFrame();
+  const reveal = scene.rasterReveal;
+  if (!reveal || !scene.referenceImageAsset) return null;
+  const referenceImageAsset = scene.referenceImageAsset;
+  const coverageStart = reveal.strokes.reduce((latest, stroke) => {
+    const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
+    return op ? Math.max(latest, op.endFrame) : latest;
+  }, 0);
+  const opacity = interpolate(frame, [coverageStart, coverageStart + 8], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <Img
+      src={staticFile(referenceImageAsset)}
+      style={{
+        position: "absolute",
+        left: reveal.x,
+        top: reveal.y,
+        width: reveal.width,
+        height: reveal.height,
+        opacity,
+        pointerEvents: "none",
+      }}
+    />
+  );
+};
+
 const AnimeDoodle = ({ scene }: { scene: SceneSpec }) => {
   return (
     <>
@@ -1441,9 +1658,10 @@ const CartoonDiagram = ({ scene }: { scene: SceneSpec }) => (
   </>
 );
 
-const WhiteboardScene = ({ scene }: { scene: SceneSpec }) => {
+const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
   const drawOps = scene.drawOps;
+  const backgroundColor = scene.rasterReveal ? "#FFFFFF" : "#FBFAF5";
   const getActiveDrawOp = (frame: number) =>
     drawOps.find((op) => frame >= op.startFrame && frame <= op.endFrame);
   const getPenPosition = (frame: number) => {
@@ -1456,14 +1674,16 @@ const WhiteboardScene = ({ scene }: { scene: SceneSpec }) => {
   const pen = getPenPosition(frame);
 
   return (
-    <AbsoluteFill style={{ backgroundColor: "#FBFAF5", overflow: "hidden" }}>
+    <AbsoluteFill style={{ backgroundColor, overflow: "hidden" }}>
       {scene.audioUrl ? <Audio src={scene.audioUrl} /> : null}
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
-        <path d={scene.washD} fill={scene.accent} opacity={0.24} />
+        {scene.rasterReveal ? null : <path d={scene.washD} fill={scene.accent} opacity={0.24} />}
+        <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />
         <GlyphText scene={scene} />
       </svg>
+      <RasterFinalOverlay scene={scene} />
       <HandPen tipX={pen.x} tipY={pen.y} visible={pen.visible} />
     </AbsoluteFill>
   );
@@ -1478,7 +1698,7 @@ export function GeneratedVideo() {
         from += scene.duration;
         return (
           <Sequence key={`${scene.title}-${index}`} from={start} durationInFrames={scene.duration}>
-            <WhiteboardScene scene={scene} />
+            <WhiteboardScene scene={scene} sceneIndex={index} />
           </Sequence>
         );
       })}
@@ -1513,7 +1733,7 @@ Hard requirements:
 - Export exactly one named component, either `export const GeneratedVideo = ...` or `export function GeneratedVideo() ...`.
 - Do not use default exports.
 - Use only imports from "react" and "remotion".
-- Do not import local files, component libraries, templates, CSS, npm packages, images, fonts, or helper modules. The only asset exception is `staticFile("hand-real-pen.png")` rendered via Remotion <Img>.
+- Do not import local files, component libraries, templates, CSS, npm packages, images, fonts, or helper modules. The asset exceptions are `staticFile("hand-real-pen.png")` for the hand and controlled job-local `staticFile(scene.referenceImageAsset)` when a storyboard scene includes rasterReveal/referenceImageAsset.
 - Do not use CSS animations/transitions. All motion must use Remotion frame APIs: useCurrentFrame(), interpolate(), Easing, spring(), Sequence, AbsoluteFill.
 - The TSX must explicitly use useCurrentFrame(), Sequence, and at least one of interpolate() or spring().
 - Every scene must draw text and shapes over time. Define inline helper components such as HandText, DrawPath, SketchBubble, SketchArrow, or DiagramStroke inside the same TSX module.
@@ -1532,20 +1752,21 @@ Hard requirements:
 - Create a deterministic drawing timeline array or helper function that maps frame ranges to pen tip coordinates. Use interpolate() to move the hand between points; never jump instantly.
 - The hand should be large enough to resemble the reference video, roughly 240-300 px wide on a 1920x1080 canvas, not a tiny cursor.
 - SVG line drawings must use strokeDasharray and strokeDashoffset driven by useCurrentFrame()/interpolate().
+- If a scene includes rasterReveal and referenceImageAsset, reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. Do not fade in or directly display the full reference image as the main animation. After all raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
 - Animated dashed paths must have `fill="none"`. If a wash/fill is needed, draw a separate closed shape behind the animated stroke without strokeDasharray/strokeDashoffset.
 - Text must be progressively revealed with slice(), substring(), or a frame-driven clipPath. Do not show full paragraphs instantly.
 - For Chinese text, define a `glyphPaths` array and render it with inline `GlyphText` / `DrawGlyphPath` helpers using SVG `<path>` plus strokeDasharray/strokeDashoffset. The render server will preprocess these glyph paths from a local Chinese font with opentype.js, so include text specs and matching text drawOps instead of static SVG `<text>`.
 - Do not use an HTML `HandText` slice-only renderer as the final text drawing path. The pen must follow glyph outline/path points that can be replaced by the renderer.
 - Opacity fade may be used only as a secondary polish, never as the main animation for text or diagrams.
 - Do not use SVG SMIL tags such as <animate>. Even SVG details must be driven by Remotion frame values.
-- Include at least one non-black/white muted watercolor accent fill or wash in each scene, such as warm yellow, red, blue, tan, or gray.
+- Include at least one non-black/white muted watercolor accent fill or wash in non-raster scenes, such as warm yellow, red, blue, tan, or gray. For rasterReveal/referenceImageAsset scenes, do not add color washes or colored panels behind the image; keep the source image asset transparent over a plain white canvas.
 - Do not use transition, animation, @keyframes, Tailwind animate-* class names, setTimeout, setInterval, requestAnimationFrame, Date.now(), or Math.random().
 - Do not use fetch, eval, Function, require, filesystem APIs, browser globals, or dangerouslySetInnerHTML.
 - Hardcode the provided storyboard content and audio URLs into the TSX.
 - Use <Audio src="..."> from remotion for scene voiceover when audioUrl exists.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
-- Use a clean Chinese whiteboard teaching style: off-white background, black ink outlines, loose muted color fills, spacious layout, progressive reveal.
+- Use a clean Chinese whiteboard teaching style: off-white background for drawn diagram scenes; plain white background for rasterReveal/referenceImageAsset scenes; black ink outlines, loose muted color fills where appropriate, spacious layout, progressive reveal.
 - Keep text inside safe bounds for 1920x1080.
 - Keep helpers deterministic. If you need hand-drawn jitter, compute it from indexes or fixed arrays, never Math.random().
 
@@ -1573,6 +1794,7 @@ async def generate_remotion_code(
         "The hand must write every text label and draw every SVG line by following drawOps stroke points, "
         "moving up/down/left/right inside glyphs like real handwriting, "
         "using glyphPaths/GlyphText/DrawGlyphPath so the renderer can replace Chinese text with opentype.js font outlines, "
+        "using rasterReveal/referenceImageAsset masks when the storyboard provides an original reference image to reveal, "
         "using staticFile('hand-real-pen.png'), <Img>, and getPenPosition(frame) coordinates. "
         "Use Chinese handwritten fonts and anime/cartoon whiteboard doodles. "
         "No stock images, no templates, no decorative component frames."

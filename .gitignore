@@ -16,6 +16,7 @@ logs/
 services/api/logs/
 outputs/
 apps/render/generated/
+apps/render/public/generated/
 evals/results.json
 evals/e2e_results.json
 *.mp4
