@@ -106,6 +106,11 @@ export interface Scene {
   learning_goal?: string | null;
   visual_beats?: VisualBeat[];
   diagram_plan?: DiagramPlan | null;
+  render_strategy?: string | null;
+  visual_complexity?: string | null;
+  board_mode?: string | null;
+  hand_usage?: string | null;
+  visual_style?: string | null;
 }
 
 export interface Storyboard {

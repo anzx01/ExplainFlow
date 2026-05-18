@@ -79,7 +79,13 @@ const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
   640,
   Number(process.env.REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE ?? 648),
 );
+const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
+  40,
+  Number(process.env.REMOTION_DIRECT_IMAGE_STROKE_THRESHOLD ?? 280),
+);
 const HAND_ASSET = "hand-real-pen.png";
+const SCENE_PREROLL_FRAMES = Math.max(0, Math.min(90, Number(process.env.SCENE_PREROLL_FRAMES ?? 0) || 0));
+const BEAT_AUDIO_LEAD_FRAMES = Math.max(0, Math.min(36, Number(process.env.BEAT_AUDIO_LEAD_FRAMES ?? 8) || 8));
 const MUSIC_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"]);
 const MUSIC_MIME_TYPES = new Map([
   [".mp3", "audio/mpeg"],
@@ -95,6 +101,12 @@ const GLYPH_FONT_CANDIDATES = [
   "C:\\Windows\\Fonts\\simfang.ttf",
   "C:\\Windows\\Fonts\\msyh.ttc",
   "C:\\Windows\\Fonts\\simsun.ttc",
+].filter(Boolean);
+const LATIN_GLYPH_FONT_CANDIDATES = [
+  process.env.EXPLAINFLOW_LATIN_GLYPH_FONT,
+  "C:\\Windows\\Fonts\\Inkfree.ttf",
+  "C:\\Windows\\Fonts\\segoepr.ttf",
+  "C:\\Windows\\Fonts\\comic.ttf",
 ].filter(Boolean);
 const ttsInFlight = new Map();
 const TTS_CONCURRENCY = Math.max(1, Math.min(2, Number(process.env.TTS_CONCURRENCY ?? 1) || 1));
@@ -145,15 +157,18 @@ saveJobs();
 
 function readBody(req, limitBytes = 10 * 1024 * 1024) {
   return new Promise((resolvePromise, reject) => {
-    let body = "";
+    const chunks = [];
+    let totalBytes = 0;
     req.on("data", (chunk) => {
-      body += chunk;
-      if (Buffer.byteLength(body) > limitBytes) {
+      const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      chunks.push(buffer);
+      totalBytes += buffer.length;
+      if (totalBytes > limitBytes) {
         reject(new Error("Request body too large"));
         req.destroy();
       }
     });
-    req.on("end", () => resolvePromise(body));
+    req.on("end", () => resolvePromise(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -355,6 +370,39 @@ function normalizeTextForTts(text) {
     .trim();
 }
 
+function cleanNarrationText(text) {
+  let value = String(text ?? "").replace(/\s+/g, " ").trim();
+  if (!value) return "";
+  const replacements = [
+    [/^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现|看|看到)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*/i, ""],
+    [/(?:先|再|然后|接着|最后)\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现)\s*/gi, ""],
+    [/(?:左边|右边|上方|下方|中间|旁边|图中|画面中)\s*(?:画|绘制|写|写上|标出|标注|可以看到|看到)\s*/gi, ""],
+    [/(?:这一步|这个 beat|此时)\s*(?:同步)?\s*(?:说|讲|说明|解释)\s*/gi, ""],
+    [/(?:我们|这里|现在)\s*(?:来|可以)?\s*(?:画|绘制|写|写上|标出|标注|看)\s*/gi, ""],
+  ];
+  for (const [pattern, replacement] of replacements) {
+    value = value.replace(pattern, replacement);
+  }
+  value = value.replace(/\s+/g, " ").replace(/^[ ：:，,。]+|[ ：:，,。]+$/g, "").trim();
+  if (value && !/[。！？.!?]$/.test(value)) value += "。";
+  return value;
+}
+
+function normalizeVoiceKey(voice) {
+  const value = String(voice ?? "").trim();
+  if (!value) return "xiaoxiao";
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const aliases = new Map([
+    ["xiaoxiao", "xiaoxiao"],
+    ["zhcnxiaoxiaoneural", "xiaoxiao"],
+    ["yunxi", "yunxi"],
+    ["zhcnyunxineural", "yunxi"],
+    ["xiaoyi", "xiaoyi"],
+    ["zhcnxiaoyineural", "xiaoyi"],
+  ]);
+  return aliases.get(normalized) ?? value;
+}
+
 async function requestTtsAudio(narration, voice, sceneId) {
   const speechText = normalizeTextForTts(narration);
   let lastError = null;
@@ -421,6 +469,33 @@ async function probeAudioDurationSeconds(filePath) {
   }
 }
 
+async function probePlayableAudio(filePath) {
+  try {
+    const { stdout } = await execFileAsync(
+      FFPROBE_BINARY,
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=codec_name,sample_rate,channels:format=duration",
+        "-of",
+        "json",
+        filePath,
+      ],
+      { windowsHide: true, timeout: 30000 },
+    );
+    const parsed = JSON.parse(stdout || "{}");
+    const stream = Array.isArray(parsed.streams) ? parsed.streams[0] : null;
+    const duration = Number.parseFloat(String(parsed.format?.duration ?? "0"));
+    return Boolean(stream?.codec_name && Number.isFinite(duration) && duration > 0);
+  } catch (err) {
+    console.warn(`[music] ffprobe rejected ${basename(filePath)}: ${err.message}`);
+    return false;
+  }
+}
+
 async function synthesizeScene(sceneId, text, voice) {
   const narration = String(text ?? "").trim();
   if (!narration) return null;
@@ -465,7 +540,7 @@ function sceneBeatSpecs(scene) {
         },
       ];
   return beats.map((beat, index) => {
-    const text = String(beat?.narration || beat?.draw_intent || scene.narration || scene.title || "").trim();
+    const text = cleanNarrationText(beat?.narration || scene.narration || scene.title || beat?.draw_intent || "");
     return {
       id: String(beat?.id || `beat_${index}`),
       index,
@@ -477,7 +552,7 @@ function sceneBeatSpecs(scene) {
 }
 
 async function injectAudio(storyboard, voice) {
-  const voiceKey = voice ?? "xiaoxiao";
+  const voiceKey = normalizeVoiceKey(voice ?? "xiaoxiao");
   const sceneResults = await Promise.allSettled(
     storyboard.scenes.map(async (scene, sceneIndex) => {
       const beatSpecs = sceneBeatSpecs(scene);
@@ -487,14 +562,15 @@ async function injectAudio(storyboard, voice) {
         ),
       );
 
-      let cursor = 0;
+      let cursor = SCENE_PREROLL_FRAMES;
       const audioSegments = segmentResults.map((result, index) => {
         const beat = beatSpecs[index];
         const audio = result.status === "fulfilled" ? result.value : null;
         const durationSeconds = audio?.durationSeconds || estimateNarrationSeconds(beat.text);
         const audioDurationFrames = Math.max(1, Math.ceil(durationSeconds * FPS));
         const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
-        const durationFrames = Math.max(FPS * 3, audioDurationFrames + 12, estimateFrames);
+        const audioStartFrame = cursor + (index === 0 ? BEAT_AUDIO_LEAD_FRAMES : Math.floor(BEAT_AUDIO_LEAD_FRAMES * 0.5));
+        const durationFrames = Math.max(FPS * 3, audioStartFrame - cursor + audioDurationFrames + 12, estimateFrames);
         const startFrame = cursor;
         const endFrame = startFrame + durationFrames;
         cursor = endFrame;
@@ -504,16 +580,19 @@ async function injectAudio(storyboard, voice) {
           startFrame,
           endFrame,
           duration: durationFrames,
+          audioStartFrame,
+          audioEndFrame: audioStartFrame + audioDurationFrames,
+          audioSequenceDuration: Math.max(1, endFrame - audioStartFrame),
           audioUrl: audio?.audioUrl ?? null,
           audioDurationFrames,
-          drawBudgetFrames: Math.max(1, durationFrames - 8),
+          drawBudgetFrames: Math.max(1, durationFrames - 4),
           subtitleText: beat.text,
           narration: beat.text,
           drawIntent: beat.drawIntent,
         };
       });
 
-      const transitionFrames = 10;
+      const transitionFrames = 0;
       const durationFrames = Math.max(
         Math.round((Number(scene.duration_estimate) || 0) * FPS),
         cursor + transitionFrames,
@@ -735,6 +814,144 @@ function isProbablyBase64Image(value) {
   if (text.startsWith("data:image/")) return true;
   if (text.length < 120) return false;
   return /^[a-zA-Z0-9+/=\r\n]+$/.test(text);
+}
+
+function sceneTextForStrategy(scene) {
+  return [
+    scene?.title,
+    scene?.image_description,
+    scene?.imageDescription,
+    scene?.learning_goal,
+    scene?.learningGoal,
+    scene?.render_strategy,
+    scene?.renderStrategy,
+    scene?.visual_complexity,
+    scene?.visualComplexity,
+    scene?.board_mode,
+    scene?.boardMode,
+    scene?.hand_usage,
+    scene?.handUsage,
+    scene?.visual_style,
+    scene?.visualStyle,
+    scene?.teacher_board_strategy,
+    scene?.teacherBoardStrategy,
+    scene?.diagram_plan?.kind,
+    scene?.diagramPlan?.kind,
+    scene?.diagram_plan?.layout,
+    scene?.diagramPlan?.layout,
+    ...(Array.isArray(scene?.diagram_plan?.required_labels) ? scene.diagram_plan.required_labels : []),
+    ...(Array.isArray(scene?.diagramPlan?.requiredLabels) ? scene.diagramPlan.requiredLabels : []),
+    ...(Array.isArray(scene?.visual_beats) ? scene.visual_beats : []).flatMap((beat) => [
+      beat?.draw_intent,
+      beat?.drawIntent,
+      beat?.narration,
+      ...(Array.isArray(beat?.required_labels) ? beat.required_labels : []),
+      ...(Array.isArray(beat?.requiredLabels) ? beat.requiredLabels : []),
+    ]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function countPatternMatches(text, patterns) {
+  return patterns.reduce((sum, pattern) => sum + (pattern.test(text) ? 1 : 0), 0);
+}
+
+function countSceneLabels(scene) {
+  const labels = new Set();
+  const add = (value) => {
+    const label = String(value ?? "").trim().toLowerCase();
+    if (label) labels.add(label);
+  };
+  for (const label of scene?.diagram_plan?.required_labels ?? []) add(label);
+  for (const label of scene?.diagramPlan?.requiredLabels ?? []) add(label);
+  for (const beat of scene?.visual_beats ?? []) {
+    for (const label of beat?.required_labels ?? []) add(label);
+    for (const label of beat?.requiredLabels ?? []) add(label);
+  }
+  const quotedLabels = sceneTextForStrategy(scene).match(/'[^']{1,28}'|"[^"]{1,28}"/g) ?? [];
+  for (const label of quotedLabels) add(label.slice(1, -1));
+  return labels.size;
+}
+
+function explicitRasterStrategy(scene) {
+  const value = String(
+    scene?.render_strategy ??
+      scene?.renderStrategy ??
+      scene?.raster_render_strategy ??
+      scene?.rasterRenderStrategy ??
+      scene?.teacher_board_strategy ??
+      scene?.teacherBoardStrategy ??
+      scene?.diagram_plan?.render_strategy ??
+      scene?.diagramPlan?.renderStrategy ??
+      "",
+  )
+    .trim()
+    .toLowerCase();
+  if (!value) return null;
+  if (/(direct|finished|static|reference|present|photo|show)/i.test(value)) return "direct";
+  if (/(trace|progressive|draw|write|stroke|reveal|board)/i.test(value)) return "trace";
+  if (/(hybrid|mixed|annotation|callout)/i.test(value)) return "direct";
+  return null;
+}
+
+function sceneBoardMode(scene) {
+  return String(scene?.board_mode ?? scene?.boardMode ?? "").trim().toLowerCase();
+}
+
+function sceneHandUsage(scene) {
+  return String(scene?.hand_usage ?? scene?.handUsage ?? "").trim().toLowerCase();
+}
+
+function sceneVisualStyle(scene) {
+  return String(scene?.visual_style ?? scene?.visualStyle ?? "").trim().toLowerCase();
+}
+
+function sceneShouldDirectRender(scene, trace) {
+  if (sceneHandUsage(scene) === "annotate") return true;
+  if (sceneBoardMode(scene) === "reference" || sceneVisualStyle(scene) === "technical_reference") return true;
+  if (sceneBoardMode(scene) === "clean_canvas" || sceneVisualStyle(scene) === "marketing_doodle") return true;
+  if (sceneBoardMode(scene) === "chalkboard" || sceneVisualStyle(scene) === "math_chalkboard") return false;
+  const explicit = explicitRasterStrategy(scene);
+  if (explicit === "direct") return true;
+  if (explicit === "trace") return false;
+
+  const text = sceneTextForStrategy(scene);
+  const strokeCount = Number(trace?.strokes?.length ?? 0);
+  const skeletonPixels = Number(trace?.skeletonPixels ?? 0);
+  const maskCoverage = Number(trace?.maskCoverage ?? 0);
+  const labelCount = countSceneLabels(scene);
+  const beatCount = Array.isArray(scene?.visual_beats) ? scene.visual_beats.length : 0;
+
+  const boardworkScore =
+    countPatternMatches(text, [
+      /\b(simple|schematic|line[-\s]?art|line diagram|whiteboard|sketch|diagram|flowchart|process|comparison|before|after|curve|axis|graph|formula|equation|single|two[-\s]?panel)\b/i,
+      /(简单|示意|线稿|白板|草图|流程|对比|曲线|坐标轴|公式|单图|双图|少量|板书)/i,
+      /\b(cross[-\s]?section|section view)\b/i,
+    ]) +
+    (beatCount >= 2 && beatCount <= 5 ? 1 : 0) +
+    (labelCount <= 8 ? 1 : 0);
+
+  const denseReferenceScore =
+    countPatternMatches(text, [
+      /\b(photo|realistic|reference|finished|full[-\s]?image|object|portrait|screenshot|map|cad|render|scan|microscope|medical|anatomy|isometric|3d|three[-\s]?dimensional|cutaway|exploded|multi[-\s]?layer|many labels|dense|detailed|complex)\b/i,
+      /(照片|真实|参考图|成品图|直接呈现|实物|截图|地图|扫描|显微|医学|解剖|三维|立体|剖切|爆炸图|多层|密集|复杂|细节很多|标签很多)/i,
+      /\b(left|center|right)\s*:/i,
+      /(左[：:]|中[：:]|右[：:])/i,
+    ]) + (labelCount >= 10 ? 1 : 0);
+
+  const metricComplexity =
+    (strokeCount >= DIRECT_IMAGE_STROKE_THRESHOLD ? 1 : 0) +
+    (skeletonPixels >= 12000 ? 1 : 0) +
+    (maskCoverage >= 0.115 ? 1 : 0);
+  const extremeComplexity = skeletonPixels >= 24000 || maskCoverage >= 0.18;
+
+  if (extremeComplexity && boardworkScore < 3) return true;
+  if (denseReferenceScore >= 2 && (metricComplexity >= 1 || boardworkScore < 3)) return true;
+  if (boardworkScore >= 3 && skeletonPixels <= 18000 && maskCoverage <= 0.14) return false;
+  if (denseReferenceScore > boardworkScore && metricComplexity >= 1) return true;
+  return metricComplexity >= 2;
 }
 
 function sceneLocalImageBuffer(scene) {
@@ -1176,12 +1393,13 @@ async function makeTransparentLineArtAsset(imageBuffer) {
   return { buffer, width, height };
 }
 
-async function buildRasterRevealFromBuffer(imageBuffer, jobId, sceneId) {
+async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene) {
   const assetDir = join(PUBLIC_GENERATED_DIR, jobId);
   mkdirSync(assetDir, { recursive: true });
 
   const transparentAsset = await makeTransparentLineArtAsset(imageBuffer);
   const assetBuffer = transparentAsset.buffer;
+  const sceneId = scene?.id ?? "scene";
   const safeSceneId = safeAssetSegment(sceneId, "scene");
   const filename = `${safeSceneId}.png`;
   writeFileSync(join(assetDir, filename), assetBuffer);
@@ -1192,10 +1410,12 @@ async function buildRasterRevealFromBuffer(imageBuffer, jobId, sceneId) {
   }
 
   const asset = `generated/${jobId}/${filename}`;
+  const renderMode = sceneShouldDirectRender(scene, trace) ? "direct" : "trace";
   return {
     referenceImageAsset: asset,
     rasterReveal: {
       asset,
+      renderMode,
       imageWidth: transparentAsset.width,
       imageHeight: transparentAsset.height,
       transparentBackground: true,
@@ -1203,9 +1423,10 @@ async function buildRasterRevealFromBuffer(imageBuffer, jobId, sceneId) {
       traceHeight: trace.traceHeight,
       maskCoverage: trace.maskCoverage,
       skeletonPixels: trace.skeletonPixels,
-      strokes: trace.strokes,
+      strokeCount: trace.strokes.length,
+      strokes: renderMode === "direct" ? [] : trace.strokes,
     },
-    trace_strokes: trace.strokes.map((stroke) => stroke.points),
+    trace_strokes: renderMode === "direct" ? [] : trace.strokes.map((stroke) => stroke.points),
   };
 }
 
@@ -1221,10 +1442,10 @@ async function injectImageTraces(storyboard, jobId) {
     if (!imageBuffer) continue;
     localImageSceneIds.add(scene.id);
     try {
-      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene.id);
+      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene);
       rasterBySceneId[scene.id] = raster;
       console.log(
-        `[image-trace] ${scene.id}: raster reveal from local image, ${raster.rasterReveal.strokes.length} path(s)`,
+        `[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from local image, ${raster.rasterReveal.strokes.length} reveal path(s)`,
       );
     } catch (err) {
       console.warn(`[image-trace] ${scene.id}: local raster reveal skipped: ${err.message}`);
@@ -1240,6 +1461,9 @@ async function injectImageTraces(storyboard, jobId) {
     .filter(
       (scene) =>
         scene.image_description &&
+        sceneHandUsage(scene) !== "none" &&
+        sceneBoardMode(scene) !== "chalkboard" &&
+        sceneVisualStyle(scene) !== "math_chalkboard" &&
         !localImageSceneIds.has(scene.id) &&
         !rasterBySceneId[scene.id] &&
         !scene.rasterReveal &&
@@ -1268,6 +1492,9 @@ async function injectImageTraces(storyboard, jobId) {
             topic: storyboard.topic ?? "",
             title: scene.title ?? "",
             image_description: scene.image_description,
+            board_mode: scene.board_mode ?? scene.boardMode ?? "whiteboard",
+            hand_usage: scene.hand_usage ?? scene.handUsage ?? "trace",
+            visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
           })),
         },
         180000,
@@ -1281,11 +1508,11 @@ async function injectImageTraces(storyboard, jobId) {
         const raster = await buildRasterRevealFromBuffer(
           Buffer.from(normalizeBase64Image(imageBase64), "base64"),
           jobId,
-          scene.id,
+          scene,
         );
         rasterBySceneId[scene.id] = raster;
         console.log(
-          `[image-trace] ${scene.id}: raster reveal from Seedream, ${raster.rasterReveal.strokes.length} path(s)`,
+          `[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from Seedream, ${raster.rasterReveal.strokes.length} reveal path(s)`,
         );
       } catch (err) {
         console.warn(`[image-trace] ${scene.id}: raster reveal skipped, falling back to SVG trace: ${err.message}`);
@@ -1333,6 +1560,7 @@ async function injectImageTraces(storyboard, jobId) {
 }
 
 let glyphFontCache;
+let latinGlyphFontCache;
 
 function parseFontFile(fontPath) {
   const buffer = readFileSync(fontPath);
@@ -1354,6 +1582,22 @@ function loadGlyphFont() {
   }
   glyphFontCache = null;
   return glyphFontCache;
+}
+
+function loadLatinGlyphFont() {
+  if (latinGlyphFontCache !== undefined) return latinGlyphFontCache;
+  for (const fontPath of LATIN_GLYPH_FONT_CANDIDATES) {
+    if (!existsSync(fontPath)) continue;
+    try {
+      latinGlyphFontCache = { font: parseFontFile(fontPath), fontPath };
+      console.log(`[glyph] Loaded latin outline font: ${fontPath}`);
+      return latinGlyphFontCache;
+    } catch (err) {
+      console.warn(`[glyph] Failed to load latin outline font ${fontPath}:`, err.message);
+    }
+  }
+  latinGlyphFontCache = null;
+  return latinGlyphFontCache;
 }
 
 function rounded(value, places = 1) {
@@ -1492,6 +1736,20 @@ function measureText(font, text, fontSize) {
   }
 }
 
+function charWeight(char) {
+  return /[\u3400-\u9fff]/u.test(char) ? 1 : 0.55;
+}
+
+function fallbackLineWidth(text, fontSize) {
+  return Array.from(String(text ?? "")).reduce((sum, char) => sum + charWeight(char) * fontSize, 0);
+}
+
+function pickFontForText(text) {
+  const hasCjk = /[\u3400-\u9fff]/u.test(String(text ?? ""));
+  if (hasCjk) return loadGlyphFont();
+  return loadLatinGlyphFont() || loadGlyphFont();
+}
+
 function layoutTextLines(font, text, fontSize, maxWidth) {
   const safeMaxWidth = Number(maxWidth) > fontSize * 2 ? Number(maxWidth) : Number.POSITIVE_INFINITY;
   const lines = [];
@@ -1518,6 +1776,8 @@ function buildGlyphFragments(font, textSpec) {
   const lines = layoutTextLines(font, textSpec.text, fontSize, textSpec.maxWidth);
   const lineHeight = fontSize * 1.18;
   const fragments = [];
+  const hasCjk = /[\u3400-\u9fff]/u.test(String(textSpec.text ?? ""));
+  const baseStrokeScale = hasCjk ? 0.04 : 0.034;
 
   lines.forEach((line, lineIndex) => {
     const baselineY = y + fontSize * 0.88 + lineIndex * lineHeight;
@@ -1537,7 +1797,7 @@ function buildGlyphFragments(font, textSpec) {
           d: path.toPathData(1),
           points,
           dashLength: rounded(visibleLength),
-          strokeWidth: rounded(Math.max(2.2, Math.min(5.2, fontSize * 0.045))),
+          strokeWidth: rounded(Math.max(1.8, Math.min(4.4, fontSize * baseStrokeScale))),
         });
       },
     );
@@ -1558,8 +1818,8 @@ function glyphTimingWeights(fragments) {
 }
 
 function upgradeScenesWithGlyphOutlines(scenes) {
-  const loaded = loadGlyphFont();
-  if (!loaded) {
+  const defaultLoaded = loadGlyphFont();
+  if (!defaultLoaded) {
     throw new Error(
       `No usable Chinese outline font found. Tried: ${GLYPH_FONT_CANDIDATES.join(", ")}`,
     );
@@ -1578,6 +1838,7 @@ function upgradeScenesWithGlyphOutlines(scenes) {
       }
 
       const textSpec = textsByOp.get(op.id);
+      const loaded = pickFontForText(textSpec.text) || defaultLoaded;
       const fragments = buildGlyphFragments(loaded.font, textSpec);
       if (fragments.length === 0) {
         nextDrawOps.push(op);
@@ -1613,9 +1874,12 @@ function upgradeScenesWithGlyphOutlines(scenes) {
           sourceOpId: op.id,
           d: fragment.d,
           color: textSpec.color || "#1D1D1F",
-          strokeWidth: fragment.strokeWidth,
+          strokeWidth: Number(textSpec.markerStrokeWidth) || fragment.strokeWidth,
           dashLength: fragment.dashLength,
           fontOutline: true,
+          markerFillOpacity: Number.isFinite(Number(textSpec.markerFillOpacity))
+            ? Number(textSpec.markerFillOpacity)
+            : 0.96,
         });
       });
       glyphCount += fragments.length;
@@ -1628,7 +1892,7 @@ function upgradeScenesWithGlyphOutlines(scenes) {
     };
   });
 
-  return { scenes: enhancedScenes, glyphCount, fontPath: loaded.fontPath };
+  return { scenes: enhancedScenes, glyphCount, fontPath: defaultLoaded.fontPath };
 }
 
 function injectGlyphOutlineDrawing(tsx) {
@@ -1713,7 +1977,7 @@ function validateGlyphOutlineText(code) {
   }
 }
 
-function validateHandwrittenAnimeStyle(code) {
+function validateHandwrittenWhiteboardStyle(code) {
   if (!/\b(STXingkai|Xingkai|KaiTi|STKaiti|Kaiti|楷体|华文行楷|华文楷体)\b/i.test(code)) {
     throw new Error(
       "Generated TSX must use an explicit Chinese handwriting font stack such as STXingkai/华文行楷/KaiTi/STKaiti",
@@ -1722,8 +1986,8 @@ function validateHandwrittenAnimeStyle(code) {
   if (/\bfontWeight\s*:\s*["']?(?:700|800|900|bold)\b/i.test(code)) {
     throw new Error("Handwritten text must not use bold sans-serif styling");
   }
-  if (!/\b(AnimeDoodle|CartoonDiagram|CartoonMascot|DoodleCharacter|anime|cartoon|doodle)\b/i.test(code)) {
-    throw new Error("Generated TSX must include anime/cartoon whiteboard doodle graphics, not only charts or slide labels");
+  if (!/\b(Diagram|Doodle|Callout|Sketch|Whiteboard)\b/i.test(code)) {
+    throw new Error("Generated TSX must include whiteboard diagram/callout helpers, not only captions or slide labels");
   }
 }
 
@@ -1807,7 +2071,7 @@ function validateGeneratedTsx(tsx) {
   }
   validateStrokeFollowingTimeline(code);
   validateGlyphOutlineText(code);
-  validateHandwrittenAnimeStyle(code);
+  validateHandwrittenWhiteboardStyle(code);
   if (!/\b(KaiTi|STKaiti|Kaiti|楷体)\b/i.test(code)) {
     throw new Error("Generated TSX must use a Chinese handwriting-style font family such as KaiTi/STKaiti");
   }
@@ -1823,7 +2087,7 @@ function validateGeneratedTsx(tsx) {
     return !isNeutral && !isTooLight && !isTooDark;
   });
   if (!hasWatercolorAccent && !/\brgba?\s*\(/i.test(code)) {
-    throw new Error("Generated TSX must include muted watercolor-style accent colors");
+    throw new Error("Generated TSX must include purposeful teaching accent colors");
   }
   if (!code.includes(HAND_ASSET)) {
     throw new Error(`Generated TSX must use staticFile("${HAND_ASSET}") for the visible hand holding a pen`);
@@ -1920,10 +2184,30 @@ function validateGeneratedTsx(tsx) {
 
 async function generateRemotionCode(storyboard, options = {}) {
   const subtitlesEnabled = Boolean(options.subtitlesEnabled);
+  const codegenStoryboard = subtitlesEnabled
+    ? storyboard
+    : {
+        ...storyboard,
+        scenes: (storyboard.scenes ?? []).map((scene) => ({
+          ...scene,
+          subtitleText: null,
+          subtitle_text: null,
+          audioSegments: (scene.audioSegments ?? scene.audio_segments ?? []).map((segment) => ({
+            ...segment,
+            subtitleText: null,
+            subtitle_text: null,
+          })),
+          audio_segments: (scene.audio_segments ?? scene.audioSegments ?? []).map((segment) => ({
+            ...segment,
+            subtitleText: null,
+            subtitle_text: null,
+          })),
+        })),
+      };
   const backgroundMusicUrl = options.backgroundMusicUrl || null;
   const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
   const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
-    storyboard,
+    storyboard: codegenStoryboard,
     fps: FPS,
     width: WIDTH,
     height: HEIGHT,
@@ -1932,7 +2216,8 @@ async function generateRemotionCode(storyboard, options = {}) {
     background_music_volume: backgroundMusicVolume,
     style_prompt:
       "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
-      "Every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
+      "Respect scene board_mode, hand_usage and visual_style: whiteboard/trace scenes use a visible hand following the active stroke; reference or annotate scenes may present a complex finished subject directly and then use hand callouts; clean_canvas/marketing_doodle scenes may use colorful finished doodles plus hand annotations; chalkboard/math_chalkboard or hand_usage=none scenes hide the hand and reveal equations or steps line by line. " +
+      "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
       (subtitlesEnabled
         ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
         : "Do not render subtitles or caption overlays. ") +
@@ -1944,20 +2229,30 @@ async function generateRemotionCode(storyboard, options = {}) {
       "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; " +
       "position with left: tipX - PEN_TIP_X and top: tipY - PEN_TIP_Y so the marker tip touches the active stroke. " +
       "HandPen must return an absolutely positioned HTML div wrapping Img, and <HandPen> must be rendered as a sibling after the SVG, never inside SVG. " +
+      "In chalkboard/no-hand scenes keep the HandPen component defined but pass visible={false}; do not show a decorative hand. " +
       "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). " +
-      "If scenes include audioSegments, render each segment's audioUrl in its own Sequence and keep matching drawOps inside the same beat window. " +
+      "When two drawOps are separated by a short gap, keep the hand visible and move it from the previous stroke endpoint to the next stroke start without drawing, like a teacher lifting the marker. " +
+      "If scenes include audioSegments, render each segment's audioUrl in its own Sequence using audioStartFrame when present, and keep matching drawOps inside the same beat window. " +
       "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
       "Use glyphPaths/GlyphText/DrawGlyphPath for Chinese text so the renderer can preprocess opentype.js font outline paths, " +
+      "after each large glyph outline finishes, a light same-color fill is allowed so handwriting does not look hollow, " +
+      "final board text should look like solid marker handwriting, not hollow outlined lettering, " +
       "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
-      "If storyboard scenes include rasterReveal and referenceImageAsset, reveal the original reference image through animated SVG masks " +
-      "using staticFile(scene.referenceImageAsset), drive the hand from the same raster drawOps centerline points, " +
-      "keep the transparent line-art image on a plain white canvas without yellow panels or color washes, " +
-      "and after all raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
-      "Use a sparse plain white canvas, black marker outlines, blue marker titles, and purposeful colored teaching strokes only, " +
+      "If storyboard scenes include rasterReveal and referenceImageAsset, obey rasterReveal.renderMode. For trace, reveal the original reference image through animated SVG masks " +
+      "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for a few short nearby teacher callouts, small circles, underlines and emphasis marks over it; avoid long sweeping arrows and avoid large circles covering the diagram. " +
+      "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
+      "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
+      "Use a sparse light grey-white whiteboard canvas close to #E3E4DE, black marker outlines, blue handwritten titles, and purposeful colored teaching strokes only, " +
+      "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
       "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
       "and lots of negative space. " +
+      "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
       "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
-      "Make the graphics anime/cartoon whiteboard doodles with at least one simple mascot, face, or expressive icon. " +
+      "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; do not force mascots or decorative cartoon characters. " +
+      (subtitlesEnabled
+        ? "Use audioSegments subtitleText only for bottom subtitles. "
+        : "Ignore audioSegments subtitleText and do not render any bottom subtitle overlay. ") +
+      "For every drawOp that is tied to a beat, keep the beatId field and draw within that beat's time window, so the hand is emphasizing the same idea that the voice is explaining. " +
       "Do not use SVG <animate>; all timing must be driven by Remotion frame values. " +
       "Do not use templates, local components, slide-deck cards, stock images, or component libraries.",
   });
@@ -2180,9 +2475,71 @@ function serveStaticFile(res, filePath, contentType) {
   createReadStream(filePath).pipe(res);
 }
 
+function serveMediaFile(req, res, filePath, contentType) {
+  if (!existsSync(filePath)) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+  const stat = statSync(filePath);
+  if (!stat.isFile()) {
+    res.writeHead(404);
+    res.end();
+    return;
+  }
+
+  const commonHeaders = {
+    "Content-Type": contentType,
+    "Accept-Ranges": "bytes",
+    "Cache-Control": "public, max-age=3600",
+  };
+  const range = req.headers.range;
+  if (range) {
+    const match = /^bytes=(\d*)-(\d*)$/.exec(String(range).trim());
+    if (!match) {
+      res.writeHead(416, { ...commonHeaders, "Content-Range": `bytes */${stat.size}` });
+      res.end();
+      return;
+    }
+    let start = match[1] ? Number(match[1]) : 0;
+    let end = match[2] ? Number(match[2]) : stat.size - 1;
+    if (!match[1] && match[2]) {
+      const suffixLength = Number(match[2]);
+      start = Math.max(0, stat.size - suffixLength);
+      end = stat.size - 1;
+    }
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end >= stat.size || start > end) {
+      res.writeHead(416, { ...commonHeaders, "Content-Range": `bytes */${stat.size}` });
+      res.end();
+      return;
+    }
+    res.writeHead(206, {
+      ...commonHeaders,
+      "Content-Length": end - start + 1,
+      "Content-Range": `bytes ${start}-${end}/${stat.size}`,
+    });
+    if (req.method === "HEAD") {
+      res.end();
+      return;
+    }
+    createReadStream(filePath, { start, end }).pipe(res);
+    return;
+  }
+
+  res.writeHead(200, {
+    ...commonHeaders,
+    "Content-Length": stat.size,
+  });
+  if (req.method === "HEAD") {
+    res.end();
+    return;
+  }
+  createReadStream(filePath).pipe(res);
+}
+
 const server = http.createServer(async (req, res) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET, HEAD, POST, PATCH, DELETE, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Range");
 
   if (req.method === "OPTIONS") {
@@ -2231,6 +2588,10 @@ const server = http.createServer(async (req, res) => {
         backgroundMusicTrack = trackId ? resolveMusicTrack(trackId) : null;
         if (!backgroundMusicTrack) {
           sendJson(res, 400, { error: "background music track not found" });
+          return;
+        }
+        if (!(await probePlayableAudio(backgroundMusicTrack.filePath))) {
+          sendJson(res, 400, { error: `background music is not a playable audio file: ${backgroundMusicTrack.id}` });
           return;
         }
         backgroundMusicVolumeValue = clampNumber(
@@ -2375,13 +2736,13 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && url.pathname.startsWith("/music/")) {
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/music/")) {
     const track = resolveMusicTrack(url.pathname.slice(7));
     if (!track) {
       sendJson(res, 404, { error: "music track not found" });
       return;
     }
-    serveStaticFile(res, track.filePath, track.contentType);
+    serveMediaFile(req, res, track.filePath, track.contentType);
     return;
   }
 

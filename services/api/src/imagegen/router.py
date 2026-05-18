@@ -11,6 +11,9 @@ class SceneImageItem(BaseModel):
     topic: str
     title: str
     image_description: str
+    board_mode: str = "whiteboard"
+    hand_usage: str = "trace"
+    visual_style: str = "teacher_whiteboard"
 
 
 class GenerateImagesRequest(BaseModel):
@@ -32,6 +35,9 @@ async def generate_scene_images(req: GenerateImagesRequest) -> GenerateImagesRes
             topic=s.topic,
             title=s.title,
             image_description=s.image_description,
+            board_mode=s.board_mode,
+            hand_usage=s.hand_usage,
+            visual_style=s.visual_style,
         )
         for s in req.scenes
     ]

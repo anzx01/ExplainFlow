@@ -68,6 +68,11 @@ class Scene(BaseModel):
     learning_goal: str | None = None
     visual_beats: list[VisualBeat] = Field(default_factory=list)
     diagram_plan: DiagramPlan | None = None
+    render_strategy: str | None = None
+    visual_complexity: str | None = None
+    board_mode: str | None = None
+    hand_usage: str | None = None
+    visual_style: str | None = None
 
 
 class Storyboard(BaseModel):

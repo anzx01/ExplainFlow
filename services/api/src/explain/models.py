@@ -33,6 +33,9 @@ class TeachingBriefSceneOutline(BaseModel):
     diagram_plan: str
     must_draw: list[str] = Field(default_factory=list)
     narration_focus: str | None = None
+    board_mode: str | None = None
+    hand_usage: str | None = None
+    visual_style: str | None = None
 
 
 class EnhancedTeachingBrief(BaseModel):
@@ -45,6 +48,11 @@ class EnhancedTeachingBrief(BaseModel):
     core_explanation_chain: list[str] = Field(default_factory=list)
     must_include_points: list[str] = Field(default_factory=list)
     visual_metaphors: list[str] = Field(default_factory=list)
+    board_style_rules: list[str] = Field(default_factory=list)
+    layout_principles: list[str] = Field(default_factory=list)
+    recommended_board_mode: str = "whiteboard"
+    recommended_hand_usage: str = "trace"
+    recommended_visual_style: str = "teacher_whiteboard"
     recommended_scene_outline: list[TeachingBriefSceneOutline] = Field(default_factory=list)
     common_misconceptions: list[str] = Field(default_factory=list)
 

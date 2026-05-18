@@ -61,7 +61,7 @@ FORBIDDEN_CODE_PATTERNS = (
 )
 
 
-def _has_watercolor_accent(code: str) -> bool:
+def _has_teaching_accent(code: str) -> bool:
     for value in re.findall(r"#[0-9a-fA-F]{6}\b", code):
         if value.lower() in {"#000000", "#ffffff"}:
             continue
@@ -144,7 +144,7 @@ def _validate_glyph_outline_text(code: str) -> None:
         )
 
 
-def _validate_handwritten_anime_style(code: str) -> None:
+def _validate_handwritten_whiteboard_style(code: str) -> None:
     if not re.search(
         r"\b(STXingkai|Xingkai|KaiTi|STKaiti|Kaiti|楷体|华文行楷|华文楷体)\b",
         code,
@@ -156,14 +156,10 @@ def _validate_handwritten_anime_style(code: str) -> None:
         )
     if re.search(r"\bfontWeight\s*:\s*['\"]?(?:700|800|900|bold)\b", code, flags=re.IGNORECASE):
         raise ValueError("Handwritten text must not use bold sans-serif styling")
-    if not re.search(
-        r"\b(AnimeDoodle|CartoonDiagram|CartoonMascot|DoodleCharacter|anime|cartoon|doodle)\b",
-        code,
-        flags=re.IGNORECASE,
-    ):
+    if not re.search(r"\b(Diagram|Doodle|Callout|Sketch|Whiteboard)\b", code, flags=re.IGNORECASE):
         raise ValueError(
-            "Generated Remotion code must include anime/cartoon whiteboard doodle graphics, "
-            "not only charts or slide labels"
+            "Generated Remotion code must include whiteboard diagram/callout helpers, "
+            "not only captions or slide labels"
         )
 
 
@@ -347,11 +343,11 @@ def _validate_generated_tsx(tsx: str) -> str:
         raise ValueError("Generated Remotion code must reveal text progressively")
     _validate_stroke_following_timeline(code)
     _validate_glyph_outline_text(code)
-    _validate_handwritten_anime_style(code)
+    _validate_handwritten_whiteboard_style(code)
     if not re.search(r"\b(KaiTi|STKaiti|Kaiti|楷体)\b", code, flags=re.IGNORECASE):
         raise ValueError("Generated Remotion code must use a Chinese handwriting-style font family such as KaiTi/STKaiti")
-    if not _has_watercolor_accent(code):
-        raise ValueError("Generated Remotion code must include muted watercolor-style accent colors, not only black and white")
+    if not _has_teaching_accent(code):
+        raise ValueError("Generated Remotion code must include purposeful teaching accent colors, not only black and white")
     if HAND_ASSET not in code:
         raise ValueError(f"Generated Remotion code must use staticFile('{HAND_ASSET}') for the visible hand holding a pen")
     if not re.search(r"\bstaticFile\s*\(", code):
@@ -484,14 +480,48 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 
 核心目标：
 1. 解说必须跟随绘图过程。每个 scene 都要有 learning_goal、diagram_plan、visual_beats。
-2. 每个 visual_beat 都必须说明“正在画什么”和“此时说什么”，旁白不能先讲完、图还没画完。
+2. 每个 visual_beat 都必须用 draw_intent 说明画面正在呈现什么，用 narration 说明知识本身；旁白不能先讲完、图还没画完。
 3. 每个关键点按“现象 -> 原因 -> 结果 -> 类比/总结”展开，避免只写定义和 bullet list。
 4. 优先用状态对比图、过程模拟图、结构图、截面图、箭头和局部放大；少用纯文字列表。
 5. image_description 必须是英文，像给图像生成模型的具体白板线稿说明：布局、标签、箭头、局部放大都要写清楚。
 6. 用优秀老师板书的方式强调重点：关键术语下划线、圈出局部、彩色箭头、局部放大框、对比标记和结论框。
 7. 使用有限教学色彩：red=current/flow, blue=voltage/control, green=channel/valid path, purple=gate/structure, yellow=emphasis underline/callout。
 8. 内容 prompt 与视觉风格分离：这里规划内容和画面，不写模板库、组件库或代码。
-9. 总时长必须服从 target_duration_seconds；如果画面复杂，要提高绘图密度或拆分 beat，不要超过目标时长。
+9. 旁白禁止描述绘图动作或镜头调度：不要说“先画/再画/最后画/这里画/左边画/右边画/画出来/标出/写上/看图中/这一步”。draw_intent 可以写绘图动作，但 narration 只讲概念、因果、变化和结论。
+10. 总时长是建议值；如果内容和绘图需要更久，优先保证讲画完整，不要为了卡时长裁掉 beat。
+11. 每个 scene 必须给出抽象绘制策略字段 `render_strategy`、`visual_complexity`、`board_mode`、`hand_usage`、`visual_style`：
+    - `trace`：结构简单、元素少、能像老师板书一样分步骤画完的图，例如流程图、状态对比图、公式推导、曲线、单个结构示意图。
+    - `direct`：图像特别复杂、标签很多、细节密集、实物/参考图/成品图/三维或多层结构，直接呈现主体，再用手写箭头、圈、下划线讲重点。
+    - `hybrid`：主体复杂但局部需要教学强调，先直接呈现主体，再按 visual_beats 手写局部 callout。
+    - 不要按具体学科名词判断，而按“能否被观众舒服地看见手逐笔画完”判断。简单图逐笔，复杂图呈现加讲解标注。
+    - `board_mode=whiteboard`：浅灰白板课堂，适合机制图、流程、结构、对比。
+    - `board_mode=chalkboard`：深色黑板推导，适合数学解题、公式证明、符号推演；通常 `hand_usage=none`。
+    - `board_mode=clean_canvas`：干净浅色画布，适合营销、产品、概念介绍；主体彩色 doodle 可直接出现。
+    - `board_mode=reference`：复杂参考图、三维/医学/机械/电路主体；主体直接/混合呈现，手只做局部标注。
+    - `hand_usage=trace` 表示手逐笔写画；`annotate` 表示主体已出现，手只标注重点；`none` 表示无手，内容按步骤显现。
+    - `visual_style=teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference`，按教学表达选择，不是模板库。
+
+参考白板样片的通用板书规则：
+- 一屏只讲一个核心想法；不要把完整报告页、海报页或密集信息图塞进一场。
+- 标题使用短蓝色手写字，位于顶部左侧或顶部居中，可加一条手绘下划线。
+- 主体图放在画面中部或略偏右，占画面宽度约 45%-65%；四周留出大面积空白给手和后续标注。
+- 标签必须短、近、清楚：优先 1-4 个词贴近结构，不写长段落，不做大段 bullet list。
+- 每个 visual_beat 只新增一个小板书动作组：一个结构块、一个箭头、一个圈选、一个结论短语或一个对比面板。
+- 色彩克制且有含义：黑色主体线，蓝色标题/控制箭头，红色风险/电流/错误，绿色有效路径/正确结果，黄色只做短下划线/局部强调。
+- 复杂主体不要强行拆成几百笔；直接呈现清晰主体，再用 2-4 个老师式 callout 解释。简单主体才逐笔 trace。
+- 场景之间像连续板书推进：上一场讲画完整后立刻进入下一场，不留空白停顿。
+- image_description 必须要求 light grey-white empty whiteboard, black marker line art, sparse handwritten blue labels, large negative space, no poster/card/legend/panel/background wash.
+
+参考营销白板/彩色 doodle 样片的通用规则：
+- 不是所有图形都要由手逐笔画完；彩色成品 doodle、图标组、产品界面、复杂插图可以直接出现并保持清晰。
+- 手部只负责少量老师动作：写标题、画勾选、下划线、短箭头、圈重点、指向主体。
+- 用大对象组和宽松空白制造节奏，不要把一页做成密集广告海报。
+
+参考数学黑板样片的通用规则：
+- 数学推导/解题可使用 `board_mode=chalkboard`、`hand_usage=none`，不显示手。
+- 黑板背景为接近黑色，公式像粉笔/荧光笔按行、按小步骤出现，保留前文上下文。
+- 颜色有语义：白色主式，cyan/green 表示变量或向量，yellow 表示结论，pink/red 表示目标或关键条件。
+- 每一屏只推进一个推导动作，不要一次性出现整页答案。
 
 MOS/FinFET 专项要求：
 - 必须包含 MOS Off/On 对比：未加栅压无沟道无电流；V_G > V_th 后形成反型电子通道。
@@ -511,6 +541,11 @@ MOS/FinFET 专项要求：
       "order": 0,
       "title": "短标题",
       "learning_goal": "这一场要让观众理解什么",
+      "render_strategy": "trace|direct|hybrid",
+      "visual_complexity": "simple|medium|dense|reference",
+      "board_mode": "whiteboard|chalkboard|clean_canvas|reference",
+      "hand_usage": "trace|annotate|none",
+      "visual_style": "teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference",
       "diagram_plan": {
         "kind": "comparison|process|structure|cross_section|formula|simulation",
         "layout": "具体画面布局",
@@ -520,7 +555,7 @@ MOS/FinFET 专项要求：
         {
           "id": "beat_0",
           "draw_intent": "正在画什么，包含图形、箭头、标签、变化",
-          "narration": "这一步同步说什么，必须解释因果",
+          "narration": "同步讲解的知识内容，只讲概念和因果，不说正在画什么",
           "required_labels": ["本 beat 图上要出现的标签"],
           "duration_estimate": 6
         }
@@ -548,8 +583,27 @@ def _clean_text(value: object) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def _subtitle_text(value: object) -> str | None:
+def _clean_narration_text(value: object) -> str:
     text = _clean_text(value)
+    if not text:
+        return ""
+    replacements = [
+        (r"^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现|看|看到)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*", ""),
+        (r"(?:先|再|然后|接着|最后)\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现)\s*", ""),
+        (r"(?:左边|右边|上方|下方|中间|旁边|图中|画面中)\s*(?:画|绘制|写|写上|标出|标注|可以看到|看到)\s*", ""),
+        (r"(?:这一步|这个 beat|此时)\s*(?:同步)?\s*(?:说|讲|说明|解释)\s*", ""),
+        (r"(?:我们|这里|现在)\s*(?:来|可以)?\s*(?:画|绘制|写|写上|标出|标注|看)\s*", ""),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = re.sub(r"\s+", " ", text).strip(" ：:，,。 ")
+    if text and text[-1] not in "。！？.!?":
+        text += "。"
+    return text
+
+
+def _subtitle_text(value: object) -> str | None:
+    text = _clean_narration_text(value)
     return text or None
 
 
@@ -585,7 +639,7 @@ def _parse_visual_beats(value: object) -> list[VisualBeat]:
     for index, item in enumerate(value):
         if isinstance(item, dict):
             draw_intent = _clean_text(item.get("draw_intent") or item.get("draw") or item.get("visual"))
-            narration = _clean_text(item.get("narration") or item.get("voiceover") or item.get("script"))
+            narration = _clean_narration_text(item.get("narration") or item.get("voiceover") or item.get("script"))
             if not draw_intent and not narration:
                 continue
             beats.append(
@@ -606,7 +660,7 @@ def _parse_visual_beats(value: object) -> list[VisualBeat]:
                 VisualBeat(
                     id=f"beat_{index}",
                     draw_intent=text,
-                    narration=text,
+                    narration=_clean_narration_text(text),
                     required_labels=[],
                     duration_estimate=6.0,
                 )
@@ -616,7 +670,7 @@ def _parse_visual_beats(value: object) -> list[VisualBeat]:
 
 def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:
     beat_text = " ".join(beat.narration for beat in beats if beat.narration).strip()
-    narration = _clean_text(narration)
+    narration = _clean_narration_text(narration)
     if not beat_text:
         return narration
     if len(narration) < max(80, len(beat_text) * 0.45):
@@ -627,7 +681,7 @@ def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:
         if beat.narration and beat.narration[:18] not in narration
     ]
     if missing and len(narration) < 180:
-        return _clean_text(f"{narration} {' '.join(missing[:3])}")
+        return _clean_narration_text(f"{narration} {' '.join(missing[:3])}")
     return narration
 
 
@@ -822,6 +876,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "The total duration must match target_duration_seconds. If content is complex, split the drawing more efficiently instead of exceeding the target.",
                 "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
                 "Underline, circle, or box important concepts like V_G > V_th, electron channel, short-channel effect, FinFET, W_eff, learning rate, and gradient.",
+                "For each scene choose board_mode, hand_usage and visual_style from the brief strategy. Use chalkboard/no hand for math derivations, clean_canvas/annotate for marketing doodles, reference/annotate for complex finished diagrams, and whiteboard/trace for simple teacher boardwork.",
             ],
         },
         ensure_ascii=False,
@@ -878,6 +933,11 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 learning_goal=s.get("learning_goal") or None,
                 visual_beats=visual_beats,
                 diagram_plan=diagram_plan,
+                render_strategy=_clean_text(s.get("render_strategy") or s.get("raster_strategy") or ""),
+                visual_complexity=_clean_text(s.get("visual_complexity") or ""),
+                board_mode=_clean_text(s.get("board_mode") or ""),
+                hand_usage=_clean_text(s.get("hand_usage") or ""),
+                visual_style=_clean_text(s.get("visual_style") or ""),
             )
         )
 
@@ -964,14 +1024,24 @@ def _scene_from_spec(index: int, spec: dict) -> Scene:
         animations=animations,
         node_ids=spec.get("node_ids", []),
         image_description=spec["image_description"],
+        render_strategy=spec.get("render_strategy", ""),
+        visual_complexity=spec.get("visual_complexity", ""),
+        board_mode=spec.get("board_mode", ""),
+        hand_usage=spec.get("hand_usage", ""),
+        visual_style=spec.get("visual_style", ""),
     )
 
 
 def _semiconductor_story_specs() -> list[dict]:
     return [
         {
-            "title": "MOS 结构先搭起来",
-            "learning_goal": "先让观众知道源极、漏极、栅极、氧化层、衬底和沟道区域的位置关系。",
+            "title": "MOS 基本结构",
+            "learning_goal": "让观众理解源极、漏极、栅极、氧化层、衬底和沟道区域的位置关系。",
+            "render_strategy": "trace",
+            "visual_complexity": "simple",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {
                 "kind": "structure",
                 "layout": "planar MOS cross-section with labels from left to right",
@@ -980,13 +1050,13 @@ def _semiconductor_story_specs() -> list[dict]:
             "visual_beats": [
                 {
                     "draw_intent": "画一条衬底横截面，在左右分别画 Source 和 Drain，中间留出 channel region。",
-                    "narration": "先把平面 MOS 的剖面搭起来：左右是源极和漏极，中间的衬底表面就是未来可能形成沟道的位置。",
+                    "narration": "平面 MOS 的剖面里，左右是源极和漏极，中间的衬底表面就是未来可能形成沟道的位置。",
                     "required_labels": ["Source", "Drain", "Channel region"],
                     "duration_estimate": 7,
                 },
                 {
-                    "draw_intent": "在沟道上方画薄氧化层和 Gate，并用虚线电场箭头指向衬底表面。",
-                    "narration": "栅极并不直接接触沟道，它隔着很薄的氧化层，用电场去影响衬底表面的电荷。",
+                    "draw_intent": "在沟道上方画薄氧化层和 Gate，并用蓝色电场箭头指向衬底表面。",
+                    "narration": "栅极并不直接接触沟道，它隔着很薄的氧化层，用电场影响衬底表面的电荷。",
                     "required_labels": ["Gate", "Oxide", "electric field"],
                     "duration_estimate": 8,
                 },
@@ -997,6 +1067,11 @@ def _semiconductor_story_specs() -> list[dict]:
         {
             "title": "Off/On 两种状态",
             "learning_goal": "用双图对比解释阈值电压如何决定有没有连续电子沟道。",
+            "render_strategy": "trace",
+            "visual_complexity": "simple",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {
                 "kind": "comparison",
                 "layout": "two panels: OFF on the left, ON on the right",
@@ -1022,6 +1097,11 @@ def _semiconductor_story_specs() -> list[dict]:
         {
             "title": "电流被电压打开",
             "learning_goal": "说明 V_DS 只有在沟道形成后才能推动源漏电流，MOS 因此像电压控制开关。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {
                 "kind": "process",
                 "layout": "ON MOS diagram with channel, source-drain battery, current arrows and switch analogy",
@@ -1035,7 +1115,7 @@ def _semiconductor_story_specs() -> list[dict]:
                     "duration_estimate": 7,
                 },
                 {
-                    "draw_intent": "沿沟道画多根电流箭头 I_D，并在旁边画一个被栅压控制的开关图标。",
+                    "draw_intent": "沿沟道画多根红色电流箭头 I_D，并在旁边画一个被栅压控制的开关图标。",
                     "narration": "于是电子沿沟道移动，形成漏电流 I_D。直观地说，栅极电压负责开门，源漏电压负责把电流推过去。",
                     "required_labels": ["I_D", "switch"],
                     "duration_estimate": 9,
@@ -1047,6 +1127,11 @@ def _semiconductor_story_specs() -> list[dict]:
         {
             "title": "短沟道效应",
             "learning_goal": "解释为什么尺寸缩小时平面 MOS 的栅极控制会变弱。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {
                 "kind": "comparison",
                 "layout": "long-channel MOS versus short-channel MOS with source/drain fields intruding",
@@ -1072,6 +1157,11 @@ def _semiconductor_story_specs() -> list[dict]:
         {
             "title": "FinFET 三面包住沟道",
             "learning_goal": "看懂 FinFET 为什么把沟道做成竖起的 fin，并让栅极从三面包住它。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "dense",
+            "board_mode": "reference",
+            "hand_usage": "annotate",
+            "visual_style": "technical_reference",
             "diagram_plan": {
                 "kind": "structure",
                 "layout": "simple 3D fin channel with gate wrapping top and two sidewalls",
@@ -1080,13 +1170,13 @@ def _semiconductor_story_specs() -> list[dict]:
             "visual_beats": [
                 {
                     "draw_intent": "画一个竖起的 fin/channel，两端分别连接 Source 和 Drain。",
-                    "narration": "FinFET 的第一步，是把原来趴在平面上的沟道竖起来，变成一条鳍片状的三维通道。",
+                    "narration": "FinFET 把原来趴在平面上的沟道竖起来，变成一条鳍片状的三维通道。",
                     "required_labels": ["Fin channel", "Source", "Drain"],
                     "duration_estimate": 8,
                 },
                 {
                     "draw_intent": "画 U 形 Gate 从顶部和两侧包住 fin，并从三面画控制箭头。",
-                    "narration": "然后栅极不再只从上方控制，而是像夹子一样包住顶部和两个侧壁，三面同时施加电场，栅控能力就明显增强。",
+                    "narration": "栅极不再只从上方控制，而是像夹子一样包住顶部和两个侧壁，三面同时施加电场，栅控能力就明显增强。",
                     "required_labels": ["Gate wraps 3 sides", "three-side control"],
                     "duration_estimate": 10,
                 },
@@ -1097,6 +1187,11 @@ def _semiconductor_story_specs() -> list[dict]:
         {
             "title": "截面里的有效宽度",
             "learning_goal": "用 FinFET 截面解释 W_eff = 2H_fin + W_fin 和三面感应电荷。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "dense",
+            "board_mode": "reference",
+            "hand_usage": "annotate",
+            "visual_style": "technical_reference",
             "diagram_plan": {
                 "kind": "cross_section",
                 "layout": "FinFET cross-section with U-shaped gate, top width and two sidewall heights",
@@ -1139,11 +1234,16 @@ def _gradient_story_specs() -> list[dict]:
         {
             "title": "把损失画成地形",
             "learning_goal": "让观众知道 loss 曲线的高度代表错误大小。",
+            "render_strategy": "trace",
+            "visual_complexity": "simple",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {"kind": "simulation", "layout": "loss curve with axes", "required_labels": ["Loss", "theta"]},
             "visual_beats": [
                 {
                     "draw_intent": "画 theta 横轴和 Loss 纵轴，再画一条下降的曲线。",
-                    "narration": "先把损失函数画成一条地形曲线，越高代表模型错得越多，越低代表参数更合适。",
+                    "narration": "损失函数可以理解成一条地形曲线，越高代表模型错得越多，越低代表参数更合适。",
                     "required_labels": ["Loss", "theta"],
                     "duration_estimate": 7,
                 }
@@ -1154,6 +1254,11 @@ def _gradient_story_specs() -> list[dict]:
         {
             "title": "沿负梯度走一步",
             "learning_goal": "解释梯度方向、负梯度方向和学习率步长。",
+            "render_strategy": "trace",
+            "visual_complexity": "simple",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {"kind": "process", "layout": "gradient and negative gradient arrows", "required_labels": ["gradient", "-gradient", "learning rate"]},
             "visual_beats": [
                 {
@@ -1169,6 +1274,11 @@ def _gradient_story_specs() -> list[dict]:
         {
             "title": "重复迭代直到收敛",
             "learning_goal": "展示多次更新如何接近低损失区域。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
             "diagram_plan": {"kind": "process", "layout": "multiple update dots toward minimum", "required_labels": ["iteration", "minimum", "converge"]},
             "visual_beats": [
                 {
@@ -1193,10 +1303,22 @@ def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard
     )
 
 
+def _sanitize_storyboard_narration(storyboard: Storyboard) -> Storyboard:
+    for scene in storyboard.scenes:
+        for beat in scene.visual_beats:
+            beat.narration = _clean_narration_text(beat.narration)
+        scene.narration = _narration_from_beats(scene.narration, scene.visual_beats)
+    return storyboard
+
+
 def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, target_duration: int) -> Storyboard:
     corpus = _storyboard_corpus(storyboard, graph)
     semiconductor = _contains_terms(corpus, ["mos", "mosfet", "finfet", "晶体管", "栅极", "沟道"])
     gradient = _contains_terms(corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
+    brief = _graph_enhanced_brief(graph) or {}
+    default_board_mode = _clean_text(brief.get("recommended_board_mode") if isinstance(brief, dict) else "") or "whiteboard"
+    default_hand_usage = _clean_text(brief.get("recommended_hand_usage") if isinstance(brief, dict) else "") or "trace"
+    default_visual_style = _clean_text(brief.get("recommended_visual_style") if isinstance(brief, dict) else "") or "teacher_whiteboard"
 
     if semiconductor:
         target_specs = _semiconductor_story_specs_for_target(target_duration)
@@ -1233,12 +1355,35 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
                 VisualBeat(
                     id="beat_0",
                     draw_intent=scene.image_description or scene.title,
-                    narration=scene.narration or scene.title,
+                    narration=_clean_narration_text(scene.narration or scene.title),
                     required_labels=labels,
                     duration_estimate=max(5.0, min(10.0, scene.duration_estimate * 0.35)),
                 )
             ]
+        for beat in scene.visual_beats:
+            beat.narration = _clean_narration_text(beat.narration)
         scene.narration = _narration_from_beats(scene.narration, scene.visual_beats)
+        if not scene.board_mode:
+            scene.board_mode = default_board_mode
+        if not scene.hand_usage:
+            scene.hand_usage = default_hand_usage
+        if not scene.visual_style:
+            scene.visual_style = default_visual_style
+        scene_corpus = _scene_corpus(scene)
+        is_math_board = default_visual_style == "math_chalkboard" or _contains_terms(
+            scene_corpus,
+            ["数学", "解题", "证明", "公式推导", "plane normal", "perpendicular", "parametric", "iit"],
+        )
+        if is_math_board:
+            scene.board_mode = "chalkboard"
+            scene.hand_usage = "none"
+            scene.visual_style = "math_chalkboard"
+        if scene.board_mode == "chalkboard" or scene.visual_style == "math_chalkboard":
+            scene.hand_usage = "none"
+            scene.render_strategy = scene.render_strategy or "trace"
+            scene.visual_complexity = scene.visual_complexity or "medium"
+        if scene.hand_usage == "annotate" and not scene.render_strategy:
+            scene.render_strategy = "hybrid"
         scene.duration_estimate = _estimate_scene_duration(
             scene.duration_estimate,
             scene.narration,
@@ -1246,7 +1391,7 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
             scene.animations,
         )
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
-    return storyboard
+    return _sanitize_storyboard_narration(storyboard)
 
 
 def _short_text(value: str | None, max_chars: int = 30) -> str:
@@ -1254,6 +1399,13 @@ def _short_text(value: str | None, max_chars: int = 30) -> str:
     if len(text) <= max_chars:
         return text
     return text[: max_chars - 3].rstrip() + "..."
+
+
+def _text_visual_width(value: str, font_size: float) -> float:
+    width = 0.0
+    for char in value:
+        width += font_size * (1.0 if re.match(r"[\u3400-\u9fff]", char) else 0.55)
+    return width
 
 
 def _point(x: float, y: float) -> dict[str, float]:
@@ -1400,7 +1552,7 @@ def _retime_draw_ops_in_window(
 
 
 def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
-    _retime_draw_ops_in_window(draw_ops, 0.0, max(1.0, duration - 10.0))
+    _retime_draw_ops_in_window(draw_ops, 0.0, max(1.0, duration - 4.0))
 
 
 def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: list[dict], duration: int) -> None:
@@ -1419,27 +1571,55 @@ def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: lis
         draw_ops,
         key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
     )
+    buckets: list[list[dict]] = [[] for _ in segments]
+    segment_index_by_id = {
+        str(segment.get("id") or f"beat_{index}"): index
+        for index, segment in enumerate(segments)
+    }
+    unassigned: list[dict] = []
+    for op in ordered:
+        existing_beat_id = str(op.get("beatId") or "")
+        segment_index = segment_index_by_id.get(existing_beat_id)
+        if segment_index is None:
+            unassigned.append(op)
+        else:
+            buckets[segment_index].append(op)
+
     weights = [max(1.0, float(segment.get("drawBudgetFrames") or segment.get("duration") or 1)) for segment in segments]
     total_weight = sum(weights) or float(len(segments))
     cursor = 0
-    for index, segment in enumerate(segments):
-        remaining_ops = len(ordered) - cursor
+    for index in range(len(segments)):
+        remaining_ops = len(unassigned) - cursor
         remaining_segments = len(segments) - index
         if remaining_ops <= 0:
             break
         if index == len(segments) - 1:
             take = remaining_ops
         else:
-            target = round(len(ordered) * (weights[index] / total_weight))
+            target = round(len(unassigned) * (weights[index] / total_weight))
             take = max(1, min(remaining_ops - (remaining_segments - 1), target))
-        group = ordered[cursor : cursor + take]
+        group = unassigned[cursor : cursor + take]
         cursor += take
+        buckets[index].extend(group)
+
+    if cursor < len(unassigned):
+        buckets[-1].extend(unassigned[cursor:])
+
+    for index, segment in enumerate(segments):
+        group = sorted(
+            buckets[index],
+            key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
+        )
+        if not group:
+            continue
         start = float(segment.get("startFrame", 0) or 0)
         end = float(segment.get("endFrame", duration) or duration)
-        window_end = min(max(start + 1.0, end - 4.0), max(1.0, duration - 2.0))
-        _retime_draw_ops_in_window(group, start, window_end, str(segment.get("id") or f"beat_{index}"))
-    if cursor < len(ordered):
-        _retime_draw_ops_in_window(ordered[cursor:], 0.0, max(1.0, duration - 10.0))
+        audio_start = float(segment.get("audioStartFrame", start) or start)
+        audio_end = float(segment.get("audioEndFrame", end) or end)
+        window_start = 0.0 if index == 0 else max(0.0, min(start, audio_start - 14.0))
+        window_end = min(max(audio_end + 10.0, end - 2.0), max(1.0, duration - 1.0))
+        window_end = max(window_start + 1.0, window_end)
+        _retime_draw_ops_in_window(group, window_start, window_end, str(segment.get("id") or f"beat_{index}"))
 
 
 def _animation_lines(scene: Scene) -> list[str]:
@@ -1516,9 +1696,9 @@ def _contains_any(corpus: str, terms: list[str]) -> bool:
 
 def _scene_steps(scene: Scene) -> list[str]:
     steps: list[str] = []
+    if scene.diagram_plan and scene.diagram_plan.required_labels:
+        steps.extend(scene.diagram_plan.required_labels[:5])
     for beat in getattr(scene, "visual_beats", []) or []:
-        if beat.draw_intent:
-            steps.append(beat.draw_intent)
         if beat.required_labels:
             steps.extend(beat.required_labels[:2])
         if len(steps) >= 5:
@@ -1621,12 +1801,24 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
 
 
 def _scene_extra(scene: Scene, name: str, default: object = None) -> object:
-    value = getattr(scene, name, None)
-    if value is not None:
-        return value
+    aliases = [name]
+    if "_" in name:
+        parts = name.split("_")
+        aliases.append(parts[0] + "".join(part.capitalize() for part in parts[1:]))
+    else:
+        aliases.append(re.sub(r"(?<!^)(?=[A-Z])", "_", name).lower())
+    aliases = list(dict.fromkeys(alias for alias in aliases if alias))
+
+    for alias in aliases:
+        value = getattr(scene, alias, default)
+        if value is not default and value is not None:
+            return value
+
     extra = getattr(scene, "model_extra", None)
     if isinstance(extra, dict):
-        return extra.get(name, default)
+        for alias in aliases:
+            if alias in extra:
+                return extra[alias]
     return default
 
 
@@ -1638,9 +1830,9 @@ def _audio_segments_for_scene(scene: Scene, fps: int) -> tuple[list[dict], int, 
         or []
     )
     raw_timing = _scene_extra(scene, "timingPlan") or _scene_extra(scene, "timing_plan") or {}
-    transition_frames = 10
+    transition_frames = 0
     if isinstance(raw_timing, dict):
-        transition_frames = max(0, min(18, int(raw_timing.get("transitionFrames") or raw_timing.get("transition_frames") or 10)))
+        transition_frames = max(0, min(18, int(raw_timing.get("transitionFrames") or raw_timing.get("transition_frames") or 0)))
     segments: list[dict] = []
     if isinstance(raw_segments, list):
         for index, raw in enumerate(raw_segments):
@@ -1655,6 +1847,10 @@ def _audio_segments_for_scene(scene: Scene, fps: int) -> tuple[list[dict], int, 
                 duration = max(fps * 3, int(round(float(raw.get("audioDurationFrames") or fps * 3))) + 12)
             end = max(start + 1, start + duration)
             audio_duration = max(1, int(round(float(raw.get("audioDurationFrames") or raw.get("audio_duration_frames") or duration))))
+            audio_start = int(round(float(raw.get("audioStartFrame") or raw.get("audio_start_frame") or start)))
+            audio_start = max(start, min(end - 1, audio_start))
+            audio_end = int(round(float(raw.get("audioEndFrame") or raw.get("audio_end_frame") or (audio_start + audio_duration))))
+            audio_end = max(audio_start + 1, min(end, audio_end))
             segments.append(
                 {
                     "id": _clean_text(raw.get("id")) or f"beat_{index}",
@@ -1662,6 +1858,9 @@ def _audio_segments_for_scene(scene: Scene, fps: int) -> tuple[list[dict], int, 
                     "startFrame": start,
                     "endFrame": end,
                     "duration": end - start,
+                    "audioStartFrame": audio_start,
+                    "audioEndFrame": audio_end,
+                    "audioSequenceDuration": max(1, end - audio_start),
                     "audioUrl": raw.get("audioUrl") or raw.get("audio_url"),
                     "audioDurationFrames": audio_duration,
                     "drawBudgetFrames": max(1, int(round(float(raw.get("drawBudgetFrames") or raw.get("draw_budget_frames") or (end - start - 8))))),
@@ -1708,18 +1907,35 @@ def _diamond_points(cx: float, cy: float, width: float, height: float) -> list[d
 def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: int, height: int) -> dict:
     audio_segments, timing_duration, transition_frames = _audio_segments_for_scene(scene, fps)
     duration = max(fps * 8, round(scene.duration_estimate * fps), timing_duration)
-    left = width * 0.07
-    top = height * 0.08
-    diagram_left = width * 0.405
-    diagram_top = height * 0.22
+    board_mode = (_clean_text(_scene_extra(scene, "board_mode") or _scene_extra(scene, "boardMode")) or "whiteboard").lower()
+    hand_usage = (_clean_text(_scene_extra(scene, "hand_usage") or _scene_extra(scene, "handUsage")) or "trace").lower()
+    visual_style = (_clean_text(_scene_extra(scene, "visual_style") or _scene_extra(scene, "visualStyle")) or "teacher_whiteboard").lower()
+    if board_mode not in {"whiteboard", "chalkboard", "clean_canvas", "reference"}:
+        board_mode = "whiteboard"
+    if hand_usage not in {"trace", "annotate", "none"}:
+        hand_usage = "trace"
+    if visual_style not in {"teacher_whiteboard", "marketing_doodle", "math_chalkboard", "technical_reference"}:
+        visual_style = "teacher_whiteboard"
+    if board_mode == "chalkboard" or visual_style == "math_chalkboard":
+        board_mode = "chalkboard"
+        hand_usage = "none"
+        visual_style = "math_chalkboard"
+    left = width * 0.065
+    top = height * 0.055
+    diagram_left = width * 0.18
+    diagram_top = height * 0.19
+    board_center_x = width * 0.50
+    board_draw_w = width * 0.64
+    board_draw_h = height * 0.56
     accent_colors = ["#F7D77E", "#A8D8F0", "#F4A7A1", "#BFE3C0", "#D7C5F7"]
     accent = accent_colors[scene_index % len(accent_colors)]
-    ink = "#1D1D1F"
-    blue = "#2F6FB2"
-    red = "#D85C4A"
-    green = "#3F8F68"
-    violet = "#6E58B5"
-    yellow = "#D9A514"
+    is_chalkboard = board_mode == "chalkboard"
+    ink = "#F4F2E8" if is_chalkboard else "#1D1D1F"
+    blue = "#5DE6FF" if is_chalkboard else "#2F6FB2"
+    red = "#FF6FAE" if is_chalkboard else "#D85C4A"
+    green = "#A8F06A" if is_chalkboard else "#3F8F68"
+    violet = "#C6A7FF" if is_chalkboard else "#6E58B5"
+    yellow = "#F2E85C" if is_chalkboard else "#D9A514"
     draw_ops: list[dict] = []
     texts: list[dict] = []
     strokes: list[dict] = []
@@ -1756,20 +1972,32 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         max_width: float | None = None,
         emphasis: bool | None = None,
         max_chars: int = 38,
+        beat_id: str | None = None,
     ) -> None:
         op_id = f"s{scene_index}_text_{len(texts)}"
         safe_text = _short_text(text, max_chars)
         text_max_width = max_width if max_width is not None else width - x - 70
         safe_start, end = fit_timing(start, frames)
-        draw_ops.append(
-            {
-                "id": op_id,
-                "kind": "text",
-                "startFrame": safe_start,
-                "endFrame": end,
-                "points": _text_stroke_points(safe_text, x, y, font_size, text_max_width),
-            }
+        draw_op = {
+            "id": op_id,
+            "kind": "text",
+            "startFrame": safe_start,
+            "endFrame": end,
+            "points": _text_stroke_points(safe_text, x, y, font_size, text_max_width),
+        }
+        if beat_id:
+            draw_op["beatId"] = beat_id
+        draw_ops.append(draw_op)
+        has_cjk = bool(re.search(r"[\u3400-\u9fff]", safe_text))
+        has_many_latin = len(re.findall(r"[A-Za-z0-9]", safe_text)) >= 3
+        marker_width = max(
+            2.2,
+            min(5.2, font_size * (0.052 if font_size >= 54 else 0.066)),
         )
+        if has_many_latin and not has_cjk:
+            marker_width = max(2.0, min(4.2, font_size * 0.044))
+        elif has_many_latin:
+            marker_width = max(2.4, marker_width * 0.78)
         texts.append(
             {
                 "opId": op_id,
@@ -1779,6 +2007,8 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 "fontSize": font_size,
                 "color": color,
                 "maxWidth": round(text_max_width, 1),
+                "markerStrokeWidth": round(marker_width, 1),
+                "markerFillOpacity": (0.48 if has_many_latin else 0.74) if font_size >= 54 else (0.56 if has_many_latin else 0.86),
             }
         )
         emphasis_terms = [
@@ -1824,7 +2054,15 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 count=10,
                 wave=max(2.0, font_size * 0.035),
             )
-            add_stroke("emphasis_underline", underline_points, yellow, max(4, round(font_size * 0.10)), end + 1, 8)
+            add_stroke(
+                "emphasis_underline",
+                underline_points,
+                yellow,
+                max(3, round(font_size * 0.075)),
+                end + 1,
+                8,
+                beat_id=beat_id,
+            )
 
     def add_stroke(
         role: str,
@@ -1834,18 +2072,20 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         start: int,
         frames: int,
         close: bool = False,
+        beat_id: str | None = None,
     ) -> None:
         op_id = f"s{scene_index}_stroke_{len(strokes)}"
         safe_start, end = fit_timing(start, frames)
-        draw_ops.append(
-            {
-                "id": op_id,
-                "kind": "path",
-                "startFrame": safe_start,
-                "endFrame": end,
-                "points": points,
-            }
-        )
+        draw_op = {
+            "id": op_id,
+            "kind": "path",
+            "startFrame": safe_start,
+            "endFrame": end,
+            "points": points,
+        }
+        if beat_id:
+            draw_op["beatId"] = beat_id
+        draw_ops.append(draw_op)
         strokes.append(
             {
                 "opId": op_id,
@@ -1864,8 +2104,9 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         start: int,
         frames: int,
         role: str = "arrow",
+        beat_id: str | None = None,
     ) -> None:
-        add_stroke(role, points, color, stroke_width, start, frames)
+        add_stroke(role, points, color, stroke_width, start, frames, beat_id=beat_id)
         if len(points) < 2:
             return
         end = points[-1]
@@ -1876,7 +2117,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         for sign in (-1, 1):
             theta = angle + math.pi + sign * 0.48
             side = _point(end["x"] + math.cos(theta) * head_len, end["y"] + math.sin(theta) * head_len)
-            add_stroke("arrowhead", [side, _point(end["x"], end["y"])], color, stroke_width, head_start, 7)
+            add_stroke("arrowhead", [side, _point(end["x"], end["y"])], color, stroke_width, head_start, 7, beat_id=beat_id)
 
     def add_node_box(
         label: str,
@@ -1912,6 +2153,33 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         pool = steps or core_lines
         return _short_text(pool[index], 16) if index < len(pool) else value
 
+    def direct_callout_labels() -> list[str]:
+        labels: list[str] = []
+        for beat in getattr(scene, "visual_beats", []) or []:
+            for label in beat.required_labels or []:
+                short = _short_text(label, 14)
+                if short and short not in labels:
+                    labels.append(short)
+            if len(labels) >= 4:
+                break
+        for step in steps:
+            short = _short_text(step, 14)
+            if short and short not in labels:
+                labels.append(short)
+            if len(labels) >= 4:
+                break
+        defaults = ["关键结构", "控制关系", "变化路径", "重点结论"]
+        for default in defaults:
+            if len(labels) >= 4:
+                break
+            labels.append(default)
+        return labels[:4]
+
+    def title_x_for_text(text: str, font_size: int, max_chars: int = 24) -> float:
+        safe_text = _short_text(text, max_chars)
+        estimated = min(width * 0.78, max(font_size * 2.4, _text_visual_width(safe_text, font_size) * 0.84))
+        return max(width * 0.06, (width - estimated) * 0.5)
+
     def add_process_doodles(start: int, x: float, y: float) -> int:
         checks = [
             [_point(x, y), _point(x + 10, y + 12), _point(x + 30, y - 14)],
@@ -1929,16 +2197,23 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
 
     def build_raster_reveal(start: int) -> int:
         nonlocal raster_reveal_spec
-        if not reference_image_asset or not raster_strokes:
+        if not reference_image_asset or not raster_reveal:
             return builders.get(diagram_kind, build_process_flow)(start)
 
         image_w = float(raster_reveal.get("imageWidth") or raster_reveal.get("image_width") or 1)
         image_h = float(raster_reveal.get("imageHeight") or raster_reveal.get("image_height") or 1)
         image_aspect = max(0.1, image_w / max(1.0, image_h))
-        region_x = diagram_left + width * 0.005
-        region_y = diagram_top - height * 0.015
-        region_w = width * 0.52
-        region_h = height * 0.60
+        render_mode = _clean_text(raster_reveal.get("renderMode") or raster_reveal.get("render_mode")).lower()
+        if render_mode == "direct":
+            region_x = width * 0.245
+            region_y = height * 0.18
+            region_w = width * 0.56
+            region_h = height * 0.58
+        else:
+            region_x = width * 0.20
+            region_y = diagram_top - height * 0.01
+            region_w = width * 0.60
+            region_h = height * 0.60
         region_aspect = region_w / max(1.0, region_h)
         if image_aspect >= region_aspect:
             draw_w = region_w
@@ -1948,6 +2223,122 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             draw_w = region_h * image_aspect
         draw_x = region_x + (region_w - draw_w) * 0.5
         draw_y = region_y + (region_h - draw_h) * 0.5
+
+        if render_mode == "direct":
+            raster_reveal_spec = {
+                "asset": str(reference_image_asset),
+                "x": round(draw_x, 1),
+                "y": round(draw_y, 1),
+                "width": round(draw_w, 1),
+                "height": round(draw_h, 1),
+                "renderMode": "direct",
+                "directAppearFrame": 0,
+                "strokes": [],
+            }
+            labels = direct_callout_labels()
+            segment_windows: list[tuple[str | None, int, int]] = []
+            if audio_segments:
+                for segment in audio_segments:
+                    segment_windows.append(
+                        (
+                            str(segment.get("id") or f"beat_{len(segment_windows)}"),
+                            max(0, int(segment.get("startFrame") or 0)),
+                            max(1, int(segment.get("endFrame") or duration)),
+                        )
+                    )
+            else:
+                usable_start = max(start + 18, int(duration * 0.22))
+                usable_end = max(usable_start + 1, duration - 14)
+                span = max(36, (usable_end - usable_start) // 3)
+                for index in range(3):
+                    segment_start = usable_start + index * span
+                    segment_windows.append((None, segment_start, min(usable_end, segment_start + span)))
+
+            label_specs = [
+                {
+                    "label": labels[0],
+                    "text_x": max(width * 0.07, draw_x - width * 0.105),
+                    "text_y": draw_y + draw_h * 0.18,
+                    "target_x": draw_x + draw_w * 0.23,
+                    "target_y": draw_y + draw_h * 0.35,
+                    "color": blue,
+                    "circle": (draw_x + draw_w * 0.23, draw_y + draw_h * 0.35, draw_w * 0.085, draw_h * 0.080),
+                },
+                {
+                    "label": labels[1],
+                    "text_x": min(width * 0.80, draw_x + draw_w * 0.78),
+                    "text_y": draw_y + draw_h * 0.20,
+                    "target_x": draw_x + draw_w * 0.61,
+                    "target_y": draw_y + draw_h * 0.33,
+                    "color": violet,
+                    "circle": (draw_x + draw_w * 0.61, draw_y + draw_h * 0.33, draw_w * 0.090, draw_h * 0.080),
+                },
+                {
+                    "label": labels[2],
+                    "text_x": max(width * 0.08, draw_x - width * 0.075),
+                    "text_y": draw_y + draw_h * 0.69,
+                    "target_x": draw_x + draw_w * 0.50,
+                    "target_y": draw_y + draw_h * 0.64,
+                    "color": red,
+                    "circle": (draw_x + draw_w * 0.50, draw_y + draw_h * 0.64, draw_w * 0.095, draw_h * 0.080),
+                },
+            ]
+            cursor = max(start + 8, int(duration * 0.16))
+            for index, spec in enumerate(label_specs):
+                beat_id, segment_start, segment_end = segment_windows[min(index, len(segment_windows) - 1)]
+                segment_span = max(36, segment_end - segment_start)
+                local_cursor = max(cursor, segment_start + min(12, max(0, segment_span // 8)))
+                label_y = spec["text_y"]
+                label_x = spec["text_x"]
+                target_x = spec["target_x"]
+                target_y = spec["target_y"]
+                color = spec["color"]
+                add_text(
+                    spec["label"],
+                    label_x,
+                    label_y,
+                    max(24, int(body_size * 0.82)),
+                    color,
+                    local_cursor,
+                    min(30, max(16, segment_span // 5)),
+                    width * 0.16,
+                    emphasis=False,
+                    max_chars=10,
+                    beat_id=beat_id,
+                )
+                add_arrow(
+                    _curve_points(
+                        label_x + (width * 0.13 if label_x < target_x else -width * 0.012),
+                        label_y + body_size * 0.34,
+                        target_x,
+                        target_y,
+                        count=12,
+                        wave=height * (0.010 + index * 0.002),
+                    ),
+                    color,
+                    4,
+                    local_cursor + min(24, max(10, segment_span // 5)),
+                    min(22, max(12, segment_span // 6)),
+                    role="callout",
+                    beat_id=beat_id,
+                )
+                cx, cy, rx, ry = spec["circle"]
+                add_stroke(
+                    "callout",
+                    _circle_points(cx, cy, rx, ry, count=24),
+                    yellow,
+                    4,
+                    local_cursor + min(44, max(22, segment_span // 3)),
+                    min(20, max(10, segment_span // 7)),
+                    beat_id=beat_id,
+                )
+                cursor = max(local_cursor + 48, segment_end - 4)
+            if len(labels) > 3 and cursor + 34 <= duration - 10:
+                beat_id, segment_start, segment_end = segment_windows[min(3, len(segment_windows) - 1)]
+                cursor = max(cursor, segment_start + 8)
+                add_text(labels[3], draw_x + draw_w * 0.08, draw_y + draw_h + height * 0.025, max(24, int(body_size * 0.82)), green, cursor, 28, draw_w * 0.50, emphasis=False, max_chars=14, beat_id=beat_id)
+                cursor += 40
+            return min(duration - 8, cursor)
 
         prepared: list[dict] = []
         for raw_path in raster_strokes:
@@ -2025,10 +2416,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         return min(duration - 8, int(math.ceil(window_end + 6)))
 
     def build_reference_trace(start: int) -> int:
-        trace_x = diagram_left + width * 0.025
-        trace_y = diagram_top + height * 0.055
-        trace_w = width * 0.43
-        trace_h = height * 0.38
+        trace_x = width * 0.22
+        trace_y = diagram_top + height * 0.045
+        trace_w = width * 0.56
+        trace_h = height * 0.48
         cursor = start
         drawn = 0
         for raw_path in trace_strokes[:80]:
@@ -2057,13 +2448,13 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         label = fallback_label(0, "Reference sketch")
         arrow_start = min(cursor, duration - 64)
         add_arrow(
-            _curve_points(left + width * 0.26, top + height * 0.34, trace_x + trace_w * 0.42, trace_y + trace_h * 0.46, count=16, wave=height * 0.035),
+            _curve_points(trace_x - width * 0.06, trace_y + trace_h * 0.44, trace_x + trace_w * 0.34, trace_y + trace_h * 0.46, count=16, wave=height * 0.025),
             blue,
             4,
             arrow_start,
             18,
         )
-        add_text(label, left + 34, top + height * 0.30, body_size, blue, arrow_start + 12, 28, width * 0.30)
+        add_text(label, trace_x - width * 0.145, trace_y + trace_h * 0.36, body_size, blue, arrow_start + 12, 28, width * 0.16, max_chars=14)
         cursor = arrow_start + 46
         for tick in range(5):
             add_stroke(
@@ -2084,11 +2475,12 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         return cursor
 
     def build_process_flow(start: int) -> int:
-        y = diagram_top + height * 0.18
-        box_w = width * 0.16
+        y = diagram_top + height * 0.17
+        box_w = width * 0.15
         box_h = height * 0.13
         gap = width * 0.055
-        x1 = diagram_left
+        total_w = box_w * 3 + gap * 2
+        x1 = board_center_x - total_w * 0.5
         x2 = x1 + box_w + gap
         x3 = x2 + box_w + gap
         cursor = start
@@ -2103,14 +2495,15 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             add_stroke("note", _line_points(x2 + box_w * 0.5, y + box_h + 10, x2 + box_w * 0.5, y + box_h + height * 0.08), violet, 3, cursor, 9)
             add_text(fallback_label(3, "Key change"), x2 - box_w * 0.14, y + box_h + height * 0.09, body_size, violet, cursor + 8, 22, box_w * 1.35)
             cursor += 32
-        return add_process_doodles(cursor, diagram_left + width * 0.34, y + box_h + height * 0.08)
+        return add_process_doodles(cursor, x3 + box_w * 0.30, y + box_h + height * 0.08)
 
     def build_comparison_transform(start: int) -> int:
         y = diagram_top + height * 0.16
-        left_x = diagram_left + width * 0.02
-        right_x = diagram_left + width * 0.32
-        w = width * 0.18
+        w = width * 0.19
         h = height * 0.18
+        gap = width * 0.12
+        left_x = board_center_x - (w * 2 + gap) * 0.5
+        right_x = left_x + w + gap
         cursor = start
         cursor = add_node_box(fallback_label(0, "Before"), left_x, y, w, h, cursor, red)
         add_arrow(_curve_points(left_x + w + 8, y + h * 0.45, right_x - 20, y + h * 0.45, count=18, wave=height * 0.035), ink, 4, cursor, 22)
@@ -2145,9 +2538,9 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         while len(formulas) < 3:
             formulas.append(["Known", "Transform", "Conclusion"][len(formulas)])
 
-        x = diagram_left + width * 0.02
+        x = board_center_x - width * 0.22
         y = diagram_top + height * 0.08
-        w = width * 0.38
+        w = width * 0.44
         row_h = height * 0.115
         cursor = start
         for index, formula in enumerate(formulas[:3]):
@@ -2175,9 +2568,9 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         return cursor
 
     def build_optimization_curve(start: int) -> int:
-        axis_x = diagram_left + width * 0.02
+        axis_x = board_center_x - width * 0.23
         axis_y = diagram_top + height * 0.44
-        axis_w = width * 0.40
+        axis_w = width * 0.46
         axis_h = height * 0.30
         cursor = start
         add_arrow(_line_points(axis_x, axis_y, axis_x + axis_w, axis_y, count=8), ink, 4, cursor, 14, role="axis")
@@ -2221,7 +2614,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
 
     def build_attention_network(start: int) -> int:
         cursor = start
-        x0 = diagram_left + width * 0.02
+        x0 = board_center_x - width * 0.29
         y0 = diagram_top + height * 0.08
         token_gap = height * 0.105
         token_positions = [(x0, y0 + i * token_gap) for i in range(3)]
@@ -2257,7 +2650,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
 
     def build_matrix_transform(start: int) -> int:
         cursor = start
-        x = diagram_left + width * 0.02
+        x = board_center_x - width * 0.29
         y = diagram_top + height * 0.12
         w = width * 0.12
         h = height * 0.20
@@ -2285,7 +2678,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
 
     def build_feedback_loop(start: int) -> int:
         cursor = start
-        cx = diagram_left + width * 0.28
+        cx = board_center_x
         cy = diagram_top + height * 0.24
         rx = width * 0.17
         ry = height * 0.17
@@ -2310,17 +2703,66 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             cursor += 6
         return cursor
 
+    def build_chalkboard_derivation(start: int) -> int:
+        cursor = start
+        x = width * 0.12
+        y = height * 0.18
+        line_gap = height * 0.087
+        chalk_size = max(30, int(body_size * 1.05))
+        lines: list[str] = []
+        if scene.diagram_plan and scene.diagram_plan.required_labels:
+            lines.extend(scene.diagram_plan.required_labels[:5])
+        for animation in scene.animations:
+            raw_type = getattr(animation.type, "value", str(animation.type))
+            if raw_type in {"write_formula", "formula_reveal"} and (animation.latex or animation.content):
+                lines.append(animation.latex or animation.content)
+            elif animation.items:
+                lines.extend(animation.items[:4])
+            elif animation.content:
+                lines.append(animation.content)
+        for beat in getattr(scene, "visual_beats", []) or []:
+            if beat.required_labels:
+                lines.extend(beat.required_labels[:3])
+            elif beat.draw_intent:
+                pieces = re.split(r"[。；;,.，、]", beat.draw_intent)
+                lines.extend(piece for piece in pieces[:2] if piece.strip())
+        if not lines:
+            lines = re.split(r"[。；;]", scene.narration)[:6]
+        lines = [_short_text(line, 34) for line in lines if _short_text(line, 34)]
+        if not lines:
+            lines = [_short_text(scene.title, 24), "Known", "Derive", "Conclusion"]
+        color_cycle = [ink, blue, green, yellow, red]
+        cursor = max(cursor, 12)
+        for index, line in enumerate(lines[:7]):
+            line_y = y + index * line_gap
+            color = color_cycle[index % len(color_cycle)]
+            frames = max(24, min(54, int(len(line) * 2.2)))
+            add_text(line, x + (width * 0.035 if index % 2 else 0), line_y, chalk_size, color, cursor, frames, width * 0.78, emphasis=index in {0, len(lines[:7]) - 1}, max_chars=34)
+            cursor += frames + 10
+            if index in {0, 2, 4} and cursor + 10 < duration - 10:
+                underline_y = line_y + chalk_size * 1.05
+                add_stroke(
+                    "chalk_underline",
+                    _line_points(x, underline_y, min(width * 0.86, x + _text_visual_width(line, chalk_size) * 0.62), underline_y, count=8),
+                    yellow if index == 0 else green,
+                    3,
+                    cursor,
+                    8,
+                )
+                cursor += 10
+        return cursor
+
     def build_semiconductor_device(start: int) -> int:
         cursor = start
         corpus = _scene_corpus(scene)
-        x = diagram_left + width * 0.015
+        x = board_center_x - width * 0.30
         y = diagram_top + height * 0.12
         panel_w = width * 0.22
         panel_h = height * 0.30
 
         def draw_planar_mos(px: float, py: float, label: str, on_state: bool, start_frame: int) -> int:
             local = start_frame
-            add_text(label, px, py - height * 0.065, body_size, green if on_state else red, local, 18, panel_w)
+            add_text(label, px, py - height * 0.065, max(22, body_size - 4), green if on_state else red, local, 18, panel_w, max_chars=18)
             local += 20
             substrate_y = py + panel_h * 0.58
             add_stroke("substrate", _rect_points(px, substrate_y, panel_w, panel_h * 0.18), ink, 4, local, 14, close=True)
@@ -2425,45 +2867,52 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         add_text(fallback_label(1, "Gate controls channel"), x, y + panel_h + height * 0.09, body_size, violet, cursor, 30, width * 0.42)
         return cursor + 36
 
-    cursor = 8
-    title_size = 54 if width >= 1600 else 42
-    body_size = 34 if width >= 1600 else 27
-    add_text(scene.title or f"Scene {scene_index + 1}", left, top, title_size, blue, cursor, 48, emphasis=True, max_chars=24)
-    cursor += 60
+    cursor = 0
+    title_size = 58 if width >= 1600 else 44
+    body_size = 32 if width >= 1600 else 26
+    title_text = scene.title or f"Scene {scene_index + 1}"
+    add_text(title_text, title_x_for_text(title_text, title_size), top, title_size, blue, cursor, 44, emphasis=True, max_width=width * 0.78, max_chars=24)
+    cursor += 54
 
     builders = {
         "process_flow": build_process_flow,
         "comparison_transform": build_comparison_transform,
         "formula_derivation": build_formula_derivation,
+        "chalkboard_derivation": build_chalkboard_derivation,
         "optimization_curve": build_optimization_curve,
         "attention_network": build_attention_network,
         "matrix_transform": build_matrix_transform,
         "feedback_loop": build_feedback_loop,
         "semiconductor_device": build_semiconductor_device,
     }
-    if raster_strokes and reference_image_asset:
+    if raster_reveal and reference_image_asset:
         cursor = build_raster_reveal(cursor)
     elif trace_strokes:
         cursor = build_reference_trace(cursor)
+    elif is_chalkboard:
+        cursor = build_chalkboard_derivation(cursor)
     else:
         cursor = builders.get(diagram_kind, build_process_flow)(cursor)
 
-    note_y = top + height * 0.30
-    note_lines = [] if diagram_kind == "semiconductor_device" or raster_reveal_spec else core_lines[:2]
+    note_y = height * 0.79
+    note_lines = [] if diagram_kind == "semiconductor_device" or raster_reveal_spec else core_lines[:1]
     for note_index, line in enumerate(note_lines):
         if cursor + 42 > duration - 8:
             break
-        add_text(line, left + 34, note_y + note_index * (body_size + 28), body_size, ink, cursor, 30, width * 0.30, max_chars=18)
+        add_text(line, width * 0.24, note_y + note_index * (body_size + 28), body_size, ink, cursor, 30, width * 0.50, max_chars=24)
         cursor += 43
 
     if len(texts) < 2 and cursor + 42 <= duration - 8:
-        add_text(_short_text(scene.narration, 24), left + 34, top + height * 0.38, body_size, ink, cursor, 36, width * 0.30, max_chars=18)
+        add_text(_short_text(scene.narration, 24), width * 0.24, height * 0.78, body_size, ink, cursor, 36, width * 0.50, max_chars=24)
 
     _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
-    wash_points = _rect_points(diagram_left - 28, diagram_top + height * 0.02, width * 0.48, height * 0.48)
+    wash_points = _rect_points(board_center_x - board_draw_w * 0.5, diagram_top + height * 0.02, board_draw_w, board_draw_h)
     return {
         "title": scene.title,
         "diagramKind": diagram_kind,
+        "boardMode": board_mode,
+        "handUsage": hand_usage,
+        "visualStyle": visual_style,
         "duration": duration,
         "audioUrl": _scene_extra(scene, "audioUrl") or _scene_extra(scene, "audio_url"),
         "audioSegments": audio_segments,
@@ -2494,6 +2943,9 @@ def _build_fallback_remotion_tsx(
     ]
     for scene_spec, scene in zip(scene_specs, storyboard.scenes[:6]):
         scene_spec["subtitleText"] = _subtitle_text(scene.narration) if subtitles_enabled else None
+        if not subtitles_enabled:
+            for segment in scene_spec.get("audioSegments") or []:
+                segment["subtitleText"] = None
     if not scene_specs:
         raise ValueError("Cannot build fallback Remotion TSX without storyboard scenes")
     duration = sum(scene["duration"] for scene in scene_specs)
@@ -2508,21 +2960,25 @@ const PEN_TIP_X = 15;
 const PEN_TIP_Y = 78;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
+const BOARD_BACKGROUND = "#E3E4DE";
 const BACKGROUND_MUSIC_URL: string | null = __BACKGROUND_MUSIC_URL__;
 const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
 
 type Point = { x: number; y: number };
 type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string };
-type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number };
-type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean };
+type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number; markerStrokeWidth?: number; markerFillOpacity?: number };
+type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean; markerFillOpacity?: number };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
 type RasterStrokeSpec = { opId: string; d: string; revealWidth: number; dashLength: number };
-type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[] };
-type AudioSegmentSpec = { id: string; startFrame: number; endFrame: number; duration: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
+type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[]; renderMode?: "trace" | "direct"; directAppearFrame?: number };
+type AudioSegmentSpec = { id: string; index?: number; startFrame: number; endFrame: number; duration: number; audioStartFrame?: number; audioEndFrame?: number; audioSequenceDuration?: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
 type SceneSpec = {
   title: string;
   diagramKind?: string;
+  boardMode?: "whiteboard" | "chalkboard" | "clean_canvas" | "reference";
+  handUsage?: "trace" | "annotate" | "none";
+  visualStyle?: "teacher_whiteboard" | "marketing_doodle" | "math_chalkboard" | "technical_reference";
   duration: number;
   audioUrl?: string | null;
   audioSegments?: AudioSegmentSpec[];
@@ -2539,8 +2995,20 @@ type SceneSpec = {
 };
 
 const scenes = __SCENES_JSON__ as SceneSpec[];
+const SUBTITLES_ENABLED = __SUBTITLES_ENABLED__;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const sceneBackground = (scene: SceneSpec) => {
+  if (scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard") return "#050806";
+  if (scene.boardMode === "clean_canvas") return "#F7F7F2";
+  return BOARD_BACKGROUND;
+};
+const sceneCaptionColor = (scene: SceneSpec) =>
+  scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard" ? "#F6F2E9" : "#111318";
+const sceneCaptionShadow = (scene: SceneSpec) =>
+  scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard"
+    ? "0 0 8px rgba(0,0,0,0.88), 0 0 16px rgba(0,0,0,0.95)"
+    : "0 1px 0 #fff, 0 0 8px #fff, 0 0 16px #fff";
 
 const progressForOp = (frame: number, op: DrawOp) => {
   const baseConfig = {
@@ -2624,15 +3092,22 @@ const splitSubtitleText = (value: string): string[] => {
 };
 
 const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
+  if (!SUBTITLES_ENABLED) return null;
   const frame = useCurrentFrame();
   const segments = scene.audioSegments ?? [];
-  const activeSegment = segments.find((segment) => frame >= segment.startFrame && frame < segment.endFrame);
+  const activeSegment = segments.find((segment) => {
+    const audioStart = segment.audioStartFrame ?? segment.startFrame;
+    const audioEnd = segment.audioEndFrame ?? segment.endFrame;
+    return frame >= audioStart && frame < audioEnd;
+  });
   const text = (activeSegment?.subtitleText || scene.subtitleText)?.trim();
   if (!text) return null;
   const chunks = splitSubtitleText(text);
   if (chunks.length === 0) return null;
-  const localFrame = activeSegment ? frame - activeSegment.startFrame : frame;
-  const localDuration = activeSegment ? activeSegment.duration : scene.duration;
+  const audioStart = activeSegment ? activeSegment.audioStartFrame ?? activeSegment.startFrame : 0;
+  const audioEnd = activeSegment ? activeSegment.audioEndFrame ?? activeSegment.endFrame : scene.duration;
+  const localFrame = activeSegment ? frame - audioStart : frame;
+  const localDuration = activeSegment ? Math.max(1, audioEnd - audioStart) : scene.duration;
   const progress = clamp01(localFrame / Math.max(1, localDuration - 1));
   const index = Math.min(chunks.length - 1, Math.floor(progress * chunks.length));
   const opacity = interpolate(localFrame, [0, 8, Math.max(9, localDuration - 10), Math.max(10, localDuration - 2)], [0, 1, 1, 0], {
@@ -2657,14 +3132,14 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
         style={{
           maxWidth: VIDEO_WIDTH * 0.78,
           padding: "0 24px",
-          color: "#111318",
+          color: sceneCaptionColor(scene),
           fontFamily: "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
           fontSize: 34,
           fontWeight: 500,
           lineHeight: 1.42,
           letterSpacing: 0,
           textAlign: "center",
-          textShadow: "0 1px 0 #fff, 0 0 8px #fff, 0 0 16px #fff",
+          textShadow: sceneCaptionShadow(scene),
           whiteSpace: "pre-wrap",
         }}
       >
@@ -2678,17 +3153,26 @@ const DrawGlyphPath = ({ spec, op }: { spec: GlyphPathSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
+  const fillOpacity = spec.fontOutline
+    ? interpolate(progress, [0.68, 0.92], [0, spec.markerFillOpacity ?? 0.96], {
+        extrapolateLeft: "clamp",
+        extrapolateRight: "clamp",
+      })
+    : 0;
   return (
-    <path
-      d={spec.d}
-      fill="none"
-      stroke={spec.color}
-      strokeWidth={spec.strokeWidth}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeDasharray={length}
-      strokeDashoffset={length * (1 - progress)}
-    />
+    <g>
+      {fillOpacity > 0 ? <path d={spec.d} fill={spec.color} opacity={fillOpacity} stroke="none" /> : null}
+      <path
+        d={spec.d}
+        fill="none"
+        stroke={spec.color}
+        strokeWidth={spec.strokeWidth}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeDasharray={length}
+        strokeDashoffset={length * (1 - progress)}
+      />
+    </g>
   );
 };
 
@@ -2741,6 +3225,7 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
   const frame = useCurrentFrame();
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
+  if (reveal.renderMode === "direct") return null;
   const maskId = `raster-reveal-mask-${sceneIndex}`;
   const referenceImageAsset = scene.referenceImageAsset;
   const coverageStart = reveal.strokes.reduce((latest, stroke) => {
@@ -2776,11 +3261,37 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
   );
 };
 
+const boardShadow = "0 1px 0 rgba(255,255,255,0.65), 0 0 1px rgba(0,0,0,0.10)";
+
 const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
   const referenceImageAsset = scene.referenceImageAsset;
+  if (reveal.renderMode === "direct") {
+    const appearFrame = reveal.directAppearFrame ?? 0;
+    const opacity = interpolate(frame, [appearFrame, appearFrame + 10], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    return (
+      <Img
+        src={staticFile(referenceImageAsset)}
+        style={{
+          position: "absolute",
+          left: reveal.x,
+          top: reveal.y,
+          width: reveal.width,
+          height: reveal.height,
+          opacity,
+          pointerEvents: "none",
+          zIndex: 4,
+          filter: "contrast(1.04) saturate(1.05)",
+          textShadow: boardShadow,
+        }}
+      />
+    );
+  }
   const coverageStart = reveal.strokes.reduce((latest, stroke) => {
     const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
     return op ? Math.max(latest, op.endFrame) : latest;
@@ -2800,6 +3311,9 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
         height: reveal.height,
         opacity,
         pointerEvents: "none",
+        zIndex: 12,
+        filter: "contrast(1.04) saturate(1.05)",
+        textShadow: boardShadow,
       }}
     />
   );
@@ -2836,7 +3350,7 @@ const SceneAudio = ({ scene }: { scene: SceneSpec }) => {
       <>
         {segments.map((segment) =>
           segment.audioUrl ? (
-            <Sequence key={segment.id} from={segment.startFrame} durationInFrames={segment.duration} layout="none">
+            <Sequence key={segment.id} from={segment.audioStartFrame ?? segment.startFrame} durationInFrames={segment.audioSequenceDuration ?? Math.max(1, segment.endFrame - (segment.audioStartFrame ?? segment.startFrame))} layout="none">
               <Audio src={segment.audioUrl} />
             </Sequence>
           ) : null,
@@ -2864,7 +3378,7 @@ const SceneTransitionWipe = ({ scene }: { scene: SceneSpec }) => {
         bottom: 0,
         left: 0,
         width: `${progress * 100}%`,
-        backgroundColor: "#FFFFFF",
+        backgroundColor: sceneBackground(scene),
         pointerEvents: "none",
         zIndex: 40,
       }}
@@ -2875,22 +3389,57 @@ const SceneTransitionWipe = ({ scene }: { scene: SceneSpec }) => {
 const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
   const drawOps = scene.drawOps;
-  const backgroundColor = "#FFFFFF";
+  const orderedDrawOps = [...drawOps].sort((a, b) => a.startFrame - b.startFrame);
+  const backgroundColor = sceneBackground(scene);
+  const showHand = scene.handUsage !== "none" && scene.boardMode !== "chalkboard" && scene.visualStyle !== "math_chalkboard";
   const getActiveDrawOp = (frame: number) =>
-    drawOps.find((op) => frame >= op.startFrame && frame <= op.endFrame);
+    orderedDrawOps.find((op) => frame >= op.startFrame && frame <= op.endFrame);
   const getPenPosition = (frame: number) => {
     const active = getActiveDrawOp(frame);
-    if (!active) return { x: -400, y: -400, visible: false };
-    const progress = progressForOp(frame, active);
-    const point = pointOnPolyline(active.points, progress);
-    return { x: point.x, y: point.y, visible: true };
+    if (active) {
+      const progress = progressForOp(frame, active);
+      const point = pointOnPolyline(active.points, progress);
+      return { x: point.x, y: point.y, visible: true };
+    }
+    const previous = [...orderedDrawOps].reverse().find((op) => op.endFrame < frame);
+    const next = orderedDrawOps.find((op) => op.startFrame > frame);
+    if (previous && next) {
+      const gap = next.startFrame - previous.endFrame;
+      if (gap > 0 && gap <= 26 && frame >= previous.endFrame && frame <= next.startFrame) {
+        const from = pointOnPolyline(previous.points, 1);
+        const to = pointOnPolyline(next.points, 0);
+        const t = interpolate(frame, [previous.endFrame, next.startFrame], [0, 1], {
+          extrapolateLeft: "clamp",
+          extrapolateRight: "clamp",
+          easing: Easing.bezier(0.2, 0.8, 0.2, 1),
+        });
+        return {
+          x: interpolate(t, [0, 1], [from.x, to.x]),
+          y: interpolate(t, [0, 1], [from.y, to.y]),
+          visible: true,
+        };
+      }
+    }
+    return { x: -400, y: -400, visible: false };
   };
   const pen = getPenPosition(frame);
 
   return (
     <AbsoluteFill style={{ backgroundColor, overflow: "hidden" }}>
       <SceneAudio scene={scene} />
-      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%" }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
+      {scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard" ? (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            background:
+              "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.035), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.018), rgba(0,0,0,0))",
+            pointerEvents: "none",
+            zIndex: 1,
+          }}
+        />
+      ) : null}
+      <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 10 }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
         <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />
@@ -2898,7 +3447,7 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
       </svg>
       <RasterFinalOverlay scene={scene} />
       <SubtitleOverlay scene={scene} />
-      <HandPen tipX={pen.x} tipY={pen.y} visible={pen.visible} />
+      <HandPen tipX={pen.x} tipY={pen.y} visible={showHand && pen.visible} />
       <SceneTransitionWipe scene={scene} />
     </AbsoluteFill>
   );
@@ -2928,6 +3477,7 @@ export function GeneratedVideo() {
         .replace("__VIDEO_HEIGHT__", str(height))
         .replace("__BACKGROUND_MUSIC_URL__", json.dumps(background_music_url))
         .replace("__BACKGROUND_MUSIC_VOLUME__", str(max(0.0, min(0.5, background_music_volume))))
+        .replace("__SUBTITLES_ENABLED__", "true" if subtitles_enabled else "false")
         .strip(),
         duration,
     )
@@ -2938,18 +3488,27 @@ REMOTION_CODE_SYSTEM_PROMPT = """You are an expert Remotion engineer and motion 
 Generate ONE self-contained TSX module for a complete educational whiteboard video.
 
 Target visual reference:
-- A sparse white canvas where a real visible hand holds a marker and writes/draws every visible element live.
+- A sparse light grey-white whiteboard canvas where a real visible hand holds a marker and writes/draws board annotations live.
+- Also support explicit scene-level modes from the storyboard:
+  - `board_mode="whiteboard"` with `hand_usage="trace"`: classic sparse teacher whiteboard; the hand writes/draws the active strokes.
+  - `board_mode="reference"` or `hand_usage="annotate"`: present the complex/finished subject clearly, then use the hand only for short callouts, circles, arrows and underlines.
+  - `board_mode="clean_canvas"` with `visual_style="marketing_doodle"`: colorful finished doodle groups may appear directly; the hand writes titles, ticks, arrows and emphasis marks.
+  - `board_mode="chalkboard"` or `visual_style="math_chalkboard"`: use a dark chalkboard background, no visible hand, and reveal equations/steps line by line with chalk-like colors.
 - The hand must be on screen during drawing, with the pen tip touching the active text stroke, line, arrow, box, equation, or diagram.
-- Use black marker outlines plus purposeful teaching colors: red for current/flow, blue for voltage/control arrows, green for channels/valid paths, purple for gate/structure, and yellow underlines/callouts for key ideas. Keep the canvas plain white; do not add colored background washes, paper tints, or colored panels behind diagrams.
+- Use black marker outlines plus purposeful teaching colors: red for current/flow, blue for voltage/control arrows, green for channels/valid paths, purple for gate/structure, and yellow underlines/callouts for key ideas. Keep the canvas as a clean whiteboard surface; do not add colored background washes, paper tints, or colored panels behind diagrams.
 - Text should feel handwritten: irregular but readable, large, dark/blue marker strokes, revealed character-by-character or word-by-word while the hand follows the reveal.
+- Text must look like solid marker handwriting after it is written, not hollow font outlines.
 - For Chinese text, fontFamily must start with a handwriting-style Chinese font stack like "KaiTi, STKaiti, Kaiti SC, cursive". Do not rely on default bold sans-serif Chinese.
-- Graphics should feel hand-sketched: speech bubbles, arrows, boxes, curves, icons, charts, characters, objects, and concept diagrams are revealed by strokes being drawn.
+- Graphics should feel like a teacher's hand-sketched board work: arrows, boxes, curves, charts, objects, callouts, underlines, and concept diagrams are revealed by strokes being drawn.
+- Layout should match a real sparse whiteboard lesson: short blue handwritten title near the top-left or top-center, one central diagram occupying about 45-65% of the canvas width, large empty margins, and short labels placed near the parts they describe.
+- Do not use a fixed left text column. Avoid explanatory paragraphs on the board; use only short labels, one-line conclusions, arrows, circles, brackets, and underlines.
 - Preserve lots of empty white space. Avoid slide-deck cards, polished UI panels, gradients, stock images, and decorative template layouts.
 - Prefer one meaningful illustrated explanation per scene over dense bullet lists.
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
+- New scenes should begin writing immediately or within the first few frames; avoid one-second blank boards after a cut.
 - Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
 - If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
-- When scenes include audioSegments, use those beat-level startFrame/endFrame windows for Audio, subtitles, and drawOps. Never play a whole-scene narration over unrelated drawing when beat audio is available.
+- When scenes include audioSegments, use beat-level timing. DrawOps use startFrame/endFrame, but Audio and subtitles must start at audioStartFrame when provided, so the board can write a title or base outline before narration begins. Never play a whole-scene narration over unrelated drawing when beat audio is available.
 - If background_music_url is provided, add one global low-volume looping <Audio> track using that exact URL and background_music_volume. It should sit behind all scene narration and never replace scene voiceover audio.
 
 Hard requirements:
@@ -2961,40 +3520,45 @@ Hard requirements:
 - The TSX must explicitly use useCurrentFrame(), Sequence, and at least one of interpolate() or spring().
 - Every scene must draw text and shapes over time. Define inline helper components such as HandText, DrawPath, SketchBubble, SketchArrow, or DiagramStroke inside the same TSX module.
 - Board text must use glyphPaths; optional subtitles may use normal HTML text as a separate overlay because they are captions rather than handwritten board content.
+- If subtitles_enabled is false, ignore scene.subtitleText and audioSegments[].subtitleText completely; do not render any caption overlay.
 - The central animation model must be a `drawOps` array. Each op must have `kind`, `startFrame`, `endFrame`, and a `points: {x:number; y:number}[]` polyline that represents the actual stroke path the marker tip follows.
 - The drawOps timeline should fill each scene with drawing work and avoid dead air. The final drawOp of a scene should end near the scene duration, leaving only a short natural beat before the next Sequence.
 - If a drawOp belongs to a beat, set beatId and keep its startFrame/endFrame inside that beat's audioSegment. A scene may exceed the requested target duration if real TTS and drawing need it.
+- Preserve beatId on teacher callouts and emphasis strokes so each beat visually points to the same concept that its narration explains.
 - Define `pointOnPolyline(points, progress)`, `getActiveDrawOp(frame)`, and `getPenPosition(frame)`. The rendered `<HandPen>` must use `const pen = getPenPosition(frame)` and pass `tipX={pen.x}` and `tipY={pen.y}`. Hand visibility must come from whether an active draw op exists.
+- During short gaps between neighboring drawOps, keep the hand visible and move it from the previous stroke endpoint to the next stroke start without drawing; this should feel like a teacher lifting and repositioning the marker, not a cursor teleport.
 - The pen must move up, down, left, and right inside words and drawings. Do not make the hand travel along a single straight baseline for text. Text ops must include zig-zag or stroke-like points for each word/phrase so the marker visibly writes within glyph shapes.
 - Never define `const tipX = interpolate(frame, [...])` or `const tipY = interpolate(frame, [...])` at scene level. Pen coordinates must be sampled from active `drawOps.points`.
 - Every animated SVG path/arrow/box/diagram stroke must have a matching drawOp with similar points. The hand tip should be near the visible end of the stroke as strokeDashoffset reveals it.
 - Handwritten text must use a real Chinese handwriting stack like `"STXingkai, 华文行楷, KaiTi, STKaiti, Kaiti SC, cursive"`. Do not use bold sans-serif text.
-- The visual language must be anime/cartoon whiteboard: add at least one simple cartoon/doodle character, face, mascot, or expressive icon in each video, drawn with SVG strokes and synced drawOps. Use helper names like AnimeDoodle, CartoonDiagram, CartoonMascot, or DoodleCharacter.
+- The visual language must be classic teacher whiteboard: add small hand-drawn emphasis marks only when useful, such as ticks, brackets, circles, arrows, local zoom boxes, or callout rays. Do not force mascots or decorative cartoon characters.
 - Import Img and staticFile from "remotion" and render the visible hand using <Img src={staticFile("hand-real-pen.png")} />.
 - Define a HandPen component in the same TSX module. It must receive `tipX`, `tipY` coordinates and position the hand image so the actual marker tip follows the currently drawn element.
+- In explicit chalkboard/no-hand scenes, keep the HandPen component defined for other scenes but hide it for that scene; do not force a decorative hand onto math derivations.
 - Use these exact hand alignment constants in TSX: `const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78;`. Render the hand with width HAND_WIDTH and height HAND_HEIGHT, and position it with `left: tipX - PEN_TIP_X`, `top: tipY - PEN_TIP_Y`.
 - HandPen must return an absolutely positioned HTML `<div>` wrapping `<Img>`. Never render `<HandPen>` inside `<svg>`; render it as a sibling overlay after the SVG so Remotion's Img stays in HTML, not SVG namespace.
 - The hand cannot be decorative. It must move across the canvas during every draw/write operation and be hidden only during pauses or completed static holds.
 - Create a deterministic drawing timeline array or helper function that maps frame ranges to pen tip coordinates. Use interpolate() to move the hand between points; never jump instantly.
 - The hand should be large enough to resemble the reference video, roughly 240-300 px wide on a 1920x1080 canvas, not a tiny cursor.
 - SVG line drawings must use strokeDasharray and strokeDashoffset driven by useCurrentFrame()/interpolate().
-- If a scene includes rasterReveal and referenceImageAsset, reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. Do not fade in or directly display the full reference image as the main animation. After all raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
+- If a scene includes rasterReveal and referenceImageAsset, use rasterReveal.renderMode. For renderMode "trace", reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. For renderMode "direct", directly present the complex reference image with a short frame-driven opacity reveal, centered with generous empty space, then use HandPen only for a few short nearby teacher callouts, small circles, underlines and emphasis marks over it. Avoid long sweeping arrows and large circles covering the diagram. After trace raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
 - Animated dashed paths must have `fill="none"`. Do not use background washes or colored panels; use color only on teaching strokes, arrows, underlines, callouts, and small emphasis marks.
 - Text must be progressively revealed with slice(), substring(), or a frame-driven clipPath. Do not show full paragraphs instantly.
 - For Chinese text, define a `glyphPaths` array and render it with inline `GlyphText` / `DrawGlyphPath` helpers using SVG `<path>` plus strokeDasharray/strokeDashoffset. The render server will preprocess these glyph paths from a local Chinese font with opentype.js, so include text specs and matching text drawOps instead of static SVG `<text>`.
+- For large handwritten glyph paths, after the stroke finishes, a light fill using the same marker color is allowed so the writing does not look hollow.
 - Do not use an HTML `HandText` slice-only renderer as the final text drawing path. The pen must follow glyph outline/path points that can be replaced by the renderer.
 - Opacity fade may be used only as a secondary polish, never as the main animation for text or diagrams.
 - Do not use SVG SMIL tags such as <animate>. Even SVG details must be driven by Remotion frame values.
-- Include multiple limited instructional colors in non-raster scenes, such as red current arrows, blue voltage/control arrows, green channel paths, purple gate/structure strokes, and yellow key underlines/callouts. Do not add color washes or colored panels behind any diagram; keep image assets transparent over a plain white canvas.
+- Include multiple limited instructional colors in non-raster scenes, such as red current arrows, blue voltage/control arrows, green channel paths, purple gate/structure strokes, and yellow key underlines/callouts. Do not add color washes or colored panels behind any diagram; keep image assets transparent over the whiteboard canvas.
 - Do not use transition, animation, @keyframes, Tailwind animate-* class names, setTimeout, setInterval, requestAnimationFrame, Date.now(), or Math.random().
 - Do not use fetch, eval, Function, require, filesystem APIs, browser globals, or dangerouslySetInnerHTML.
 - Hardcode the provided storyboard content and audio URLs into the TSX.
 - Use <Audio src="..."> from remotion for scene voiceover when audioUrl exists.
-- Prefer beat-level audio: for each scene.audioSegments item with audioUrl, render <Audio> inside a <Sequence from={segment.startFrame} durationInFrames={segment.duration}>.
+- Prefer beat-level audio: for each scene.audioSegments item with audioUrl, render <Audio> inside a <Sequence from={segment.audioStartFrame ?? segment.startFrame} durationInFrames={segment.audioSequenceDuration ?? segment.duration}>.
 - Use one additional global <Audio src={background_music_url} volume={background_music_volume} loop /> only when background_music_url is not null.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
-- Use a clean Chinese whiteboard teaching style: plain white background for every scene, black ink outlines, purposeful colored teaching strokes, spacious layout, progressive reveal.
+- Use a clean Chinese whiteboard teaching style: light grey-white whiteboard background close to #E3E4DE for every scene, black ink outlines, blue handwritten titles, purposeful colored teaching strokes, spacious centered layout, progressive reveal.
 - Keep text inside safe bounds for 1920x1080.
 - Keep helpers deterministic. If you need hand-drawn jitter, compute it from indexes or fixed arrays, never Math.random().
 
@@ -3027,7 +3591,8 @@ async def generate_remotion_code(
         "When scene.audioSegments exist, synchronize Audio, subtitles, and drawOps to those beat windows. "
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
         "If background_music_url is provided, add it as one low-volume looping background Audio track behind narration. "
-        "Use Chinese handwritten fonts and anime/cartoon whiteboard doodles. "
+        "Respect scene board_mode/hand_usage/visual_style: hide the hand for chalkboard or hand_usage=none scenes, use direct/hybrid presentation for reference or annotate scenes, and use colorful finished doodles plus hand annotations for marketing_doodle scenes. "
+        "Use Chinese handwritten fonts and teacher-style whiteboard callouts. "
         "No stock images, no templates, no decorative component frames."
     )
     codegen_mode = settings.remotion_codegen_mode.strip().lower()
@@ -3121,7 +3686,7 @@ async def generate_remotion_code(
                     "synchronize beat-level Audio, subtitles, and drawOps to scene.audioSegments when present, "
                     "add one global low-volume looping background Audio track only when background_music_url is provided, "
                     "use STXingkai/华文行楷/KaiTi/STKaiti for Chinese handwriting, never bold sans-serif, "
-                    "include limited teaching accent colors and anime/cartoon whiteboard doodles, with a plain white background, "
+                    "include limited teaching accent colors and teacher-style whiteboard callouts, with a clean whiteboard background, "
                     f"render a moving HandPen with <Img src={{staticFile('{HAND_ASSET}')}} />, "
                     "use HAND_WIDTH >= 220 and PEN_TIP_X/PEN_TIP_Y offsets so the marker tip touches the active stroke, "
                     "define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), "
