@@ -6,7 +6,7 @@ import { StoryboardView } from "@/components/storyboard/StoryboardView";
 import type { BackgroundMusicTrack, RenderJobStatus, Storyboard } from "@/lib/types";
 import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 
-import { RENDER_URL } from "@/lib/constants";
+import { RENDER_URL, penStyleLabel, videoStyleLabel } from "@/lib/constants";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -186,6 +186,8 @@ function RenderButton({
 const DEMO_STORYBOARD: Storyboard = {
   topic: "梯度下降",
   total_duration_estimate: 130,
+  video_style: "whiteboard",
+  pen_style: "marker",
   scenes: [
     {
       id: "scene_0",
@@ -275,6 +277,19 @@ export default function StoryboardPage() {
     }
   }, []);
 
+  const handleSceneUpdate = (sceneId: string, updates: Partial<Storyboard["scenes"][number]>) => {
+    setStoryboard((current) => {
+      const next = {
+        ...current,
+        scenes: current.scenes.map((scene) =>
+          scene.id === sceneId ? { ...scene, ...updates } : scene
+        ),
+      };
+      sessionStorage.setItem("explainflow_storyboard", JSON.stringify(next));
+      return next;
+    });
+  };
+
   useEffect(() => {
     let active = true;
     fetch(`${API}/render/music`)
@@ -325,7 +340,7 @@ export default function StoryboardPage() {
             视频库
           </Link>
           <span className="text-xs font-mono text-[--fg-muted]">
-            共 {storyboard.scenes.length} 场 · {Math.round(storyboard.total_duration_estimate)}s
+            {videoStyleLabel(storyboard.video_style)} · {penStyleLabel(storyboard.pen_style)} · 共 {storyboard.scenes.length} 场 · {Math.round(storyboard.total_duration_estimate)}s
           </span>
           <label className="h-8 px-2.5 rounded-md border border-[--border-default] text-xs text-[--fg-muted] inline-flex items-center gap-2 select-none cursor-pointer">
             <input
@@ -412,6 +427,7 @@ export default function StoryboardPage() {
         <StoryboardView
           storyboard={storyboard}
           videoUrl={videoUrl}
+          onSceneUpdate={handleSceneUpdate}
         />
       </div>
     </div>

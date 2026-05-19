@@ -123,7 +123,7 @@ export default function HomePage() {
         </div>
         <div className="grid grid-cols-3 gap-6 max-w-4xl mx-auto">
           {[
-            { icon: "✦", color: "purple", title: "AI 自动规划", desc: "LLM 深度理解 AI/ML 概念，自动规划教学顺序和 Explain 图谱，无需手动编排。" },
+            { icon: "✦", color: "purple", title: "AI 自动规划", desc: "LLM 深度理解 AI/ML 概念，自动规划教学顺序和分镜脚本，无需手动编排。" },
             { icon: "◈", color: "pink", title: "Khan Academy 风格", desc: "一键生成中文白板动画，手绘质感、中文字幕，直接适配 B 站和知乎。" },
             { icon: "⚡", color: "cyan", title: "秒级生成导出", desc: "1-3 分钟 MP4 1080p，横屏 + 竖屏 Shorts 双格式，生成完直接发布。" },
           ].map((f) => (
@@ -149,7 +149,7 @@ export default function HomePage() {
           {[
             { step: "1", title: "输入 Prompt", desc: "用中文描述想讲的 AI/ML 概念，或粘贴 Markdown 笔记" },
             null,
-            { step: "2", title: "AI 生成动画", desc: "LLM 理解概念，自动规划 Explain 图谱和白板动画脚本" },
+            { step: "2", title: "AI 生成动画", desc: "LLM 理解概念，直接生成白板分镜和动画脚本" },
             null,
             { step: "3", title: "编辑并下载", desc: "在 Storyboard 中微调文案节奏，一键导出 1080p MP4" },
           ].map((item, i) =>

@@ -1,3 +1,21 @@
+export type VideoStyleId =
+  | "auto"
+  | "chalkboard_bw"
+  | "chalkboard_color"
+  | "modern_minimal"
+  | "technical_blueprint"
+  | "editorial"
+  | "whiteboard"
+  | "playful"
+  | "sharpie"
+  | "colorful_story"
+  | "teacher_whiteboard"
+  | "math_chalkboard"
+  | "technical_reference"
+  | "howto_demo";
+
+export type PenStyleId = "no_hand" | "pen" | "marker" | "fountain_pen";
+
 // ── Explain Graph ──────────────────────────────────────────────
 export type NodeType = "concept" | "formula" | "example" | "conclusion" | "process";
 
@@ -110,13 +128,19 @@ export interface Scene {
   visual_complexity?: string | null;
   board_mode?: string | null;
   hand_usage?: string | null;
+  video_style?: VideoStyleId | string | null;
+  videoStyle?: VideoStyleId | string | null;
   visual_style?: string | null;
+  pen_style?: PenStyleId | string | null;
+  penStyle?: PenStyleId | string | null;
 }
 
 export interface Storyboard {
   topic: string;
   total_duration_estimate: number;
   scenes: Scene[];
+  video_style?: VideoStyleId | string | null;
+  pen_style?: PenStyleId | string | null;
 }
 
 // ── Render Jobs ─────────────────────────────────────────────────

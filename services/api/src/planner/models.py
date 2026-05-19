@@ -72,7 +72,9 @@ class Scene(BaseModel):
     visual_complexity: str | None = None
     board_mode: str | None = None
     hand_usage: str | None = None
+    video_style: str | None = None
     visual_style: str | None = None
+    pen_style: str | None = None
 
 
 class Storyboard(BaseModel):
@@ -81,11 +83,15 @@ class Storyboard(BaseModel):
     topic: str
     total_duration_estimate: float
     scenes: list[Scene] = Field(default_factory=list)
+    video_style: str | None = None
+    pen_style: str | None = None
 
 
 class GenerateStoryboardRequest(BaseModel):
     graph: ExplainGraph
     target_duration: int = Field(default=120, ge=60, le=180)
+    video_style: str = "auto"
+    pen_style: str = "marker"
 
 
 class GenerateStoryboardResponse(BaseModel):

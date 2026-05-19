@@ -1,7 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Scene, Storyboard, AnimationInstruction } from "@/lib/types";
+import { videoStyleLabel } from "@/lib/constants";
 
 interface Props {
   storyboard: Storyboard;
@@ -18,6 +19,17 @@ const ANIM_LABELS: Record<string, string> = {
   particle_flow: "⋯ 粒子流",
   network_layer: "⊞ 网络层",
   text_narration: "T 文字旁白",
+};
+
+const STYLE_LABELS: Record<string, string> = {
+  teacher_whiteboard: "经典白板",
+  marketing_doodle: "彩色手绘",
+  math_chalkboard: "数学黑板",
+  technical_reference: "参考标注",
+  modern_minimal: "极简",
+  editorial: "编辑",
+  playful: "趣味",
+  sharpie: "Sharpie",
 };
 
 function AnimationTag({ anim }: { anim: AnimationInstruction }) {
@@ -57,7 +69,13 @@ function SceneCard({
         </span>
         <div className="flex-1 min-w-0">
           <p className="text-sm font-medium text-[--fg-default] truncate">{scene.title}</p>
-          <p className="text-xs text-[--fg-muted] mt-0.5 font-mono">{scene.duration_estimate}s</p>
+          <p className="text-xs text-[--fg-muted] mt-0.5 font-mono">
+            {scene.duration_estimate}s
+            {scene.video_style || scene.videoStyle
+              ? ` · ${videoStyleLabel(scene.video_style ?? scene.videoStyle)}`
+              : ""}
+            {scene.visual_style ? ` · ${STYLE_LABELS[scene.visual_style] ?? scene.visual_style}` : ""}
+          </p>
         </div>
       </div>
     </button>
@@ -78,6 +96,19 @@ function SceneEditor({
           场景标题
         </h3>
         <p className="text-sm font-medium text-[--fg-default]">{scene.title}</p>
+        {(scene.board_mode || scene.hand_usage || scene.video_style || scene.videoStyle || scene.visual_style || scene.pen_style || scene.penStyle) && (
+          <p className="mt-2 text-xs text-[--fg-muted] font-mono">
+            {[
+              scene.board_mode,
+              scene.hand_usage,
+              scene.video_style ?? scene.videoStyle,
+              scene.visual_style,
+              scene.pen_style ?? scene.penStyle,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+          </p>
+        )}
       </div>
 
       <div>
@@ -85,7 +116,7 @@ function SceneEditor({
           旁白文案
         </h3>
         <textarea
-          defaultValue={scene.narration}
+          value={scene.narration}
           rows={6}
           onChange={(e) => onUpdate?.({ narration: e.target.value })}
           className="w-full rounded-lg bg-[--bg-base] border border-[--border-default] text-[--fg-default] text-sm p-3 resize-none focus:outline-none focus:border-purple-500 transition-colors leading-relaxed"
@@ -176,6 +207,13 @@ function ScenePlaceholder({ scene }: { scene: Scene }) {
 
 export function StoryboardView({ storyboard, videoUrl, onSceneUpdate }: Props) {
   const [selectedId, setSelectedId] = useState<string>(storyboard.scenes[0]?.id ?? "");
+
+  useEffect(() => {
+    if (!storyboard.scenes.some((scene) => scene.id === selectedId)) {
+      setSelectedId(storyboard.scenes[0]?.id ?? "");
+    }
+  }, [storyboard.scenes, selectedId]);
+
   const selectedScene = storyboard.scenes.find((s) => s.id === selectedId) ?? storyboard.scenes[0];
 
   return (

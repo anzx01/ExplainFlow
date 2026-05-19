@@ -4,6 +4,7 @@ import math
 import re
 from copy import deepcopy
 
+from src.core.visual_prompts import BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT
 from src.core.llm import chat_json, check_llm_connection
 from src.core.config import settings
 from src.explain.models import ExplainGraph
@@ -25,6 +26,261 @@ ALLOWED_IMPORTS = {"react", "remotion"}
 HAND_ASSET = "hand-real-pen.png"
 REMOTION_CODE_CACHE: dict[str, GenerateRemotionCodeResponse] = {}
 REMOTION_CODE_CACHE_MAX_ITEMS = 16
+VIDEO_STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "auto": {
+        "name": "智能推荐",
+        "board_mode": "",
+        "hand_usage": "",
+        "visual_style": "",
+        "render_strategy": "",
+        "planning_rule": "Choose the best Golpo-style canvas grammar per scene from the content and complexity.",
+        "image_rule": "Use the most appropriate Golpo Canvas style while keeping artwork text-free for renderer-added handwriting.",
+    },
+    "chalkboard_bw": {
+        "name": "Chalkboard Black & White",
+        "board_mode": "chalkboard",
+        "hand_usage": "none",
+        "visual_style": "math_chalkboard",
+        "render_strategy": "trace",
+        "planning_rule": (
+            "Classic dark chalkboard: black background, white chalk text and diagrams, very sparse composition, "
+            "one top-left handwritten title, then small icon groups appear step by step. Use for explainers, tutorials, "
+            "onboarding and complex concepts that benefit from high contrast simplicity."
+        ),
+        "image_rule": (
+            "dark black chalkboard canvas, white chalk-only hand-drawn line art, rough chalk texture, no fills, "
+            "no full-color objects, sparse icon groups, large empty black space, text-free artwork except tiny unreadable chalk marks."
+        ),
+    },
+    "chalkboard_color": {
+        "name": "Chalkboard Color",
+        "board_mode": "chalkboard",
+        "hand_usage": "none",
+        "visual_style": "math_chalkboard",
+        "render_strategy": "trace",
+        "planning_rule": (
+            "Dark chalkboard with neon chalk accents: white/cyan line art plus yellow or teal highlights for key arrows, "
+            "underlines and final results. Keep the same sparse blackboard organization as Chalkboard B/W, but use color "
+            "to make important concepts pop."
+        ),
+        "image_rule": (
+            "dark black chalkboard canvas, chalk-like white and cyan outlines, limited yellow/teal highlight strokes, "
+            "glowing chalk texture, sparse hand-drawn icons, large empty black space, no poster layout."
+        ),
+    },
+    "modern_minimal": {
+        "name": "Modern Minimal",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "modern_minimal",
+        "render_strategy": "hybrid",
+        "planning_rule": (
+            "Modern minimal: warm light grey canvas, thin black sketch lines, lots of white space, only one cool accent color "
+            "such as blue or violet. Use small grouped icons and clean alignment. Best for SaaS demos, corporate training, "
+            "investor updates and polished summaries."
+        ),
+        "image_rule": (
+            "warm light grey canvas, thin clean black hand-drawn lines, one restrained blue/violet accent, lots of white space, "
+            "simple aligned icon cluster, no messy doodles, no dense labels, text-free artwork."
+        ),
+    },
+    "technical_blueprint": {
+        "name": "Technical",
+        "board_mode": "reference",
+        "hand_usage": "annotate",
+        "visual_style": "technical_reference",
+        "render_strategy": "hybrid",
+        "planning_rule": (
+            "Technical blueprint: deep blue engineering notebook, precise pale-blue linework, structured diagrams, UI panels, "
+            "screens, wires, components and tiny measurement ticks. Use for engineering walkthroughs, architecture diagrams, "
+            "developer documentation, devices and systems."
+        ),
+        "image_rule": (
+            "deep navy blueprint canvas, precise pale blue technical line art, structured overlapping panels, subtle grid or drafting feel, "
+            "small cyan/red semantic accents only, accurate parts, no playful cartoons, text-free artwork."
+        ),
+    },
+    "editorial": {
+        "name": "Editorial",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "editorial",
+        "render_strategy": "hybrid",
+        "planning_rule": (
+            "Editorial explainer: polished off-white canvas, bold black ink, refined accent underlines, magazine-like object collage, "
+            "paper sheets, product cards, media icons and tasteful red/orange accents. Use for client/investor stories, "
+            "thought leadership, product narratives and professional marketing."
+        ),
+        "image_rule": (
+            "polished editorial hand-drawn collage on warm off-white canvas, bold clean black ink, restrained red/orange accents, "
+            "stacked paper cards and media objects, clear hierarchy, premium presentation, text-free artwork."
+        ),
+    },
+    "whiteboard": {
+        "name": "Whiteboard",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "marketing_doodle",
+        "render_strategy": "hybrid",
+        "planning_rule": (
+            "Whiteboard explainer: light off-white board, hand-drawn black outlines, blue/green/yellow accents, visible sketch energy, "
+            "diagram plus short labels, often with a real hand or marker annotations. Use for education, how-to videos, recipes, "
+            "processes and any topic that needs clear friendly visuals."
+        ),
+        "image_rule": (
+            "off-white whiteboard canvas, friendly hand-drawn black marker outlines, blue/green/yellow teaching accents, "
+            "large clear illustrated objects, generous margins for marker callouts, text-free artwork."
+        ),
+    },
+    "playful": {
+        "name": "Playful",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "playful",
+        "render_strategy": "hybrid",
+        "planning_rule": (
+            "Playful: creamy warm background, colorful crayon-like lettering and icons, smiley marks, music notes, bouncing shapes, "
+            "soft pastel palette and lighthearted composition. Use for students, social posts, community updates and approachable topics."
+        ),
+        "image_rule": (
+            "warm cream canvas, playful crayon-like hand-drawn objects, pastel red yellow teal purple accents, expressive simple icons, "
+            "rounded friendly shapes, cheerful energy, text-free artwork."
+        ),
+    },
+    "sharpie": {
+        "name": "Sharpie",
+        "board_mode": "clean_canvas",
+        "hand_usage": "trace",
+        "visual_style": "sharpie",
+        "render_strategy": "trace",
+        "planning_rule": (
+            "Sharpie: bright white canvas, thick black marker strokes, bold uppercase handwritten titles, raw quick-drawn feel, "
+            "occasional blue/yellow/red highlighter accents and a visible hand drawing. Use for founder updates, quick explainers, "
+            "behind-the-scenes and content where real and direct beats polished."
+        ),
+        "image_rule": (
+            "bright white canvas, thick black Sharpie marker outlines, bold rough hand-drawn icons, sparse strong composition, "
+            "small blue/yellow/red highlighter accents, raw human sketch feel, text-free artwork."
+        ),
+    },
+    # Backward-compatible aliases from the first ExplainFlow style pass.
+    "colorful_story": {
+        "alias_for": "whiteboard",
+        "name": "Whiteboard",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "marketing_doodle",
+        "render_strategy": "hybrid",
+        "planning_rule": "Alias for Whiteboard.",
+        "image_rule": "Alias for Whiteboard.",
+    },
+    "teacher_whiteboard": {
+        "alias_for": "whiteboard",
+        "name": "Whiteboard",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "marketing_doodle",
+        "render_strategy": "hybrid",
+        "planning_rule": "Alias for Whiteboard.",
+        "image_rule": "Alias for Whiteboard.",
+    },
+    "math_chalkboard": {
+        "alias_for": "chalkboard_color",
+        "name": "Chalkboard Color",
+        "board_mode": "chalkboard",
+        "hand_usage": "none",
+        "visual_style": "math_chalkboard",
+        "render_strategy": "trace",
+        "planning_rule": "Alias for Chalkboard Color.",
+        "image_rule": "Alias for Chalkboard Color.",
+    },
+    "technical_reference": {
+        "alias_for": "technical_blueprint",
+        "name": "Technical",
+        "board_mode": "reference",
+        "hand_usage": "annotate",
+        "visual_style": "technical_reference",
+        "render_strategy": "hybrid",
+        "planning_rule": "Alias for Technical.",
+        "image_rule": "Alias for Technical.",
+    },
+    "howto_demo": {
+        "alias_for": "whiteboard",
+        "name": "Whiteboard",
+        "board_mode": "clean_canvas",
+        "hand_usage": "annotate",
+        "visual_style": "marketing_doodle",
+        "render_strategy": "hybrid",
+        "planning_rule": "Alias for Whiteboard.",
+        "image_rule": "Alias for Whiteboard.",
+    },
+}
+ALLOWED_VIDEO_STYLES = set(VIDEO_STYLE_PRESETS)
+PEN_STYLE_PRESETS: dict[str, dict[str, str]] = {
+    "no_hand": {
+        "name": "No Hand",
+        "rule": "Do not show a hand. Reveal content through chalk/line drawing animation or direct staged appearances.",
+    },
+    "pen": {
+        "name": "Pen Style",
+        "rule": "Use a fine-tipped pen-in-hand feeling: precise elegant thin lines, small details and professional sketch movement.",
+    },
+    "fountain_pen": {
+        "name": "Stylus Style",
+        "rule": "Use a modern digital stylus/tablet feeling: smooth controlled strokes, tech-forward clean motion.",
+    },
+    "marker": {
+        "name": "Marker Style",
+        "rule": "Use a bold marker-in-hand feeling: thick confident strokes, whiteboard-session energy and strong callouts.",
+    },
+}
+ALLOWED_PEN_STYLES = set(PEN_STYLE_PRESETS)
+COOKING_TOPIC_TERMS = (
+    "cook",
+    "cooking",
+    "recipe",
+    "food",
+    "dish",
+    "wok",
+    "skillet",
+    "stir-fry",
+    "stir fry",
+    "sauce",
+    "tofu",
+    "mapo",
+    "麻婆",
+    "豆腐",
+    "烹饪",
+    "做法",
+    "食材",
+    "炒",
+    "煸",
+    "爆香",
+    "锅",
+    "菜",
+    "勾芡",
+    "出锅",
+    "装盘",
+)
+COOKING_BLANCH_TERMS = ("blanch", "boiling water", "boil water", "parboil", "焯水", "汆", "煮水", "开水")
+COOKING_PREP_TERMS = ("prep", "prepare", "ingredient", "mise en place", "食材", "准备", "切", "备料")
+COOKING_FINAL_TERMS = ("finish", "serve", "plate", "plating", "finished", "出锅", "装盘", "成品")
+COOKING_OVERVIEW_TERMS = ("overview", "map", "流程图", "步骤流程", "风味地图", "概览", "总览")
+COOKING_DENSE_LAYOUT_TERMS = (
+    "流程图",
+    "步骤流程",
+    "五个",
+    "一排",
+    "多格",
+    "小框",
+    "小锅",
+    "tiny pots",
+    "mini process",
+    "process boxes",
+    "five horizontal",
+    "row of",
+    "flowchart",
+)
 FORBIDDEN_CODE_TOKENS = (
     "from \"./",
     "from './",
@@ -537,7 +793,9 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
     - `board_mode=clean_canvas`：干净浅色画布，适合营销、产品、概念介绍；主体彩色 doodle 可直接出现。
     - `board_mode=reference`：复杂参考图、三维/医学/机械/电路主体；主体直接/混合呈现，手只做局部标注。
     - `hand_usage=trace` 表示手逐笔写画；`annotate` 表示主体已出现，手只标注重点；`none` 表示无手，内容按步骤显现。
-    - `visual_style=teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference`，按教学表达选择，不是模板库。
+    - `video_style=auto|chalkboard_bw|chalkboard_color|modern_minimal|technical_blueprint|editorial|whiteboard|playful|sharpie`，表示 Golpo Canvas 视觉风格；用户已选择风格时，每个 scene 默认继承该值。
+    - `visual_style=teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference|modern_minimal|editorial|playful|sharpie`，表示渲染策略的内部视觉语法，可与 video_style 一起使用。
+    - `pen_style=no_hand|pen|marker|fountain_pen`，表示独立的 Pen-in-hand 动画层；黑板场景通常为 no_hand。
 
 通用视觉语法规则：
 - 不按具体题材标签选画法，而按“这一场要讲清的关系”选 `diagram_plan.kind`。
@@ -554,6 +812,9 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - `summary`：收束时用少量清单、闭环或框架图，不把正文段落塞到画面上。
 
 参考白板样片的通用板书规则：
+- 默认采用 bold editorial hand-drawn explainer 风格：米白纸感/白板面、粗黑蜡笔/马克笔轮廓、珊瑚粉箭头/勾选/爆炸星/下划线、暖黄色大色块或光晕、大人物/大物体/大食物做主视觉。
+- 图形由文生图模型生成时，image_description 必须要求 text-free artwork：不要让图像模型生成标题、段落、中文/英文标签、按钮或水印；所有可读文字和动态标注由渲染端手写叠加。
+- 图文并茂不是信息图堆字：一场只保留一个大图形或最多三个大步骤，文字只做短标题、短标签和少量结论。
 - 一屏只讲一个核心想法；不要把完整报告页、海报页或密集信息图塞进一场。
 - 标题使用短蓝色手写字，位于顶部左侧或顶部居中，可加一条手绘下划线。
 - 主体图放在画面中部或略偏右，占画面宽度约 45%-65%；四周留出大面积空白给手和后续标注。
@@ -562,7 +823,15 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 色彩克制且有含义：黑色主体线，蓝色标题/控制箭头，红色风险/电流/错误，绿色有效路径/正确结果，黄色只做短下划线/局部强调。
 - 复杂主体不要强行拆成几百笔；直接呈现清晰主体，再用 2-4 个老师式 callout 解释。简单主体才逐笔 trace。
 - 场景之间像连续板书推进：上一场讲画完整后立刻进入下一场，不留空白停顿。
-- image_description 必须要求 light grey-white empty whiteboard, black marker line art, sparse handwritten blue labels, large negative space, no poster/card/legend/panel/background wash.
+- image_description 必须要求 bold editorial hand-drawn explainer illustration: thick imperfect black marker/crayon outlines, warm off-white surface, hot pink accent arrows/checks/starbursts, sunny yellow highlight blobs, one large visual anchor or at most three big step groups, generous white space, text-free artwork, no poster/card/legend/panel/background wash.
+
+烹饪/食物教程的额外规则：
+- image_description 必须把食材、器具、颜色和状态写具体，不能只写 generic food / pot / ingredients。
+- 炒、煸、爆香、烧煮、勾芡等中餐锅气步骤，默认画宽口黑色炒锅或平底炒锅；只有明确“焯水/煮水”时才画小锅或汤锅。
+- 菜品颜色必须符合真实成品：红油/酱汁、白色豆腐块、褐色肉末、绿色葱蒜苗、蒸汽和高光都要可见；禁止无色、灰白、空锅或蓝色汤锅替代炒锅。
+- 每个烹饪场景只保留 1-3 个大号短标签，标在图旁或食材附近，避免把长菜谱步骤塞进画面。
+- 画面必须“一场一个大食物/锅具状态”：食材准备、炒香底料、烧豆腐、勾芡、成品各自用一个大主体讲清楚；不要把 5-6 个小锅、小框、小步骤排成密集流程图。
+- 步骤概览最多 3 个大节点，并且要用大图标或大锅具状态，不用小字流程盒；真正的菜谱细节交给旁白和分场景展开。
 
 参考营销白板/彩色 doodle 样片的通用规则：
 - 不是所有图形都要由手逐笔画完；彩色成品 doodle、图标组、产品界面、复杂插图可以直接出现并保持清晰。
@@ -590,7 +859,9 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
       "visual_complexity": "simple|medium|dense|reference",
       "board_mode": "whiteboard|chalkboard|clean_canvas|reference",
       "hand_usage": "trace|annotate|none",
-      "visual_style": "teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference",
+      "video_style": "auto|chalkboard_bw|chalkboard_color|modern_minimal|technical_blueprint|editorial|whiteboard|playful|sharpie",
+      "visual_style": "teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference|modern_minimal|editorial|playful|sharpie",
+      "pen_style": "no_hand|pen|marker|fountain_pen",
       "diagram_plan": {
         "kind": "overview_map|comparison|process|structure|interaction|tradeoff_matrix|goal_path|cycle|cross_section|formula|simulation|reference_callout|summary",
         "layout": "具体画面布局",
@@ -623,9 +894,51 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 }"""
 
 
+def _localize_chinese_terms(text: str) -> str:
+    # Lightweight guardrail for known hard-translation artifacts. The main
+    # localization rule lives in the prompts so new concepts are transcreated,
+    # not merely replaced here.
+    replacements = {
+        "相互依赖": "互相依赖",
+        "互赖": "互相依赖",
+        "同理心倾听": "先理解别人",
+        "协同增效": "统合综效",
+        "削尖锯子": "不断更新",
+    }
+    for source, target in replacements.items():
+        text = text.replace(source, target)
+    return text
+
+
 def _clean_text(value: object) -> str:
     text = "" if value is None else str(value)
-    return re.sub(r"\s+", " ", text).strip()
+    return _localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
+
+
+def _normalize_video_style(value: str | None) -> str:
+    style = _clean_text(value).lower()
+    return style if style in ALLOWED_VIDEO_STYLES else "auto"
+
+
+def _video_style_preset(value: str | None) -> dict[str, str]:
+    preset = VIDEO_STYLE_PRESETS[_normalize_video_style(value)]
+    alias = preset.get("alias_for")
+    return VIDEO_STYLE_PRESETS[alias] if alias else preset
+
+
+def _canonical_video_style(value: str | None) -> str:
+    style = _normalize_video_style(value)
+    preset = VIDEO_STYLE_PRESETS[style]
+    return preset.get("alias_for") or style
+
+
+def _normalize_pen_style(value: str | None) -> str:
+    style = _clean_text(value).lower()
+    return style if style in ALLOWED_PEN_STYLES else "marker"
+
+
+def _pen_style_preset(value: str | None) -> dict[str, str]:
+    return PEN_STYLE_PRESETS[_normalize_pen_style(value)]
 
 
 def _clean_narration_text(value: object) -> str:
@@ -690,6 +1003,19 @@ def _planner_str_list(value: object, limit: int | None = None) -> list[str]:
         items = []
     items = [item for item in items if item]
     return items[:limit] if limit else items
+
+
+def _looks_like_mojibake(value: object) -> bool:
+    text = _clean_text(value)
+    if not text:
+        return False
+    suspicious = len(re.findall(r"[锟�\ue000-\uf8ff]", text))
+    cjk = len(re.findall(r"[\u3400-\u9fff]", text))
+    if suspicious >= 2:
+        return True
+    if "?" in text and cjk == 0 and len(text) <= 6:
+        return True
+    return False
 
 
 def _parse_diagram_plan(value: object) -> DiagramPlan | None:
@@ -802,6 +1128,8 @@ def _scene_floor_duration(scene: Scene, target_scene_seconds: float | None = Non
     narration_floor = _estimate_narration_seconds(scene.narration) + 2.0
     required = max(10.0, narration_floor, beat_floor + 1.0, animation_floor + 1.0)
     cap = 32.0 if target_scene_seconds is None else max(12.0, target_scene_seconds * 1.18)
+    if _is_cooking_topic_text(_scene_corpus(scene)):
+        cap = min(cap, 24.0 if target_scene_seconds is None else max(14.0, target_scene_seconds * 1.05))
     return round(min(cap, required), 1)
 
 
@@ -1050,6 +1378,10 @@ def _desired_scene_count(graph: ExplainGraph, target_duration: int) -> int:
         if target_duration <= 150:
             return 5
         return min(scene_cap, max(6, min(8, outline_count or 6)))
+    if _is_cooking_topic_text(topic_blob):
+        if target_duration <= 80:
+            return 4
+        return min(scene_cap, max(4, min(5, outline_count or 5)))
     if any(term in topic_blob for term in ["gradient", "descent", "梯度下降", "学习率", "损失"]):
         return min(scene_cap, max(4, min(6, outline_count or 4)))
     if coverage_count >= 7:
@@ -1072,6 +1404,10 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
 
     graph = req.graph
     brief_data = _graph_enhanced_brief(graph)
+    video_style = _canonical_video_style(req.video_style)
+    video_style_preset = _video_style_preset(video_style)
+    pen_style = _normalize_pen_style(req.pen_style)
+    pen_style_preset = _pen_style_preset(pen_style)
     desired_scene_count = _desired_scene_count(graph, req.target_duration)
     nodes_desc = "\n".join(
         f"- [{n.node_type.value}] {n.label}（teach_order={n.teach_order}）: {n.description}"
@@ -1107,6 +1443,21 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
             "summary": graph.summary,
             "target_duration_seconds": req.target_duration,
             "desired_scene_count": desired_scene_count,
+            "selected_video_style": {
+                "id": video_style,
+                "name": video_style_preset["name"],
+                "default_board_mode": video_style_preset["board_mode"] or None,
+                "default_hand_usage": video_style_preset["hand_usage"] or None,
+                "default_visual_style": video_style_preset["visual_style"] or None,
+                "default_render_strategy": video_style_preset["render_strategy"] or None,
+                "planning_rule": video_style_preset["planning_rule"],
+                "image_rule": video_style_preset["image_rule"],
+            },
+            "selected_pen_style": {
+                "id": pen_style,
+                "name": pen_style_preset["name"],
+                "animation_rule": pen_style_preset["rule"],
+            },
             "enhanced_teaching_brief": brief_data,
             "concept_nodes": [
                 {
@@ -1123,11 +1474,19 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
             "key_insights": graph.key_insights,
             "requirements": [
                 "Generate concrete scenes, not generic slide bullets.",
+                "Use natural Chinese for all scene titles, narration, diagram labels, and visual beats. When source concepts are English, transcreate them into Chinese expressions a real teacher would say; keep English only for fixed technical terms, acronyms, formulas, or search names, optionally in parentheses.",
+                "Avoid dictionary-like hard translations and awkward coined shorthand. Prefer clear Chinese phrases over literal word-by-word translations; e.g. dependence/independence/interdependence can become '依赖 → 独立 → 互相依赖/成熟协作/协作共赢' depending on context, rather than a stiff literal label.",
+                "Use the reference-whiteboard grammar: each scene needs one primary visual anchor, such as an object, metaphor, diagram, route, scale, funnel, matrix, clock, warning sign, tool, person/group, chart, or system stack.",
+                "Every scene must specify diagram_plan.layout as a staged board composition: title/anchor first, main object or diagram second, arrows/callouts third, and one short takeaway last.",
+                "Use the default visual preset for image_description: bold editorial hand-drawn explainer illustration with thick imperfect black crayon/marker outlines, warm off-white surface, coral-pink arrows/checks/starbursts/underlines, sunny yellow highlight blobs behind the main subject, one large visual anchor or at most three large step groups, generous blank space, and text-free artwork because readable text will be added by the renderer.",
+                "Do not create any scene that is only a title plus bullet list, checklist, checkmarks, or text boxes. A checklist may appear only as a tiny supporting note beside a larger visual object.",
+                "For abstract topics, translate the idea into a concrete visual metaphor before choosing labels: balance scale for tradeoffs, route map for goals, funnel for filtering, loop for feedback, gear/tool for mechanism, clock for timing, warning triangle for risk, clipboard for procedure, people for responsibility, chart for evidence.",
+                "Each diagram_plan.required_labels list should name the short labels attached near the visual anchor, not paragraph fragments. Prefer 3-5 labels that map to visible parts of the drawing.",
                 "Each scene must include learning_goal, diagram_plan, visual_beats, narration, image_description and animations.",
                 "Every visual_beat must pair draw_intent with narration so voiceover follows drawing.",
                 "Cover every high-priority teaching_coverage_units item from enhanced_teaching_brief in the actual scene text, labels, beats or narration. Do not merely leave it in the brief.",
                 "Respect desired_scene_count. If coverage units are more numerous than scenes, group related units into one scene with multiple visual_beats instead of adding duplicate scenes.",
-                "For multi-part topics, include an overview map, grouped explanation scenes, then a final checklist/loop summary.",
+                "For multi-part topics, include an overview map, grouped explanation scenes, then a final visual synthesis such as a loop, roadmap, hub-and-spoke map, or evidence chart. Avoid final checklist-only scenes.",
                 "Use comparison/process/structure/cross-section diagrams and arrows whenever possible.",
                 "Borrow strong science-video teaching techniques: start with a hook or historical/context clue when useful, expand acronyms visually, use picture-in-picture reference diagrams, and introduce one concrete real-world analogy that maps to the mechanism.",
                 "For abstract mechanisms, show the analogy and the technical diagram side by side, then transfer arrows/labels from the analogy to the device/process.",
@@ -1137,7 +1496,13 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "Treat target_duration_seconds as a pacing hint, not a hard cap. Never drop required concepts or compress narration so much that drawing and voiceover become incomplete.",
                 "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
                 "Underline, circle, or box important concepts like V_G > V_th, electron channel, short-channel effect, FinFET, W_eff, learning rate, and gradient.",
-                "For each scene choose board_mode, hand_usage and visual_style from the brief strategy. Use chalkboard/no hand for math derivations, clean_canvas/annotate for marketing doodles, reference/annotate for complex finished diagrams, and whiteboard/trace for simple teacher boardwork.",
+                "For each scene choose board_mode, hand_usage, video_style and visual_style from the brief strategy. Use chalkboard/no hand for chalkboard styles, clean_canvas/annotate for editorial/whiteboard/playful styles, reference/annotate for technical blueprint or complex finished diagrams, and trace only when the drawing is simple enough to follow by hand.",
+                "Honor selected_video_style unless it would make the explanation unclear or factually wrong. If selected_video_style.id is not auto, use its default board_mode, hand_usage, visual_style and render_strategy as the baseline for most scenes; only override individual math derivation or complex reference scenes when that clearly improves understanding.",
+                "Put selected_video_style.id on each scene as video_style, unless selected_video_style.id is auto. Keep video_style as one of the eight Golpo canvas styles, not the old internal visual_style names.",
+                "Reflect selected_video_style.image_rule inside each image_description. The image_description must be specific enough for an image generation model, including style, objects, colors, composition, blank margins, and text-free artwork.",
+                "Honor selected_pen_style as a separate animation layer. It can combine with any visual style: pen=fine precise hand, fountain_pen=stylus/tablet feeling, marker=bold marker hand, no_hand=hide hand and use staged reveal. Put the chosen pen_style on each scene unless the scene must hide the hand.",
+                "For cooking or food how-to topics, make image_description concrete and appetizing: name the cookware, ingredients, sauce color, steam, garnish, and finished state. For Chinese stir-fry/simmer steps prefer a wide black wok or skillet; use a blue soup pot only for explicit blanching or boiling-water scenes. Map colors to real food, e.g. red chili oil/sauce, white tofu cubes, brown minced meat, green garlic sprouts or scallions.",
+                "For cooking or food how-to scenes, use one large food/cookware state per scene. Avoid dense step-flow diagrams with many tiny pots, boxes, or captions. If an overview is needed, use at most three large illustrated nodes; leave recipe details to narration and later scenes.",
             ],
         },
         ensure_ascii=False,
@@ -1198,7 +1563,9 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 visual_complexity=_clean_text(s.get("visual_complexity") or ""),
                 board_mode=_clean_text(s.get("board_mode") or ""),
                 hand_usage=_clean_text(s.get("hand_usage") or ""),
+                video_style=_clean_text(s.get("video_style") or s.get("videoStyle") or ""),
                 visual_style=_clean_text(s.get("visual_style") or ""),
+                pen_style=_clean_text(s.get("pen_style") or s.get("penStyle") or ""),
             )
         )
 
@@ -1206,12 +1573,15 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         topic=graph.topic,
         total_duration_estimate=total_duration,
         scenes=scenes,
+        video_style=video_style,
+        pen_style=pen_style,
     )
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
+    storyboard = _sanitize_storyboard_narration(storyboard)
 
     logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)
     return storyboard
@@ -1271,6 +1641,105 @@ def _storyboard_scene_corpus(storyboard: Storyboard) -> str:
 
 def _contains_terms(corpus: str, terms: list[str]) -> bool:
     return any(term.lower() in corpus for term in terms)
+
+
+def _apply_video_style_to_scene(scene: Scene, video_style: str) -> None:
+    style = _canonical_video_style(video_style)
+    if style == "auto":
+        return
+    preset = _video_style_preset(style)
+    scene.video_style = style
+    scene_corpus = _scene_corpus(scene)
+    is_math_scene = _contains_terms(
+        scene_corpus,
+        [
+            "数学",
+            "解题",
+            "证明",
+            "公式推导",
+            "derivation",
+            "proof",
+            "equation",
+            "formula",
+            "plane normal",
+            "perpendicular",
+            "parametric",
+            "iit",
+            "gradient descent",
+            "梯度下降",
+            "loss function",
+            "损失函数",
+            "learning rate",
+            "学习率",
+        ],
+    )
+    is_reference_scene = _contains_terms(
+        scene_corpus,
+        [
+            "reference",
+            "cross-section",
+            "cross section",
+            "3d",
+            "三维",
+            "截面",
+            "剖面",
+            "电路",
+            "医学",
+            "机械",
+            "多层",
+            "interface",
+            "ui",
+        ],
+    )
+
+    if style in {"chalkboard_bw", "chalkboard_color"}:
+        scene.board_mode = "chalkboard"
+        scene.hand_usage = "none"
+        scene.visual_style = "math_chalkboard"
+        scene.render_strategy = "trace"
+    elif style == "technical_blueprint":
+        scene.board_mode = "reference"
+        scene.hand_usage = "annotate"
+        scene.visual_style = "technical_reference"
+        scene.render_strategy = "hybrid"
+    elif style == "whiteboard":
+        if is_math_scene:
+            scene.board_mode = "whiteboard"
+            scene.hand_usage = "trace"
+            scene.visual_style = "teacher_whiteboard"
+            scene.render_strategy = scene.render_strategy or "trace"
+        elif is_reference_scene and (scene.visual_complexity or "").lower() in {"dense", "reference"}:
+            scene.board_mode = "reference"
+            scene.hand_usage = "annotate"
+            scene.visual_style = "technical_reference"
+            scene.render_strategy = "hybrid"
+        else:
+            scene.board_mode = "clean_canvas"
+            scene.hand_usage = "annotate"
+            scene.visual_style = "marketing_doodle"
+            scene.render_strategy = "hybrid" if scene.render_strategy == "trace" else scene.render_strategy or "hybrid"
+    elif style in {"modern_minimal", "editorial", "playful", "sharpie"}:
+        scene.board_mode = "clean_canvas"
+        scene.hand_usage = "annotate" if style != "sharpie" else "trace"
+        scene.visual_style = style
+        scene.render_strategy = "hybrid" if style != "sharpie" else scene.render_strategy or "trace"
+
+    image_rule = preset["image_rule"]
+    if scene.image_description and image_rule not in scene.image_description:
+        scene.image_description = f"{scene.image_description}. {image_rule}".strip(". ")
+
+
+def _apply_pen_style_to_scene(scene: Scene, pen_style: str) -> None:
+    style = _normalize_pen_style(pen_style)
+    scene.pen_style = style
+    if style == "no_hand" or scene.board_mode == "chalkboard" or scene.visual_style == "math_chalkboard":
+        scene.hand_usage = "none"
+        scene.pen_style = "no_hand"
+        return
+    if not scene.hand_usage or scene.hand_usage == "none":
+        scene.hand_usage = "annotate"
+    if style == "marker" and scene.hand_usage == "trace" and scene.video_style not in {"sharpie"}:
+        scene.hand_usage = "annotate"
 
 
 def _contains_semiconductor_topic(corpus: str) -> bool:
@@ -1534,9 +2003,9 @@ def _coverage_scene_spec(unit: dict, index: int, topic: str) -> dict:
             },
         ],
         "image_description": (
-            "light grey-white empty whiteboard, black marker line art, sparse blue handwritten title, "
+            "clean light grey-white whiteboard, rich colorful educational doodle illustration, strong readable marker outlines, short blue handwritten title, "
             f"{layout}, topic {topic}, labels {', '.join(must_show[:6])}, yellow underline for the key term, "
-            "large negative space, no poster, no card, no legend box, no colored background"
+            "3-6 meaningful visual parts, purposeful semantic color accents, generous white space, no poster, no card, no legend box, no colored background"
         ),
         "duration_estimate": 30,
     }
@@ -1589,7 +2058,7 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": f"light grey-white empty whiteboard, playful hand-drawn map for {topic}: central messy knot labeled 问题, compass icon, 4 route signs for 全局/结构/取舍/目标, red warning mark, green route arrow, no poster no card no paper panel",
+            "image_description": f"clean light grey-white whiteboard, rich colorful playful hand-drawn map for {topic}: central messy knot labeled 问题, compass icon, 4 route signs for 全局/结构/取舍/目标, red warning mark, green route arrow, blue route lines, yellow emphasis marks, generous white space, no poster no card no paper panel",
             "duration_estimate": 24,
         },
         {
@@ -1615,7 +2084,7 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "sparse teacher whiteboard playful structure diagram, big tangled ball split into 3 gears/blocks, magnifying glass callout, tiny question mark marks, arrows and nearby labels, no poster layout no paper panel",
+            "image_description": "clean teacher whiteboard colorful playful structure diagram, big tangled ball split into 3 gears/blocks, magnifying glass callout, tiny question mark marks, blue/red/green arrows and nearby short labels, generous white space, no poster layout no paper panel",
             "duration_estimate": 24,
         },
         {
@@ -1693,7 +2162,7 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "whiteboard goal path as a winding road, current point as small confused dot, milestones as flags, target as star, backcasting arrow, tiny taxi/navigation icon, sparse labels no card",
+            "image_description": "clean whiteboard colorful goal path as a winding road, current point as small confused dot, milestones as colored flags, target as star, backcasting arrow, tiny taxi/navigation icon, short nearby labels, generous white space, no card",
             "duration_estimate": 24,
         },
         {
@@ -1739,7 +2208,7 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
                     "duration_estimate": 9,
                 }
             ],
-            "image_description": "sparse teacher whiteboard summary checklist with green ticks and a small loop arrow, no long paragraphs",
+            "image_description": "clean teacher whiteboard colorful summary map with green ticks, a small loop arrow, 3-5 tiny visual anchors, yellow emphasis underline, short labels only, no long paragraphs",
             "duration_estimate": 20,
         },
     ]
@@ -2076,6 +2545,8 @@ def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard
         topic=storyboard.topic,
         total_duration_estimate=round(sum(scene.duration_estimate for scene in scenes), 1),
         scenes=scenes,
+        video_style=storyboard.video_style,
+        pen_style=storyboard.pen_style,
     )
 
 
@@ -2119,6 +2590,10 @@ def _sanitize_storyboard_narration(storyboard: Storyboard) -> Storyboard:
 def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, target_duration: int) -> Storyboard:
     corpus = _storyboard_corpus(storyboard, graph)
     source_corpus = _graph_source_corpus(graph)
+    video_style = _canonical_video_style(storyboard.video_style)
+    storyboard.video_style = video_style
+    pen_style = _normalize_pen_style(storyboard.pen_style)
+    is_cooking_topic = _is_cooking_topic_text(f"{corpus} {source_corpus}")
     gradient = _contains_terms(source_corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
     brief = _graph_enhanced_brief(graph) or {}
     default_board_mode = _clean_text(brief.get("recommended_board_mode") if isinstance(brief, dict) else "") or "whiteboard"
@@ -2140,13 +2615,16 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         ]
         coverage = sum(1 for group in coverage_groups if _contains_terms(corpus, group))
         if len(storyboard.scenes) < 3 or coverage < 4:
-            return _replace_with_specs(storyboard, _gradient_story_specs())
+            storyboard = _replace_with_specs(storyboard, _gradient_story_specs())
+            corpus = _storyboard_corpus(storyboard, graph)
 
     if _contains_semiconductor_topic(corpus):
         storyboard = _replace_with_specs(storyboard, _generic_relation_story_specs(graph, target_duration))
 
     if not is_problem_framework:
         storyboard = _append_missing_coverage_scenes(storyboard, graph, target_duration)
+    if is_cooking_topic:
+        storyboard = _apply_mapo_cooking_defaults(storyboard, target_duration)
 
     for scene in storyboard.scenes:
         if not scene.visual_beats:
@@ -2169,29 +2647,63 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
             scene.board_mode = default_board_mode
         if not scene.hand_usage:
             scene.hand_usage = default_hand_usage
+        if not scene.video_style and video_style != "auto":
+            scene.video_style = video_style
         if not scene.visual_style:
             scene.visual_style = default_visual_style
+        scene.title = _clean_text(scene.title)
+        scene.learning_goal = _clean_text(scene.learning_goal)
+        scene.image_description = _clean_text(scene.image_description)
+        if scene.diagram_plan:
+            scene.diagram_plan.kind = _clean_text(scene.diagram_plan.kind)
+            scene.diagram_plan.layout = _clean_text(scene.diagram_plan.layout)
+            scene.diagram_plan.required_labels = [_clean_text(label) for label in scene.diagram_plan.required_labels if _clean_text(label)]
+        for beat in scene.visual_beats:
+            beat.draw_intent = _clean_text(beat.draw_intent)
+            beat.required_labels = [_clean_text(label) for label in beat.required_labels if _clean_text(label)]
+        for animation in scene.animations:
+            animation.content = _clean_text(animation.content)
+            if animation.items:
+                animation.items = [_clean_text(item) for item in animation.items if _clean_text(item)]
         scene_corpus = _scene_corpus(scene)
-        is_math_board = default_visual_style == "math_chalkboard" or _contains_terms(
+        cooking_suffix = _cooking_prompt_suffix(scene_corpus)
+        if cooking_suffix and cooking_suffix not in (scene.image_description or ""):
+            scene.image_description = f"{scene.image_description}. {cooking_suffix}".strip(". ")
+        is_math_board = (
+            video_style in {"auto", "chalkboard_bw", "chalkboard_color"}
+            and default_visual_style == "math_chalkboard"
+        ) or _contains_terms(
             scene_corpus,
-            ["数学", "解题", "证明", "公式推导", "plane normal", "perpendicular", "parametric", "iit"],
+            ["数学解题", "数学证明", "公式推导", "plane normal", "perpendicular", "parametric", "iit"],
         )
         if is_math_board:
             scene.board_mode = "chalkboard"
             scene.hand_usage = "none"
             scene.visual_style = "math_chalkboard"
+        _apply_video_style_to_scene(scene, video_style)
         if scene.board_mode == "chalkboard" or scene.visual_style == "math_chalkboard":
             scene.hand_usage = "none"
             scene.render_strategy = scene.render_strategy or "trace"
             scene.visual_complexity = scene.visual_complexity or "medium"
         if scene.hand_usage == "annotate" and not scene.render_strategy:
             scene.render_strategy = "hybrid"
+        _apply_pen_style_to_scene(scene, pen_style)
+        if scene.board_mode == "chalkboard" or scene.visual_style == "math_chalkboard":
+            scene.hand_usage = "none"
+            scene.pen_style = "no_hand"
+            scene.render_strategy = scene.render_strategy or "trace"
         scene.duration_estimate = _estimate_scene_duration(
             scene.duration_estimate,
             scene.narration,
             scene.visual_beats,
             scene.animations,
         )
+        if is_cooking_topic:
+            scene.duration_estimate = min(scene.duration_estimate, 24.0 if len(storyboard.scenes) >= 5 else 28.0)
+            for beat in scene.visual_beats:
+                beat.duration_estimate = min(beat.duration_estimate, 6.0)
+            for animation in scene.animations:
+                animation.duration = min(animation.duration, 6.0)
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return _sanitize_storyboard_narration(storyboard)
 
@@ -2499,6 +3011,240 @@ def _contains_any(corpus: str, terms: list[str]) -> bool:
     return any(term.lower() in corpus for term in terms)
 
 
+def _is_cooking_topic_text(corpus: str) -> bool:
+    return _contains_any(corpus, list(COOKING_TOPIC_TERMS))
+
+
+def _cooking_prompt_suffix(corpus: str) -> str:
+    if not _is_cooking_topic_text(corpus):
+        return ""
+    parts = [
+        BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT,
+        "Food/cooking accuracy: make the visual concrete and appetizing, not generic. Show correct cookware, ingredients, sauce color, steam, garnish, and real cooking state.",
+        "Use real food colors: red/orange chili oil or sauce, white tofu cubes, brown minced meat, green scallions or garlic sprouts, warm highlights.",
+        "Use one large food or cookware state as the primary visual anchor; avoid dense rows of many tiny pots, mini process boxes, or small unreadable recipe captions.",
+        "Text policy: keep generated artwork text-free; the video renderer will add Chinese title, labels, ticks, underlines, and callouts.",
+    ]
+    if "mapo" in corpus or "麻婆" in corpus or "豆瓣" in corpus:
+        parts.append(
+            "For mapo tofu, always show recognizable Sichuan mapo tofu: white tofu cubes in glossy red chili-bean sauce, brown minced meat, green garlic sprouts/scallions, Sichuan pepper speckles, and red oil."
+        )
+    is_prep = _contains_any(corpus, list(COOKING_PREP_TERMS))
+    is_final = _contains_any(corpus, list(COOKING_FINAL_TERMS))
+    is_blanch = _contains_any(corpus, list(COOKING_BLANCH_TERMS))
+    if is_final:
+        parts.append("Finished scene: show a shallow white plate or bowl filled with the colorful finished dish.")
+    elif is_prep:
+        parts.append("Preparation scene: show cutting board and small ingredient bowls; do not use an empty pot as the main object.")
+    elif _contains_any(corpus, list(COOKING_OVERVIEW_TERMS)):
+        parts.append("Overview scene: show at most three large illustrated cooking states, or one finished dish with 3-5 flavor callouts; do not use a five-step row of tiny pots.")
+    elif is_blanch:
+        parts.append("Blanching scene: a pot of boiling clear water is acceptable only here, with tofu cubes and steam.")
+    else:
+        parts.append("Stir-fry/simmer/thickening scene: use a wide black Chinese wok or skillet on a burner, not a blue soup pot or empty stockpot.")
+    return " ".join(parts)
+
+
+def _is_dense_cooking_scene(scene: Scene) -> bool:
+    corpus = _scene_corpus(scene)
+    if not _is_cooking_topic_text(corpus):
+        return False
+    label_count = len(scene.diagram_plan.required_labels) if scene.diagram_plan else 0
+    beat_count = len(scene.visual_beats or [])
+    animation_item_count = sum(len(animation.items or []) for animation in scene.animations)
+    dense_terms = _contains_any(corpus, list(COOKING_DENSE_LAYOUT_TERMS))
+    too_many_labels = label_count >= 7 or animation_item_count >= 8
+    too_many_beats = beat_count >= 5
+    return dense_terms or too_many_labels or too_many_beats
+
+
+def _mapo_cooking_story_specs(target_duration: int) -> list[dict]:
+    duration = 18 if target_duration <= 95 else 20
+    return [
+        {
+            "title": "风味先看懂",
+            "learning_goal": "让观众先建立麻婆豆腐的好吃标准：红油亮、豆腐嫩、麻辣香。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "medium",
+            "board_mode": "clean_canvas",
+            "hand_usage": "annotate",
+            "visual_style": "marketing_doodle",
+            "diagram_plan": {
+                "kind": "overview_map",
+                "layout": "一盘大号麻婆豆腐作为主视觉，周围只加 3 个大号侧边短标注和粉色强调箭头。",
+                "required_labels": ["红油亮", "豆腐嫩", "麻辣香"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "直接呈现一盘大号麻婆豆腐，红油、白豆腐、肉末、葱绿和蒸汽都清楚。",
+                    "narration": "好吃的麻婆豆腐，第一眼就该有红油的亮、豆腐的嫩，还有花椒和豆瓣酱顶上来的香。",
+                    "required_labels": ["红油亮"],
+                    "duration_estimate": 6,
+                },
+                {
+                    "draw_intent": "在盘子边缘加粉色箭头和大字标注豆腐嫩、麻辣香。",
+                    "narration": "这道菜不是把豆腐煮红就结束，关键是让豆腐完整吸味，汤汁还能稳稳挂住。",
+                    "required_labels": ["豆腐嫩", "麻辣香"],
+                    "duration_estimate": 6,
+                },
+            ],
+            "image_description": (
+                "large appetizing Sichuan mapo tofu in a shallow white bowl as the main subject, glossy red chili oil sauce, "
+                "clear white tofu cubes, brown minced meat, green garlic sprouts or scallions, Sichuan pepper speckles, rising steam, "
+                "bold editorial hand-drawn explainer style, thick imperfect black crayon marker outlines, warm off-white surface, "
+                "sunny yellow halo behind the bowl, coral pink accent arrows around it, generous blank margins, text-free artwork"
+            ),
+            "duration_estimate": duration,
+        },
+        {
+            "title": "备料要分工",
+            "learning_goal": "让观众知道关键食材各自负责什么，不把食材画成泛泛一堆。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "medium",
+            "board_mode": "clean_canvas",
+            "hand_usage": "annotate",
+            "visual_style": "marketing_doodle",
+            "diagram_plan": {
+                "kind": "structure",
+                "layout": "大切板和几个大碗占主体，豆腐、肉末、豆瓣酱、花椒、蒜苗、水淀粉清楚分组。",
+                "required_labels": ["豆腐", "豆瓣酱", "水淀粉"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "呈现大切板、豆腐块和几只大食材碗，颜色和形状要容易认出。",
+                    "narration": "备料像给乐队分声部：豆腐负责口感，肉末和豆瓣酱负责底味，花椒和蒜苗负责最后的香气。",
+                    "required_labels": ["豆腐", "豆瓣酱"],
+                    "duration_estimate": 6,
+                },
+                {
+                    "draw_intent": "用粉色勾选和短箭头强调水淀粉这一小碗。",
+                    "narration": "水淀粉看着不起眼，但后面能不能挂汁、能不能亮起来，很大程度就靠它收尾。",
+                    "required_labels": ["水淀粉"],
+                    "duration_estimate": 6,
+                },
+            ],
+            "image_description": (
+                "large kitchen prep scene with cutting board and big ingredient bowls: neat white tofu cubes, minced meat, red doubanjiang chili bean paste, "
+                "Sichuan pepper, chopped garlic sprouts or scallions, small bowl of starch slurry, bold editorial hand-drawn explainer style, "
+                "thick black crayon outlines, warm off-white surface, coral pink check marks and arrows, sunny yellow highlight blob, text-free artwork, no tiny labels"
+            ),
+            "duration_estimate": duration,
+        },
+        {
+            "title": "红油先炒香",
+            "learning_goal": "让观众理解炒肉末和豆瓣酱出红油，是颜色和底香的来源。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "medium",
+            "board_mode": "clean_canvas",
+            "hand_usage": "annotate",
+            "visual_style": "marketing_doodle",
+            "diagram_plan": {
+                "kind": "process",
+                "layout": "一个大号黑色炒锅占主体，锅里肉末、豆瓣酱和红油正在被小火炒香。",
+                "required_labels": ["小火", "炒出红油", "底香"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "呈现一个大号黑色炒锅，锅里有红豆瓣酱、肉末和红油，不用小锅流程图。",
+                    "narration": "先小火把肉末和豆瓣酱炒香，红油出来以后，这道菜的颜色和底香才真正站住。",
+                    "required_labels": ["小火", "炒出红油"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "在锅边加粉色短箭头和黄色下划线，强调底香。",
+                    "narration": "这一步急不得，火太猛容易糊，火太轻又出不来香味，像把音量拧到刚刚好。",
+                    "required_labels": ["底香"],
+                    "duration_estimate": 6,
+                },
+            ],
+            "image_description": (
+                "one large wide black Chinese wok on a burner, minced meat and red doubanjiang frying in glossy red chili oil, steam and aroma lines, "
+                "bold editorial hand-drawn explainer style, thick imperfect black marker outlines, coral pink motion arrows, sunny yellow highlight behind the wok, "
+                "warm off-white surface, text-free artwork, no blue soup pot, no tiny process boxes"
+            ),
+            "duration_estimate": duration,
+        },
+        {
+            "title": "豆腐烧入味",
+            "learning_goal": "让观众掌握豆腐下锅后的状态：轻推、慢烧、让汤汁进入豆腐。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "medium",
+            "board_mode": "clean_canvas",
+            "hand_usage": "annotate",
+            "visual_style": "marketing_doodle",
+            "diagram_plan": {
+                "kind": "process",
+                "layout": "一个大号炒锅里豆腐块在红色汤汁中慢烧，旁边只写轻推和烧透两个短标签。",
+                "required_labels": ["轻推", "烧透", "吸味"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "呈现大炒锅里的白豆腐块、红汤汁、肉末和蒸汽，豆腐块要完整。",
+                    "narration": "豆腐下锅以后别粗暴翻炒，轻轻推着走，让它在红汤里慢慢吸味。",
+                    "required_labels": ["轻推", "吸味"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "用粉色弧形箭头表现轻推，用黄色短线强调烧透。",
+                    "narration": "烧透不是把豆腐煮散，而是让每一块外面有汁、里面也有味。",
+                    "required_labels": ["烧透"],
+                    "duration_estimate": 6,
+                },
+            ],
+            "image_description": (
+                "large wide black wok with white tofu cubes simmering in red chili-bean sauce, brown minced meat, steam, gentle curved stirring motion, "
+                "bold editorial hand-drawn explainer style, thick black crayon outlines, coral pink curved arrows, sunny yellow glow, warm off-white surface, "
+                "text-free artwork, no stockpot, no empty cookware"
+            ),
+            "duration_estimate": duration,
+        },
+        {
+            "title": "勾芡才挂汁",
+            "learning_goal": "让观众理解水淀粉让汤汁包住豆腐，形成亮、浓、挂汁的口感。",
+            "render_strategy": "hybrid",
+            "visual_complexity": "medium",
+            "board_mode": "clean_canvas",
+            "hand_usage": "annotate",
+            "visual_style": "marketing_doodle",
+            "diagram_plan": {
+                "kind": "comparison",
+                "layout": "一个大号近景：红亮汤汁包住豆腐块，旁边用粉色勾和短箭头强调挂汁。",
+                "required_labels": ["两次勾芡", "挂汁", "亮起来"],
+            },
+            "visual_beats": [
+                {
+                    "draw_intent": "呈现近景豆腐块被红亮酱汁包住，水淀粉从小碗倒入锅中。",
+                    "narration": "勾芡像给豆腐披一层薄薄的外衣，让汤汁不再各走各的，而是贴住豆腐。",
+                    "required_labels": ["挂汁"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "补粉色勾选和黄色下划线，强调两次勾芡和亮起来。",
+                    "narration": "分两次加水淀粉更稳，第一次让汤变稠，第二次让芡汁更均匀、更亮。",
+                    "required_labels": ["两次勾芡", "亮起来"],
+                    "duration_estimate": 7,
+                },
+            ],
+            "image_description": (
+                "close-up of mapo tofu in a wide wok, glossy red sauce coating white tofu cubes, small bowl pouring starch slurry, sauce looks shiny and thick, "
+                "brown minced meat and green scallions, bold editorial hand-drawn explainer style, thick black marker outlines, coral pink check marks, sunny yellow highlight, "
+                "warm off-white surface, text-free artwork, no dense diagram"
+            ),
+            "duration_estimate": duration,
+        },
+    ]
+
+
+def _apply_mapo_cooking_defaults(storyboard: Storyboard, target_duration: int) -> Storyboard:
+    corpus = _storyboard_scene_corpus(storyboard)
+    if not _is_cooking_topic_text(corpus) or not _contains_any(corpus, ["麻婆", "mapo", "豆瓣", "豆腐"]):
+        return storyboard
+    # Mapo tofu is our regression case for rich food how-to videos. Use the
+    # curated large-subject storyboard by default so the image model creates
+    # appetizing artwork, while readable Chinese text remains renderer-controlled.
+    return _replace_with_specs(storyboard, _mapo_cooking_story_specs(target_duration))
+
+
 def _visual_relation_kind_for_scene(scene: Scene) -> str | None:
     corpus = _scene_corpus(scene)
     explicit_kind = _clean_text(scene.diagram_plan.kind if scene.diagram_plan else "").lower().replace("-", "_")
@@ -2650,6 +3396,8 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
         return "feedback_loop"
     if has_formula:
         return "formula_derivation"
+    if _contains_any(corpus, ["checklist", "summary", "recap", "conclusion", "娓呭崟", "鎬荤粨"]):
+        return "teaching_board"
     if _contains_any(
         corpus,
         [
@@ -2665,7 +3413,7 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
             "总结",
         ],
     ):
-        return "teaching_board"
+        return "overview_map"
     if "step_reveal" in types or _contains_any(corpus, ["process", "pipeline", "workflow", "过程", "步骤", "流程", "原理"]):
         return "process_flow"
     if _contains_any(corpus, ["compare", "versus", " vs ", "change", "transform", "before", "after", "对比", "比较", "变化", "变换", "转换"]):
@@ -2783,14 +3531,31 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     duration = max(fps * 8, round(scene.duration_estimate * fps), timing_duration)
     board_mode = (_clean_text(_scene_extra(scene, "board_mode") or _scene_extra(scene, "boardMode")) or "whiteboard").lower()
     hand_usage = (_clean_text(_scene_extra(scene, "hand_usage") or _scene_extra(scene, "handUsage")) or "trace").lower()
+    video_style = _canonical_video_style(
+        _scene_extra(scene, "video_style") or _scene_extra(scene, "videoStyle") or _scene_extra(scene, "visual_style")
+    )
     visual_style = (_clean_text(_scene_extra(scene, "visual_style") or _scene_extra(scene, "visualStyle")) or "teacher_whiteboard").lower()
+    allowed_visual_styles = {
+        "teacher_whiteboard",
+        "marketing_doodle",
+        "math_chalkboard",
+        "technical_reference",
+        "modern_minimal",
+        "editorial",
+        "playful",
+        "sharpie",
+    }
     if board_mode not in {"whiteboard", "chalkboard", "clean_canvas", "reference"}:
         board_mode = "whiteboard"
     if hand_usage not in {"trace", "annotate", "none"}:
         hand_usage = "trace"
-    if visual_style not in {"teacher_whiteboard", "marketing_doodle", "math_chalkboard", "technical_reference"}:
+    if visual_style not in allowed_visual_styles:
         visual_style = "teacher_whiteboard"
     if board_mode == "chalkboard" or visual_style == "math_chalkboard":
+        board_mode = "chalkboard"
+        hand_usage = "none"
+        visual_style = "math_chalkboard"
+    if video_style in {"chalkboard_bw", "chalkboard_color"}:
         board_mode = "chalkboard"
         hand_usage = "none"
         visual_style = "math_chalkboard"
@@ -2801,15 +3566,35 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     board_center_x = width * 0.50
     board_draw_w = width * 0.64
     board_draw_h = height * 0.56
-    accent_colors = ["#F7D77E", "#A8D8F0", "#F4A7A1", "#BFE3C0", "#D7C5F7"]
+    accent_palette_by_style = {
+        "chalkboard_bw": ["#F4F2E8"],
+        "chalkboard_color": ["#5DE6FF", "#F2E85C", "#A8F06A"],
+        "modern_minimal": ["#5D6FE8", "#8790A0"],
+        "technical_blueprint": ["#7CC7E8", "#D66767", "#A5D6E8"],
+        "editorial": ["#D85C4A", "#D9A514", "#111318"],
+        "whiteboard": ["#2F6FB2", "#3F8F68", "#F3BE22", "#D85C4A"],
+        "playful": ["#F06E6E", "#F1C84B", "#42B8A7", "#7A65B8"],
+        "sharpie": ["#111318", "#2F6FB2", "#F3BE22", "#D85C4A"],
+    }
+    accent_colors = accent_palette_by_style.get(video_style, ["#FFD65A", "#FF4F7B", "#A8D8F0", "#BFE3C0", "#D7C5F7"])
     accent = accent_colors[scene_index % len(accent_colors)]
     is_chalkboard = board_mode == "chalkboard"
     ink = "#F4F2E8" if is_chalkboard else "#1D1D1F"
     blue = "#5DE6FF" if is_chalkboard else "#2F6FB2"
-    red = "#FF6FAE" if is_chalkboard else "#D85C4A"
+    red = "#FF6FAE" if is_chalkboard else "#FF4F7B"
     green = "#A8F06A" if is_chalkboard else "#3F8F68"
     violet = "#C6A7FF" if is_chalkboard else "#6E58B5"
-    yellow = "#F2E85C" if is_chalkboard else "#D9A514"
+    yellow = "#F2E85C" if is_chalkboard else "#F3BE22"
+    if video_style == "technical_blueprint":
+        ink, blue, red, green, violet, yellow = "#B8D7E8", "#7CC7E8", "#D66767", "#8AC7B4", "#9FB7D8", "#D7B85A"
+    elif video_style == "modern_minimal":
+        ink, blue, red, green, violet, yellow = "#22242A", "#5D6FE8", "#C85C5C", "#5E8E77", "#6A5ACD", "#D9B84C"
+    elif video_style == "editorial":
+        ink, blue, red, green, violet, yellow = "#121212", "#2F5E8E", "#D85C4A", "#4F8068", "#6E58B5", "#D9A514"
+    elif video_style == "playful":
+        ink, blue, red, green, violet, yellow = "#34302B", "#42B8D0", "#F06E6E", "#60B56A", "#7A65B8", "#F1C84B"
+    elif video_style == "sharpie":
+        ink, blue, red, green, violet, yellow = "#111111", "#2F6FB2", "#D85C4A", "#3F8F68", "#6E58B5", "#F3BE22"
     draw_ops: list[dict] = []
     texts: list[dict] = []
     strokes: list[dict] = []
@@ -3025,6 +3810,274 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         add_text(label, cx - rx * 0.55, cy - ry * 0.28, font_size or body_size, color, start + 12, 22, rx * 1.1, beat_id=beat_id)
         return start + 36
 
+    def beat_id_for(index: int) -> str | None:
+        if 0 <= index < len(audio_segments):
+            raw_id = audio_segments[index].get("id")
+            return str(raw_id) if raw_id else f"beat_{index}"
+        return f"beat_{index}" if audio_segments else None
+
+    def draw_star(cx: float, cy: float, radius: float, color: str, start: int, frames: int, beat_id: str | None = None) -> int:
+        points: list[dict[str, float]] = []
+        for index in range(11):
+            angle = -math.pi / 2 + index * math.pi / 5
+            local_radius = radius if index % 2 == 0 else radius * 0.42
+            points.append(_point(cx + math.cos(angle) * local_radius, cy + math.sin(angle) * local_radius))
+        add_stroke("star", points, color, 4, start, frames, close=True, beat_id=beat_id)
+        return start + frames + 3
+
+    def draw_person_icon(cx: float, cy: float, color: str, start: int, scale: float = 1.0, beat_id: str | None = None) -> int:
+        local = start
+        add_stroke("person", _circle_points(cx, cy, width * 0.018 * scale, height * 0.028 * scale, count=14), color, 3, local, 7, beat_id=beat_id)
+        local += 8
+        add_stroke("person", _line_points(cx, cy + height * 0.030 * scale, cx, cy + height * 0.095 * scale, count=4), color, 3, local, 6, beat_id=beat_id)
+        add_stroke("person", _line_points(cx - width * 0.030 * scale, cy + height * 0.055 * scale, cx + width * 0.030 * scale, cy + height * 0.055 * scale, count=4), color, 3, local + 4, 6, beat_id=beat_id)
+        add_stroke("person", _line_points(cx, cy + height * 0.095 * scale, cx - width * 0.026 * scale, cy + height * 0.145 * scale, count=4), color, 3, local + 8, 6, beat_id=beat_id)
+        add_stroke("person", _line_points(cx, cy + height * 0.095 * scale, cx + width * 0.026 * scale, cy + height * 0.145 * scale, count=4), color, 3, local + 12, 6, beat_id=beat_id)
+        return local + 20
+
+    def build_seven_habits_overview(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        x = board_center_x - width * 0.25
+        y = diagram_top + height * 0.31
+        step_w = width * 0.19
+        step_h = height * 0.095
+        step_points = [
+            _point(x, y + step_h * 2),
+            _point(x + step_w, y + step_h * 2),
+            _point(x + step_w, y + step_h),
+            _point(x + step_w * 2, y + step_h),
+            _point(x + step_w * 2, y),
+            _point(x + step_w * 3, y),
+            _point(x + step_w * 3, y + step_h * 3),
+            _point(x, y + step_h * 3),
+            _point(x, y + step_h * 2),
+        ]
+        add_stroke("staircase", step_points, ink, 5, cursor, 34, beat_id=b0)
+        cursor += 38
+        step_labels = [
+            ("\u4f9d\u8d56", x + step_w * 0.25, y + step_h * 2.18, red),
+            ("\u72ec\u7acb", x + step_w * 1.22, y + step_h * 1.18, blue),
+            ("\u4e92\u76f8\u4f9d\u8d56", x + step_w * 2.06, y + step_h * 0.18, green),
+        ]
+        for label, tx, ty, color in step_labels:
+            add_text(label, tx, ty, body_size, color, cursor, 18, step_w * 0.80, emphasis=True, max_chars=4, beat_id=b0)
+            cursor += 14
+        add_arrow(_curve_points(x - width * 0.03, y + step_h * 2.80, x + step_w * 3.04, y - height * 0.02, count=20, wave=-height * 0.035), blue, 5, cursor, 26, role="growth_arrow", beat_id=b0)
+        cursor += 30
+        groups = [
+            ("\u4e60\u60ef1-3", "\u4e3b\u52a8  \u7ec8\u5c40  \u8981\u4e8b", x - width * 0.16, y + step_h * 1.05, blue),
+            ("\u4e60\u60ef4-6", "\u53cc\u8d62  \u503e\u542c  \u7edf\u5408", x + step_w * 2.25, y + step_h * 1.28, green),
+        ]
+        for title, detail, gx, gy, color in groups:
+            cursor = add_node_box(title, gx, gy, width * 0.14, height * 0.070, cursor, color, role="habit_group", font_size=max(18, body_size - 8), beat_id=b1)
+            add_text(detail, gx - width * 0.015, gy + height * 0.086, max(17, body_size - 11), color, cursor, 22, width * 0.20, max_chars=12, beat_id=b1)
+            cursor += 24
+        cx = x + step_w * 1.55
+        cy = y - height * 0.080
+        add_stroke("renew_badge", _circle_points(cx, cy, width * 0.050, height * 0.055, count=20), violet, 4, cursor, 12, beat_id=b1)
+        add_text("\u4e60\u60ef7", cx - width * 0.030, cy - height * 0.018, max(18, body_size - 9), violet, cursor + 9, 16, width * 0.08, max_chars=4, beat_id=b1)
+        add_arrow(_arc_points(cx, cy + height * 0.10, width * 0.34, height * 0.27, -math.pi * 0.80, math.pi * 0.10, count=24), violet, 4, cursor + 22, 26, role="renew_orbit", beat_id=b1)
+        cursor += 55
+        for index, (mx, my, color) in enumerate([(x - 32, y + step_h * 2.85, red), (x + step_w * 1.48, y + step_h * 1.06, yellow), (x + step_w * 3.10, y - 8, green)]):
+            add_stroke("spark", _line_points(mx, my, mx + 18, my - 20, count=3), color, 3, cursor + index * 5, 5, beat_id=b1)
+        return cursor + 24
+
+    def build_proactive_circles(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        cx = board_center_x + width * 0.12
+        cy = diagram_top + height * 0.25
+        add_stroke("concern_circle", _circle_points(cx, cy, width * 0.19, height * 0.22, count=34), ink, 4, cursor, 22, beat_id=b0)
+        cursor += 24
+        add_stroke("influence_circle", _circle_points(cx, cy, width * 0.105, height * 0.125, count=28), green, 5, cursor, 18, beat_id=b0)
+        cursor += 22
+        add_text("\u5f71\u54cd\u5708", cx - width * 0.052, cy - height * 0.030, body_size, green, cursor, 20, width * 0.14, emphasis=True, max_chars=4, beat_id=b0)
+        add_text("\u5173\u6ce8\u5708", cx - width * 0.045, cy - height * 0.205, body_size, ink, cursor + 10, 20, width * 0.13, max_chars=4, beat_id=b0)
+        cursor += 30
+        add_text("\u6211\u80fd\u63a7\u5236", cx - width * 0.070, cy + height * 0.055, max(18, body_size - 8), green, cursor, 18, width * 0.14, max_chars=6, beat_id=b0)
+        add_text("\u5173\u5fc3\u4f46\u63a7\u5236\u4e0d\u4e86", cx - width * 0.160, cy + height * 0.175, max(17, body_size - 10), red, cursor + 8, 20, width * 0.32, max_chars=10, beat_id=b0)
+        cursor += 28
+        y = cy + height * 0.33
+        x0 = board_center_x - width * 0.31
+        x1 = board_center_x + width * 0.31
+        add_node_box("\u523a\u6fc0", x0, y, width * 0.105, height * 0.065, cursor, red, role="stimulus", font_size=max(18, body_size - 8), beat_id=b1)
+        add_node_box("\u53cd\u5e94", x1 - width * 0.105, y, width * 0.105, height * 0.065, cursor + 8, green, role="response", font_size=max(18, body_size - 8), beat_id=b1)
+        cursor += 24
+        add_arrow(_line_points(x0 + width * 0.120, y + height * 0.033, x1 - width * 0.135, y + height * 0.033, count=12), ink, 4, cursor, 16, role="choice_line", beat_id=b1)
+        cursor += 20
+        choice_cx = board_center_x
+        choice_cy = y + height * 0.033
+        add_stroke("choice_space", _circle_points(choice_cx, choice_cy, width * 0.055, height * 0.052, count=20), blue, 4, cursor, 12, beat_id=b1)
+        add_text("\u9009\u62e9", choice_cx - width * 0.030, choice_cy - height * 0.020, max(18, body_size - 8), blue, cursor + 8, 16, width * 0.08, emphasis=True, max_chars=4, beat_id=b1)
+        cursor += 28
+        draw_star(cx + width * 0.145, cy - height * 0.165, width * 0.023, yellow, cursor, 8, beat_id=b1)
+        return cursor + 18
+
+    def build_begin_with_end(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        x0 = board_center_x - width * 0.30
+        y0 = diagram_top + height * 0.39
+        x1 = board_center_x + width * 0.31
+        y1 = diagram_top + height * 0.17
+        cursor = add_node_circle("\u73b0\u5728", x0, y0, width * 0.055, height * 0.050, cursor, blue, font_size=max(18, body_size - 7), beat_id=b0)
+        path = _curve_points(x0 + width * 0.060, y0 - height * 0.010, x1 - width * 0.080, y1 + height * 0.050, count=24, wave=height * 0.09)
+        add_arrow(path, green, 5, cursor, 28, role="vision_path", beat_id=b0)
+        cursor += 32
+        for index, point in enumerate([path[6], path[12], path[18]]):
+            add_stroke("principle_milestone", _circle_points(point["x"], point["y"], width * 0.020, height * 0.028, count=14), violet if index % 2 else blue, 4, cursor, 8, beat_id=b0)
+            add_text("\u539f\u5219", point["x"] - width * 0.027, point["y"] + height * 0.034, max(16, body_size - 11), violet, cursor + 5, 12, width * 0.07, max_chars=4, beat_id=b0)
+            cursor += 15
+        cursor = add_node_circle("\u613f\u666f/\u4f7f\u547d", x1, y1, width * 0.075, height * 0.060, cursor, red, font_size=max(18, body_size - 8), beat_id=b0)
+        compass_cx = x1 - width * 0.02
+        compass_cy = y1 - height * 0.18
+        add_stroke("compass", _circle_points(compass_cx, compass_cy, width * 0.055, height * 0.060, count=24), ink, 4, cursor, 16, beat_id=b1)
+        cursor += 18
+        add_stroke("compass_needle", [_point(compass_cx, compass_cy - height * 0.045), _point(compass_cx + width * 0.022, compass_cy + height * 0.008), _point(compass_cx, compass_cy + height * 0.045), _point(compass_cx - width * 0.014, compass_cy - height * 0.006), _point(compass_cx, compass_cy - height * 0.045)], red, 4, cursor, 16, close=True, beat_id=b1)
+        cursor += 18
+        add_text("\u6307\u5357\u9488", compass_cx - width * 0.050, compass_cy - height * 0.115, max(18, body_size - 8), ink, cursor, 16, width * 0.12, max_chars=4, beat_id=b1)
+        add_arrow(_curve_points(compass_cx - width * 0.060, compass_cy + height * 0.045, path[12]["x"], path[12]["y"], count=12, wave=-height * 0.025), violet, 4, cursor + 10, 16, role="principle_pointer", beat_id=b1)
+        cursor += 34
+        add_text("\u5148\u5b9a\u65b9\u5411", board_center_x - width * 0.070, diagram_top + height * 0.53, body_size, yellow, cursor, 20, width * 0.17, emphasis=True, max_chars=6, beat_id=b1)
+        return cursor + 26
+
+    def build_time_matrix_rich(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        x = board_center_x - width * 0.27
+        y = diagram_top + height * 0.06
+        w = width * 0.54
+        h = height * 0.46
+        mid_x = x + w * 0.5
+        mid_y = y + h * 0.5
+        add_stroke("matrix_frame", _rect_points(x, y, w, h), ink, 5, cursor, 20, close=True, beat_id=b0)
+        cursor += 22
+        add_stroke("matrix_axis", _line_points(mid_x, y, mid_x, y + h, count=7), ink, 4, cursor, 12, beat_id=b0)
+        add_stroke("matrix_axis", _line_points(x, mid_y, x + w, mid_y, count=7), ink, 4, cursor + 7, 12, beat_id=b0)
+        cursor += 24
+        add_text("\u91cd\u8981", x - width * 0.065, y + h * 0.14, body_size, blue, cursor, 16, width * 0.08, max_chars=4, beat_id=b0)
+        add_text("\u4e0d\u91cd\u8981", x - width * 0.080, y + h * 0.68, max(18, body_size - 7), ink, cursor + 6, 16, width * 0.10, max_chars=4, beat_id=b0)
+        add_text("\u7d27\u6025", x + w * 0.18, y + h + height * 0.030, body_size, red, cursor + 12, 16, width * 0.08, max_chars=4, beat_id=b0)
+        add_text("\u4e0d\u7d27\u6025", x + w * 0.68, y + h + height * 0.030, max(18, body_size - 7), green, cursor + 18, 16, width * 0.10, max_chars=4, beat_id=b0)
+        cursor += 38
+        quadrants = [
+            ("\u5371\u673a", x + w * 0.14, y + h * 0.18, red, "alarm"),
+            ("\u9884\u9632/\u89c4\u5212", x + w * 0.60, y + h * 0.18, green, "star"),
+            ("\u5e72\u6270", x + w * 0.16, y + h * 0.66, yellow, "noise"),
+            ("\u6d6a\u8d39", x + w * 0.66, y + h * 0.66, violet, "waste"),
+        ]
+        for index, (label, tx, ty, color, role_name) in enumerate(quadrants):
+            add_text(label, tx, ty, max(21, body_size - 4), color, cursor, 20, w * 0.28, emphasis=index == 1, max_chars=8, beat_id=b1)
+            if role_name == "star":
+                draw_star(tx + w * 0.18, ty + height * 0.020, width * 0.028, yellow, cursor + 16, 10, beat_id=b1)
+                add_stroke("focus_circle", _circle_points(tx + w * 0.10, ty + height * 0.030, w * 0.18, h * 0.16, count=22), green, 4, cursor + 26, 12, beat_id=b1)
+            elif role_name == "alarm":
+                add_stroke("alarm", _line_points(tx + w * 0.11, ty - height * 0.035, tx + w * 0.11, ty - height * 0.070, count=3), red, 4, cursor + 15, 6, beat_id=b1)
+                add_stroke("alarm", _line_points(tx + w * 0.09, ty - height * 0.057, tx + w * 0.13, ty - height * 0.057, count=3), red, 4, cursor + 19, 6, beat_id=b1)
+            cursor += 24
+        add_arrow(_curve_points(x + w * 0.22, y + h * 0.78, x + w * 0.70, y + h * 0.30, count=15, wave=-height * 0.025), blue, 4, cursor, 18, role="priority_shift", beat_id=b1)
+        cursor += 24
+        add_text("\u8981\u4e8b\u7b2c\u4e00", x + w * 0.58, y + h * 0.49, body_size, violet, cursor, 22, width * 0.18, emphasis=True, max_chars=6, beat_id=b1)
+        return cursor + 30
+
+    def build_interdependence_rich(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        b2 = beat_id_for(2)
+        sx = board_center_x - width * 0.31
+        sy = diagram_top + height * 0.15
+        add_stroke("scale_base", _line_points(sx, sy + height * 0.145, sx + width * 0.18, sy + height * 0.145, count=5), ink, 4, cursor, 8, beat_id=b0)
+        add_stroke("scale_stem", _line_points(sx + width * 0.09, sy + height * 0.145, sx + width * 0.09, sy + height * 0.015, count=5), ink, 4, cursor + 6, 8, beat_id=b0)
+        add_stroke("scale_bar", _line_points(sx + width * 0.015, sy + height * 0.035, sx + width * 0.165, sy + height * 0.035, count=5), ink, 4, cursor + 12, 8, beat_id=b0)
+        add_stroke("scale_pan", _arc_points(sx + width * 0.025, sy + height * 0.055, width * 0.045, height * 0.035, 0.05, math.pi - 0.05, count=10), blue, 4, cursor + 19, 9, beat_id=b0)
+        add_stroke("scale_pan", _arc_points(sx + width * 0.155, sy + height * 0.055, width * 0.045, height * 0.035, 0.05, math.pi - 0.05, count=10), green, 4, cursor + 25, 9, beat_id=b0)
+        cursor += 40
+        add_text("\u6211", sx + width * 0.004, sy + height * 0.084, max(18, body_size - 8), blue, cursor, 10, width * 0.05, max_chars=2, beat_id=b0)
+        add_text("\u4f60", sx + width * 0.137, sy + height * 0.084, max(18, body_size - 8), green, cursor + 4, 10, width * 0.05, max_chars=2, beat_id=b0)
+        add_text("\u53cc\u8d62", sx + width * 0.060, sy - height * 0.035, body_size, green, cursor + 8, 18, width * 0.10, emphasis=True, max_chars=4, beat_id=b0)
+        cursor += 28
+        seesaw_x = sx + width * 0.22
+        add_stroke("seesaw", _line_points(seesaw_x, sy + height * 0.12, seesaw_x + width * 0.18, sy + height * 0.045, count=6), red, 4, cursor, 10, beat_id=b0)
+        add_stroke("seesaw_base", [_point(seesaw_x + width * 0.09, sy + height * 0.085), _point(seesaw_x + width * 0.07, sy + height * 0.14), _point(seesaw_x + width * 0.11, sy + height * 0.14), _point(seesaw_x + width * 0.09, sy + height * 0.085)], ink, 3, cursor + 8, 8, close=True, beat_id=b0)
+        add_text("\u8f93\u8d62", seesaw_x + width * 0.055, sy + height * 0.150, max(18, body_size - 8), red, cursor + 15, 14, width * 0.08, max_chars=4, beat_id=b0)
+        cursor += 32
+        px = board_center_x + width * 0.10
+        py = diagram_top + height * 0.09
+        draw_person_icon(px, py + height * 0.06, blue, cursor, 1.1, b1)
+        draw_person_icon(px + width * 0.22, py + height * 0.06, green, cursor + 8, 1.1, b1)
+        add_stroke("big_ear", _arc_points(px + width * 0.042, py + height * 0.045, width * 0.025, height * 0.040, -math.pi * 0.55, math.pi * 0.65, count=12), blue, 5, cursor + 28, 10, beat_id=b1)
+        add_stroke("mouth", _arc_points(px + width * 0.205, py + height * 0.055, width * 0.025, height * 0.018, 0, math.pi, count=8), green, 4, cursor + 36, 8, beat_id=b1)
+        add_text("\u503e\u542c", px - width * 0.020, py + height * 0.225, max(18, body_size - 8), blue, cursor + 42, 14, width * 0.08, max_chars=4, beat_id=b1)
+        add_text("\u8868\u8fbe", px + width * 0.185, py + height * 0.225, max(18, body_size - 8), green, cursor + 48, 14, width * 0.08, max_chars=4, beat_id=b1)
+        add_arrow(_curve_points(px + width * 0.070, py + height * 0.08, px + width * 0.180, py + height * 0.08, count=10, wave=-height * 0.015), violet, 4, cursor + 54, 12, role="understand_arrow", beat_id=b1)
+        add_text("\u7406\u89e3", px + width * 0.096, py + height * 0.025, max(18, body_size - 8), violet, cursor + 62, 14, width * 0.08, max_chars=4, beat_id=b1)
+        cursor += 86
+        bx = board_center_x - width * 0.21
+        by = diagram_top + height * 0.45
+        add_stroke("puzzle_circle", _circle_points(bx, by, width * 0.045, height * 0.050, count=18), blue, 4, cursor, 12, beat_id=b2)
+        add_stroke("puzzle_square", _rect_points(bx + width * 0.055, by - height * 0.045, width * 0.090, height * 0.090), green, 4, cursor + 8, 12, close=True, beat_id=b2)
+        draw_star(bx + width * 0.205, by, width * 0.046, yellow, cursor + 18, 12, beat_id=b2)
+        add_arrow(_line_points(bx + width * 0.145, by, bx + width * 0.160, by, count=3), ink, 3, cursor + 22, 8, beat_id=b2)
+        add_text("1+1>2", bx + width * 0.160, by + height * 0.070, body_size, green, cursor + 32, 18, width * 0.12, emphasis=True, max_chars=5, beat_id=b2)
+        add_node_box("\u59a5\u534f", bx + width * 0.36, by - height * 0.046, width * 0.11, height * 0.080, cursor + 12, violet, role="compromise", font_size=max(18, body_size - 8), beat_id=b2)
+        cursor += 64
+        return cursor
+
+    def build_renewal_summary_rich(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        cx = board_center_x
+        cy = diagram_top + height * 0.22
+        rx = width * 0.19
+        ry = height * 0.18
+        labels = [
+            ("\u8eab\u4f53", cx, cy - ry, blue, "run"),
+            ("\u5fc3\u667a", cx + rx, cy, green, "book"),
+            ("\u7cbe\u795e", cx, cy + ry, violet, "med"),
+            ("\u793e\u4f1a\u60c5\u611f", cx - rx, cy, red, "hand"),
+        ]
+        for index, (label, nx, ny, color, icon) in enumerate(labels):
+            cursor = add_node_circle(label, nx, ny, width * 0.066, height * 0.055, cursor, color, font_size=max(17, body_size - 8), beat_id=b0)
+            if icon == "run":
+                add_arrow(_line_points(nx - 22, ny + height * 0.060, nx + 24, ny + height * 0.045, count=4), color, 3, cursor, 6, role="mini_icon", beat_id=b0)
+            elif icon == "book":
+                add_stroke("book_icon", _rect_points(nx - 24, ny + height * 0.055, 48, 34), color, 3, cursor, 6, close=True, beat_id=b0)
+            elif icon == "med":
+                add_stroke("med_icon", _arc_points(nx, ny + height * 0.070, 40, 22, 0, math.pi, count=9), color, 3, cursor, 6, beat_id=b0)
+            else:
+                add_stroke("handshake", _line_points(nx - 36, ny + height * 0.070, nx + 36, ny + height * 0.070, count=5), color, 3, cursor, 6, beat_id=b0)
+            cursor += 8
+        for start_angle, end_angle in [(-math.pi * 0.46, math.pi * 0.05), (math.pi * 0.05, math.pi * 0.55), (math.pi * 0.55, math.pi * 1.05), (math.pi * 1.05, math.pi * 1.55)]:
+            add_arrow(_arc_points(cx, cy, rx * 0.96, ry * 0.95, start_angle, end_angle, count=13), ink, 4, cursor, 12, role="renew_loop", beat_id=b0)
+            cursor += 14
+        add_text("\u66f4\u65b0", cx - width * 0.038, cy - height * 0.026, body_size, violet, cursor, 18, width * 0.09, emphasis=True, max_chars=4, beat_id=b0)
+        cursor += 24
+        sx = board_center_x - width * 0.20
+        sy = diagram_top + height * 0.51
+        mini_w = width * 0.13
+        mini_h = height * 0.050
+        mini = [
+            ("\u4f9d\u8d56", sx, sy + mini_h * 1.8, red),
+            ("\u72ec\u7acb", sx + mini_w, sy + mini_h * 0.9, blue),
+            ("\u4e92\u76f8\u4f9d\u8d56", sx + mini_w * 2, sy, green),
+        ]
+        prev = None
+        for label, tx, ty, color in mini:
+            cursor = add_node_box(label, tx, ty, mini_w * 0.92, mini_h * 1.05, cursor, color, role="mini_step", font_size=max(16, body_size - 12), beat_id=b1)
+            if prev:
+                add_arrow(_line_points(prev[0] + mini_w * 0.82, prev[1] + mini_h * 0.50, tx - 10, ty + mini_h * 0.50, count=5), ink, 3, cursor, 8, beat_id=b1)
+                cursor += 8
+            prev = (tx, ty)
+        add_text("\u4ece\u88ab\u52a8\u5230\u5171\u8d62", sx + mini_w * 0.55, sy + mini_h * 2.95, body_size, yellow, cursor, 22, width * 0.24, emphasis=True, max_chars=8, beat_id=b1)
+        return cursor + 28
+
     def fallback_label(index: int, value: str) -> str:
         pool = steps or core_lines
         return _short_text(pool[index], 16) if index < len(pool) else value
@@ -3058,17 +4111,24 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
 
     def add_process_doodles(start: int, x: float, y: float) -> int:
         cursor = start
-        labels = ["有谱", "别慌", "下一步"]
-        for index, label in enumerate(labels):
-            row_y = y + index * 44
-            points = [_point(x, row_y), _point(x + 10, row_y + 12), _point(x + 30, row_y - 14)]
-            add_stroke("doodle", points, green, 4, cursor, 8)
-            add_text(label, x + 42, row_y - 22, max(18, body_size - 8), green, cursor + 3, 14, width * 0.10, emphasis=False, max_chars=6)
-            cursor += 18
-        add_stroke("doodle", _line_points(x + 70, y - 12, x + 108, y - 28, count=4), blue, 3, cursor, 7)
-        cursor += 8
-        add_stroke("doodle", _line_points(x + 70, y + 4, x + 112, y + 4, count=4), blue, 3, cursor, 7)
-        return cursor + 8
+        route = _curve_points(x, y + 20, x + 118, y - 18, count=14, wave=height * 0.030)
+        add_arrow(route, blue, 3, cursor, 16, role="route_doodle")
+        cursor += 18
+        marker_specs = [
+            (route[0], green, "\u8d77\u70b9"),
+            (route[len(route) // 2], violet, "\u8c03\u6574"),
+            (route[-1], red, "\u7ed3\u8bba"),
+        ]
+        for point, color, label in marker_specs:
+            add_stroke("route_marker", _circle_points(point["x"], point["y"], width * 0.010, height * 0.016, count=10), color, 3, cursor, 6)
+            cursor += 7
+            add_text(label, point["x"] - width * 0.018, point["y"] + height * 0.022, max(15, body_size - 12), color, cursor, 10, width * 0.08, emphasis=False, max_chars=4)
+            cursor += 11
+        for index in range(3):
+            ray_x = x + 132 + index * 16
+            add_stroke("spark", _line_points(ray_x, y - 38, ray_x + 8, y - 54 - index * 2, count=3), yellow, 3, cursor, 5)
+            cursor += 6
+        return cursor
 
     def build_raster_reveal(start: int) -> int:
         nonlocal raster_reveal_spec
@@ -3110,7 +4170,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 "directAppearFrame": 0,
                 "strokes": [],
             }
-            labels = direct_callout_labels()
+            labels = direct_callout_labels()[:3]
             segment_windows: list[tuple[str | None, int, int]] = []
             if audio_segments:
                 for segment in audio_segments:
@@ -3129,33 +4189,31 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                     segment_start = usable_start + index * span
                     segment_windows.append((None, segment_start, min(usable_end, segment_start + span)))
 
+            note_size = max(50, int(body_size * 1.62))
+            note_width = width * 0.22
+            left_note_x = max(width * 0.055, draw_x - note_width - width * 0.055)
+            right_note_x = min(width - note_width - width * 0.055, draw_x + draw_w + width * 0.055)
             label_specs = [
                 {
                     "label": labels[0],
-                    "text_x": max(width * 0.07, draw_x - width * 0.105),
-                    "text_y": draw_y + draw_h * 0.18,
-                    "target_x": draw_x + draw_w * 0.23,
-                    "target_y": draw_y + draw_h * 0.35,
+                    "side": "left",
+                    "text_x": left_note_x,
+                    "text_y": draw_y + draw_h * 0.17,
                     "color": blue,
-                    "circle": (draw_x + draw_w * 0.23, draw_y + draw_h * 0.35, draw_w * 0.085, draw_h * 0.080),
                 },
                 {
                     "label": labels[1],
-                    "text_x": min(width * 0.80, draw_x + draw_w * 0.78),
-                    "text_y": draw_y + draw_h * 0.20,
-                    "target_x": draw_x + draw_w * 0.61,
-                    "target_y": draw_y + draw_h * 0.33,
+                    "side": "right",
+                    "text_x": right_note_x,
+                    "text_y": draw_y + draw_h * 0.40,
                     "color": violet,
-                    "circle": (draw_x + draw_w * 0.61, draw_y + draw_h * 0.33, draw_w * 0.090, draw_h * 0.080),
                 },
                 {
                     "label": labels[2],
-                    "text_x": max(width * 0.08, draw_x - width * 0.075),
-                    "text_y": draw_y + draw_h * 0.69,
-                    "target_x": draw_x + draw_w * 0.50,
-                    "target_y": draw_y + draw_h * 0.64,
+                    "side": "left",
+                    "text_x": left_note_x,
+                    "text_y": draw_y + draw_h * 0.66,
                     "color": red,
-                    "circle": (draw_x + draw_w * 0.50, draw_y + draw_h * 0.64, draw_w * 0.095, draw_h * 0.080),
                 },
             ]
             cursor = max(start + 8, int(duration * 0.16))
@@ -3165,54 +4223,72 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 local_cursor = max(cursor, segment_start + min(12, max(0, segment_span // 8)))
                 label_y = spec["text_y"]
                 label_x = spec["text_x"]
-                target_x = spec["target_x"]
-                target_y = spec["target_y"]
                 color = spec["color"]
+                side = spec["side"]
+                note_text_width = min(note_width * 0.82, _text_visual_width(spec["label"], note_size) * 0.88 + width * 0.018)
+                link_start_x = label_x + note_text_width if side == "left" else label_x - width * 0.012
+                edge_x = draw_x - width * 0.014 if side == "left" else draw_x + draw_w + width * 0.014
+                edge_y = min(draw_y + draw_h * 0.86, max(draw_y + draw_h * 0.14, label_y + note_size * 0.58))
+                note_frames = min(34, max(18, segment_span // 5))
                 add_text(
                     spec["label"],
                     label_x,
                     label_y,
-                    max(24, int(body_size * 0.82)),
+                    note_size,
                     color,
                     local_cursor,
-                    min(30, max(16, segment_span // 5)),
-                    width * 0.16,
-                    emphasis=False,
-                    max_chars=10,
+                    note_frames,
+                    note_width,
+                    emphasis=True,
+                    max_chars=9,
                     beat_id=beat_id,
                 )
-                add_arrow(
-                    _curve_points(
-                        label_x + (width * 0.13 if label_x < target_x else -width * 0.012),
-                        label_y + body_size * 0.34,
-                        target_x,
-                        target_y,
-                        count=12,
-                        wave=height * (0.010 + index * 0.002),
-                    ),
-                    color,
-                    4,
-                    local_cursor + min(24, max(10, segment_span // 5)),
-                    min(22, max(12, segment_span // 6)),
-                    role="callout",
-                    beat_id=beat_id,
-                )
-                cx, cy, rx, ry = spec["circle"]
+                underline_w = min(note_width * 0.86, max(width * 0.070, _text_visual_width(spec["label"], note_size) * 0.82))
                 add_stroke(
-                    "callout",
-                    _circle_points(cx, cy, rx, ry, count=24),
-                    yellow,
-                    4,
-                    local_cursor + min(44, max(22, segment_span // 3)),
-                    min(20, max(10, segment_span // 7)),
+                    "bold_callout_underline",
+                    _curve_points(
+                        label_x,
+                        label_y + note_size * 1.08,
+                        label_x + underline_w,
+                        label_y + note_size * 1.08,
+                        count=9,
+                        wave=height * 0.006,
+                    ),
+                    red,
+                    7,
+                    local_cursor + note_frames + 1,
+                    min(12, max(7, segment_span // 10)),
                     beat_id=beat_id,
                 )
-                cursor = max(local_cursor + 48, segment_end - 4)
-            if len(labels) > 3 and cursor + 34 <= duration - 10:
-                beat_id, segment_start, segment_end = segment_windows[min(3, len(segment_windows) - 1)]
-                cursor = max(cursor, segment_start + 8)
-                add_text(labels[3], draw_x + draw_w * 0.08, draw_y + draw_h + height * 0.025, max(24, int(body_size * 0.82)), green, cursor, 28, draw_w * 0.50, emphasis=False, max_chars=14, beat_id=beat_id)
-                cursor += 40
+                # Direct reference images are not semantically segmented, so keep marks near the image edge.
+                # This avoids fake precision where a generated arrow points to the wrong ingredient/part.
+                add_stroke(
+                    "callout_link",
+                    _curve_points(
+                        link_start_x,
+                        label_y + note_size * 0.56,
+                        edge_x,
+                        edge_y,
+                        count=8,
+                        wave=height * 0.006,
+                    ),
+                    red,
+                    5,
+                    local_cursor + note_frames + 6,
+                    min(16, max(8, segment_span // 8)),
+                    beat_id=beat_id,
+                )
+                tick_dir = 1 if side == "left" else -1
+                add_stroke(
+                    "callout_tick",
+                    _line_points(edge_x, edge_y, edge_x + tick_dir * width * 0.030, edge_y, count=4),
+                    red,
+                    7,
+                    local_cursor + note_frames + min(18, max(8, segment_span // 8)),
+                    min(10, max(6, segment_span // 12)),
+                    beat_id=beat_id,
+                )
+                cursor = max(local_cursor + note_frames + 32, segment_end - 4)
             return min(duration - 8, cursor)
 
         prepared: list[dict] = []
@@ -3774,9 +4850,69 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         labels = labels[:6]
         corpus = _scene_corpus(scene)
 
+        def build_visual_synthesis(start_frame: int) -> int:
+            local_labels = [label for label in labels if label and not _looks_like_mojibake(label)]
+            synthesis_defaults = ["\u5168\u5c40", "\u7ed3\u6784", "\u53d6\u820d", "\u884c\u52a8", "\u53cd\u9988"]
+            for default in synthesis_defaults:
+                if len(local_labels) >= 5:
+                    break
+                if default not in local_labels:
+                    local_labels.append(default)
+            local_labels = local_labels[:5]
+            cursor_local = start_frame
+            cx = board_center_x
+            cy = diagram_top + height * 0.25
+            hub_rx = width * 0.080
+            hub_ry = height * 0.062
+            cursor_local = add_node_circle(local_labels[0], cx, cy, hub_rx, hub_ry, cursor_local, blue, role="synthesis_hub", font_size=max(18, body_size - 5))
+            positions = [
+                (cx - width * 0.24, cy - height * 0.12, red, "warning_icon"),
+                (cx + width * 0.24, cy - height * 0.12, violet, "gear_icon"),
+                (cx + width * 0.23, cy + height * 0.15, green, "route_icon"),
+                (cx - width * 0.23, cy + height * 0.15, yellow, "loop_icon"),
+            ]
+            for index, (px, py, color, role_name) in enumerate(positions):
+                label = local_labels[index + 1] if index + 1 < len(local_labels) else synthesis_defaults[index + 1]
+                add_arrow(
+                    _curve_points(cx + (hub_rx if px > cx else -hub_rx), cy, px + (width * 0.054 if px < cx else -width * 0.054), py, count=13, wave=height * 0.018 * (1 if index % 2 == 0 else -1)),
+                    ink,
+                    3,
+                    cursor_local,
+                    12,
+                    role="synthesis_link",
+                )
+                cursor_local += 14
+                cursor_local = add_node_box(label, px - width * 0.060, py - height * 0.036, width * 0.12, height * 0.072, cursor_local, color if color != yellow else ink, role=role_name, font_size=max(17, body_size - 8))
+                if index == 0:
+                    tri = [_point(px, py - height * 0.075), _point(px + width * 0.038, py - height * 0.010), _point(px - width * 0.038, py - height * 0.010), _point(px, py - height * 0.075)]
+                    add_stroke("warning_triangle", tri, red, 3, cursor_local, 9, close=True)
+                    cursor_local += 10
+                elif index == 1:
+                    add_stroke("gear_ring", _circle_points(px, py - height * 0.070, width * 0.028, height * 0.032, count=18), violet, 3, cursor_local, 9)
+                    for spoke in range(4):
+                        angle = spoke * math.pi / 2
+                        add_stroke("gear_tooth", _line_points(px + math.cos(angle) * width * 0.032, py - height * 0.070 + math.sin(angle) * height * 0.036, px + math.cos(angle) * width * 0.047, py - height * 0.070 + math.sin(angle) * height * 0.050, count=3), violet, 3, cursor_local + 4, 5)
+                    cursor_local += 12
+                elif index == 2:
+                    mini_path = _curve_points(px - width * 0.046, py + height * 0.066, px + width * 0.052, py + height * 0.044, count=9, wave=height * 0.020)
+                    add_arrow(mini_path, green, 3, cursor_local, 10, role="mini_route")
+                    cursor_local += 12
+                else:
+                    add_arrow(_arc_points(px, py + height * 0.058, width * 0.044, height * 0.034, -math.pi * 0.2, math.pi * 1.25, count=12), blue, 3, cursor_local, 11, role="mini_loop")
+                    cursor_local += 13
+            add_stroke("synthesis_orbit", _arc_points(cx, cy, width * 0.315, height * 0.235, -math.pi * 0.83, math.pi * 0.22, count=22), green, 4, cursor_local, 18)
+            cursor_local += 22
+            add_text(local_labels[-1], cx - width * 0.070, cy + height * 0.250, body_size, violet, cursor_local, 24, width * 0.20, emphasis=True, max_chars=10)
+            cursor_local += 28
+            add_stroke("synthesis_underline", _curve_points(cx - width * 0.08, cy + height * 0.325, cx + width * 0.09, cy + height * 0.318, count=10, wave=height * 0.005), yellow, 4, cursor_local, 9)
+            return cursor_local + 10
+
+        if _contains_any(corpus, ["summary", "checklist", "recap", "conclusion", "\u603b\u7ed3", "\u6e05\u5355", "\u590d\u76d8"]):
+            return build_visual_synthesis(start)
+
         if _contains_any(corpus, ["summary", "checklist", "总结", "清单", "复盘"]):
             summary_defaults = ["看全局", "拆结构", "做取舍", "走目标", "跑反馈"]
-            labels = [label for label in labels if label and not _looks_corrupted_text(label)]
+            labels = [label for label in labels if label and not _looks_like_mojibake(label)]
             for default in summary_defaults:
                 if len(labels) >= 5:
                     break
@@ -3998,6 +5134,44 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         add_text(fallback_label(1, "Gate controls channel"), x, y + panel_h + height * 0.09, body_size, violet, cursor, 30, width * 0.42)
         return cursor + 36
 
+    def select_seven_habits_builder():
+        corpus_local = _scene_corpus(scene)
+        title_local = _clean_text(scene.title).lower()
+        habit_markers = [
+            "七个习惯",
+            "习惯1",
+            "习惯2",
+            "习惯3",
+            "习惯4",
+            "习惯5",
+            "习惯6",
+            "习惯7",
+            "主动积极",
+            "以终为始",
+            "要事第一",
+            "双赢",
+            "知彼解己",
+            "统合综效",
+            "不断更新",
+        ]
+        if not any(marker in corpus_local for marker in habit_markers):
+            return None
+        if "不断更新" in title_local or "习惯7" in title_local:
+            return build_renewal_summary_rich
+        if "总览" in title_local or ("七个习惯" in corpus_local and "依赖" in corpus_local and ("互相依赖" in corpus_local or "互赖" in corpus_local)):
+            return build_seven_habits_overview
+        if "主动积极" in corpus_local or "影响圈" in corpus_local or "关注圈" in corpus_local:
+            return build_proactive_circles
+        if "以终为始" in corpus_local or "愿景" in corpus_local or "使命" in corpus_local:
+            return build_begin_with_end
+        if "要事第一" in corpus_local or "时间管理" in corpus_local or "四象限" in corpus_local:
+            return build_time_matrix_rich
+        if "双赢" in corpus_local or "知彼解己" in corpus_local or "统合综效" in corpus_local:
+            return build_interdependence_rich
+        if "不断更新" in corpus_local or "习惯7" in title_local or "总结" in corpus_local:
+            return build_renewal_summary_rich
+        return None
+
     cursor = 0
     title_size = 58 if width >= 1600 else 44
     body_size = 32 if width >= 1600 else 26
@@ -4028,7 +5202,8 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     elif is_chalkboard:
         cursor = build_chalkboard_derivation(cursor)
     else:
-        cursor = builders.get(diagram_kind, build_process_flow)(cursor)
+        seven_habits_builder = select_seven_habits_builder()
+        cursor = (seven_habits_builder or builders.get(diagram_kind, build_process_flow))(cursor)
 
     _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
     return {
@@ -4036,6 +5211,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "diagramKind": diagram_kind,
         "boardMode": board_mode,
         "handUsage": hand_usage,
+        "videoStyle": video_style,
         "visualStyle": visual_style,
         "duration": duration,
         "audioUrl": _scene_extra(scene, "audioUrl") or _scene_extra(scene, "audio_url"),
@@ -4101,7 +5277,8 @@ type SceneSpec = {
   diagramKind?: string;
   boardMode?: "whiteboard" | "chalkboard" | "clean_canvas" | "reference";
   handUsage?: "trace" | "annotate" | "none";
-  visualStyle?: "teacher_whiteboard" | "marketing_doodle" | "math_chalkboard" | "technical_reference";
+  videoStyle?: "auto" | "chalkboard_bw" | "chalkboard_color" | "modern_minimal" | "technical_blueprint" | "editorial" | "whiteboard" | "playful" | "sharpie";
+  visualStyle?: "teacher_whiteboard" | "marketing_doodle" | "math_chalkboard" | "technical_reference" | "modern_minimal" | "editorial" | "playful" | "sharpie";
   duration: number;
   audioUrl?: string | null;
   audioSegments?: AudioSegmentSpec[];
@@ -4123,6 +5300,9 @@ const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 const MIN_START_PROGRESS = 0.018;
 const sceneBackground = (scene: SceneSpec) => {
   if (scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard") return "#050806";
+  if (scene.videoStyle === "technical_blueprint") return "#18364A";
+  if (scene.videoStyle === "playful") return "#FBF7D8";
+  if (scene.videoStyle === "sharpie") return "#FFFDF7";
   if (scene.boardMode === "clean_canvas") return "#F7F7F2";
   return BOARD_BACKGROUND;
 };
@@ -4338,7 +5518,6 @@ const RasterMaskStroke = ({ spec, op }: { spec: RasterStrokeSpec; op: DrawOp }) 
 
 const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
-  if (scene.boardMode === "whiteboard" && scene.visualStyle === "teacher_whiteboard" && scene.handUsage === "trace") return null;
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
   if (reveal.renderMode === "direct") return null;
@@ -4379,7 +5558,6 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
 
 const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
-  if (scene.boardMode === "whiteboard" && scene.visualStyle === "teacher_whiteboard" && scene.handUsage === "trace") return null;
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
   const referenceImageAsset = scene.referenceImageAsset;
@@ -4551,10 +5729,12 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
         />
       ) : null}
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 10 }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
+        <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />
         <GlyphText scene={scene} />
       </svg>
+      <RasterFinalOverlay scene={scene} />
       <SubtitleOverlay scene={scene} />
       <HandPen tipX={pen.x} tipY={pen.y} visible={showHand && pen.visible} />
       <SceneTransitionWipe scene={scene} />
@@ -4597,20 +5777,34 @@ REMOTION_CODE_SYSTEM_PROMPT = """You are an expert Remotion engineer and motion 
 Generate ONE self-contained TSX module for a complete educational whiteboard video.
 
 Target visual reference:
-- A sparse light grey-white whiteboard canvas where a real visible hand holds a marker and writes/draws board annotations live.
+- A clean light grey-white whiteboard canvas with rich colorful educational doodle/reference visuals where a real visible hand holds a marker and writes/draws concise board annotations live.
+- Default generated reference art should match a bold editorial hand-drawn explainer: thick imperfect black crayon/marker outlines, warm off-white surface, coral-pink arrows/checks/starbursts/underlines, sunny yellow highlight blobs, one large subject or at most three large step groups, and generous blank space.
+- Treat generated reference images as text-free artwork. Add all readable Chinese titles, labels, ticks, underlines and callouts in TSX with large handwritten glyph text, not as text baked into the image.
 - Also support explicit scene-level modes from the storyboard:
-  - `board_mode="whiteboard"` with `hand_usage="trace"`: classic sparse teacher whiteboard; the hand writes/draws the active strokes.
+  - `board_mode="whiteboard"` with `hand_usage="trace"`: teacher whiteboard with meaningful colorful marker visuals; the hand writes/draws the active strokes when the subject is simple enough.
   - `board_mode="reference"` or `hand_usage="annotate"`: present the complex/finished subject clearly, then use the hand only for short callouts, circles, arrows and underlines.
   - `board_mode="clean_canvas"` with `visual_style="marketing_doodle"`: colorful finished doodle groups may appear directly; the hand writes titles, ticks, arrows and emphasis marks.
   - `board_mode="chalkboard"` or `visual_style="math_chalkboard"`: use a dark chalkboard background, no visible hand, and reveal equations/steps line by line with chalk-like colors.
+- Respect scene.videoStyle as the Golpo Canvas style layer:
+  - `chalkboard_bw`: black canvas, white chalk only, sparse rough chalk line art, no hand.
+  - `chalkboard_color`: black canvas, white/cyan chalk with limited yellow/teal emphasis, no hand.
+  - `modern_minimal`: warm light grey canvas, thin lines, one cool accent, large whitespace.
+  - `technical_blueprint`: deep navy canvas, pale-blue precise technical lines, subtle grid/drafting feel.
+  - `editorial`: warm off-white canvas, bold black ink, restrained red/orange accents, collage-like object group.
+  - `whiteboard`: off-white board, black marker outlines, blue labels, small colored fills, clear tutorial layout.
+  - `playful`: warm cream canvas, crayon-like multicolor accents, rounded friendly objects.
+  - `sharpie`: bright white canvas, thick black marker, bold rough icons, small highlighter accents, visible hand unless hand_usage is none.
 - The hand must be on screen during drawing, with the pen tip touching the active text stroke, line, arrow, box, equation, or diagram.
-- Use black marker outlines plus purposeful teaching colors: red for current/flow, blue for voltage/control arrows, green for channels/valid paths, purple for gate/structure, and yellow underlines/callouts for key ideas. Keep the canvas as a clean whiteboard surface; do not add colored background washes, paper tints, or colored panels behind diagrams.
+- Use black marker outlines plus purposeful teaching colors: coral pink for arrows/checks/starbursts/active emphasis, red for current/flow/risk, blue for control arrows, green for valid paths/results, purple for relationships/systems, and yellow underlines/callouts/highlight blobs for key ideas. Keep the canvas clean and warm off-white; do not add dense colored panels behind diagrams.
 - Text should feel handwritten: irregular but readable, large, dark/blue marker strokes, revealed character-by-character or word-by-word while the hand follows the reveal.
 - Text must look like solid marker handwriting after it is written, not hollow font outlines.
 - For Chinese text, fontFamily must start with a handwriting-style Chinese font stack like "KaiTi, STKaiti, Kaiti SC, cursive". Do not rely on default bold sans-serif Chinese.
 - Graphics should feel like a teacher's hand-sketched board work: arrows, boxes, curves, charts, objects, callouts, underlines, and concept diagrams are revealed by strokes being drawn.
 - Layout should match a real sparse whiteboard lesson: short blue handwritten title near the top-left or top-center, one central diagram occupying about 45-65% of the canvas width, large empty margins, and short labels placed near the parts they describe.
 - Do not use a fixed left text column. Avoid explanatory paragraphs on the board; use only short labels, one-line conclusions, arrows, circles, brackets, and underlines.
+- Every scene must have one primary visual anchor made from at least 3-6 meaningful diagram/icon/object elements, such as a funnel, route map, balance scale, gear, clock, warning triangle, clipboard, person/group, chart, matrix, cross-section, or system stack.
+- Never make a scene that is only a heading plus checklist, bullets, checkmarks, or generic text boxes. Checklist/checkmark marks may only be tiny supporting annotations beside a larger visual anchor.
+- Use staged reveal like the reference videos: title or anchor first, main line-art object second, labels/arrows/callouts third, and one short conclusion last.
 - Preserve lots of empty white space. Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full canvas background is the only whiteboard.
 - Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text.
 - Make the drawings feel lively and lightly humorous with small teacher-board metaphors, such as wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and playful marker annotations drawn directly on the board.
@@ -4653,7 +5847,7 @@ Hard requirements:
 - Create a deterministic drawing timeline array or helper function that maps frame ranges to pen tip coordinates. Use interpolate() to move the hand between points; never jump instantly.
 - The hand should be large enough to resemble the reference video, roughly 240-300 px wide on a 1920x1080 canvas, not a tiny cursor.
 - SVG line drawings must use strokeDasharray and strokeDashoffset driven by useCurrentFrame()/interpolate().
-- If a scene includes rasterReveal and referenceImageAsset, use rasterReveal.renderMode. For renderMode "trace", reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. For renderMode "direct", directly present the complex reference image with a short frame-driven opacity reveal, centered with generous empty space, then use HandPen only for a few short nearby teacher callouts, small circles, underlines and emphasis marks over it. Avoid long sweeping arrows and large circles covering the diagram. After trace raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
+- If a scene includes rasterReveal and referenceImageAsset, use rasterReveal.renderMode. For renderMode "trace", reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. For renderMode "direct", directly present the complex reference image with a short frame-driven opacity reveal, centered with generous empty space, then use HandPen only for large readable side callouts, short underlines, and small edge ticks near the image. Do not pretend to know exact internal object locations unless the storyboard provides explicit anchors; avoid long sweeping arrows and large circles covering the diagram. After trace raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
 - Animated dashed paths must have `fill="none"`. Do not use background washes or colored panels; use color only on teaching strokes, arrows, underlines, callouts, and small emphasis marks.
 - Text must be progressively revealed with slice(), substring(), or a frame-driven clipPath. Do not show full paragraphs instantly.
 - For Chinese text, define a `glyphPaths` array and render it with inline `GlyphText` / `DrawGlyphPath` helpers using SVG `<path>` plus strokeDasharray/strokeDashoffset. The render server will preprocess these glyph paths from a local Chinese font with opentype.js, so include text specs and matching text drawOps instead of static SVG `<text>`.
@@ -4670,7 +5864,8 @@ Hard requirements:
 - Use one additional global <Audio src={background_music_url} volume={background_music_volume} loop /> only when background_music_url is not null.
 - Build visuals directly in TSX using HTML/CSS/SVG: hand-drawn lines, equations, arrows, curves, labels, diagrams, highlights.
 - Avoid generic slide decks. Each scene must contain a meaningful visual explanation, not just bullets.
-- Use a clean Chinese whiteboard teaching style: light grey-white whiteboard background close to #E3E4DE for every scene, black ink outlines, blue handwritten titles, purposeful colored teaching strokes, spacious centered layout, progressive reveal.
+- If the storyboard asks for a summary, render it as a visual synthesis: loop, roadmap, hub-and-spoke map, evidence chart, or metaphor object. Do not render it as a plain checklist.
+- Use the canvas background and palette implied by scene.videoStyle. Only fall back to the clean Chinese whiteboard teaching style when videoStyle is missing or `whiteboard`.
 - Keep text inside safe bounds for 1920x1080.
 - Keep helpers deterministic. If you need hand-drawn jitter, compute it from indexes or fixed arrays, never Math.random().
 
@@ -4706,6 +5901,7 @@ async def generate_remotion_code(
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
         "If background_music_url is provided, add it as one low-volume looping background Audio track behind narration. "
         "Respect scene board_mode/hand_usage/visual_style: hide the hand for chalkboard or hand_usage=none scenes, use direct/hybrid presentation for reference or annotate scenes, and use colorful finished doodles plus hand annotations for marketing_doodle scenes. "
+        "Respect scene.video_style as the Golpo Canvas layer: black/white chalkboard stays white-only, color chalkboard uses limited cyan/yellow accents, modern_minimal stays sparse, technical_blueprint stays navy/pale-blue, editorial stays bold off-white/red-orange, whiteboard stays marker-board, playful stays crayon-pastel, and sharpie stays thick black marker. "
         "Use Chinese handwritten fonts and teacher-style whiteboard callouts. "
         "No stock images, no templates, no decorative component frames."
     )

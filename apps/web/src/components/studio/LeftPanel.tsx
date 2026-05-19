@@ -2,12 +2,18 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { PEN_STYLE_OPTIONS, VIDEO_STYLE_OPTIONS } from "@/lib/constants";
+import type { PenStyleId, VideoStyleId } from "@/lib/types";
 
 interface Props {
-  onGenerate: (prompt: string, markdown: string) => void;
+  onGenerate: (prompt: string, markdown: string, videoStyle: VideoStyleId, penStyle: PenStyleId) => void;
   loading: boolean;
   duration: number;
   onDurationChange: (duration: number) => void;
+  videoStyle: VideoStyleId;
+  onVideoStyleChange: (style: VideoStyleId) => void;
+  penStyle: PenStyleId;
+  onPenStyleChange: (style: PenStyleId) => void;
 }
 
 function durationLabel(seconds: number) {
@@ -17,13 +23,22 @@ function durationLabel(seconds: number) {
   return `${minutes}分${rest.toString().padStart(2, "0")}秒`;
 }
 
-export function LeftPanel({ onGenerate, loading, duration, onDurationChange }: Props) {
+export function LeftPanel({
+  onGenerate,
+  loading,
+  duration,
+  onDurationChange,
+  videoStyle,
+  onVideoStyleChange,
+  penStyle,
+  onPenStyleChange,
+}: Props) {
   const [prompt, setPrompt] = useState("");
   const [markdown, setMarkdown] = useState("");
 
   const handleSubmit = () => {
     if (!prompt.trim()) return;
-    onGenerate(prompt.trim(), markdown.trim());
+    onGenerate(prompt.trim(), markdown.trim(), videoStyle, penStyle);
   };
 
   return (
@@ -32,12 +47,12 @@ export function LeftPanel({ onGenerate, loading, duration, onDurationChange }: P
         {/* Prompt */}
         <section className="space-y-2">
           <label className="block text-xs font-semibold text-[--fg-muted] uppercase tracking-wider">
-            概念 Prompt
+            视频主题
           </label>
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="讲解梯度下降算法的原理，包括损失函数、偏导数、学习率的作用..."
+            placeholder="如何制作好吃的麻婆豆腐，要求图文并茂..."
             rows={6}
             className="w-full rounded-lg bg-[--bg-elevated] border border-[--border-default] text-[--fg-default] placeholder:text-[--fg-subtle] text-sm p-3 resize-none focus:outline-none focus:border-purple-500 transition-colors font-sans leading-relaxed"
           />
@@ -86,11 +101,71 @@ export function LeftPanel({ onGenerate, loading, duration, onDurationChange }: P
             </div>
           </div>
 
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-[--fg-default]">动画风格</span>
-            <span className="text-xs px-2 py-1 rounded border border-[--border-default] text-[--fg-muted] font-mono">
-              Khan Academy 白板
-            </span>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[--fg-default]">Canvas Visual Style</span>
+              <span className="text-xs px-2 py-1 rounded border border-[--border-default] text-[--fg-muted]">
+                8 styles
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {VIDEO_STYLE_OPTIONS.map((option) => {
+                const selected = option.id === videoStyle;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => onVideoStyleChange(option.id)}
+                    disabled={loading}
+                    className={`min-h-16 rounded-lg border p-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      selected
+                        ? "border-purple-500 bg-purple-500/10 text-[--fg-default]"
+                        : "border-[--border-default] bg-[--bg-elevated] text-[--fg-muted] hover:border-[--border-subtle] hover:text-[--fg-default]"
+                    }`}
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className={`h-2 w-2 rounded-full ${option.swatch}`} />
+                      <span className="text-xs font-medium">{option.label}</span>
+                    </span>
+                    <span className="mt-1 block text-[11px] text-[--fg-subtle] leading-snug">
+                      {option.fit}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[--fg-default]">Pen-in-hand Animation</span>
+              <span className="text-xs px-2 py-1 rounded border border-[--border-default] text-[--fg-muted]">
+                可组合
+              </span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {PEN_STYLE_OPTIONS.map((option) => {
+                const selected = option.id === penStyle;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => onPenStyleChange(option.id)}
+                    disabled={loading}
+                    className={`min-h-12 rounded-lg border px-2.5 py-2 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
+                      selected
+                        ? "border-purple-500 bg-purple-500/10 text-[--fg-default]"
+                        : "border-[--border-default] bg-[--bg-elevated] text-[--fg-muted] hover:border-[--border-subtle] hover:text-[--fg-default]"
+                    }`}
+                  >
+                    <span className="block text-xs font-medium">{option.label}</span>
+                    <span className="mt-0.5 block text-[11px] text-[--fg-subtle] leading-snug">
+                      {option.fit}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
 
           <div className="flex items-center justify-between">
@@ -112,7 +187,7 @@ export function LeftPanel({ onGenerate, loading, duration, onDurationChange }: P
           loading={loading}
           disabled={!prompt.trim()}
         >
-          ✦ 生成 Explain 图谱
+          {loading ? "正在生成 Storyboard" : "生成 Storyboard"}
         </Button>
       </div>
     </div>

@@ -1,4 +1,4 @@
-import type { ExplainGraph, Storyboard, RenderJobSummary } from "./types";
+import type { ExplainGraph, Storyboard, RenderJobSummary, PenStyleId, VideoStyleId } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -31,11 +31,15 @@ export async function generateGraph(
 
 export async function generateStoryboard(
   graph: ExplainGraph,
-  targetDuration = 120
+  targetDuration = 120,
+  videoStyle: VideoStyleId = "whiteboard",
+  penStyle: PenStyleId = "marker"
 ): Promise<Storyboard> {
   const data = await post<{ storyboard: Storyboard }>("/planner/storyboard", {
     graph,
     target_duration: targetDuration,
+    video_style: videoStyle,
+    pen_style: penStyle,
   });
   return data.storyboard;
 }

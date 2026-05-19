@@ -64,7 +64,7 @@ export function ExplainGraphView({ graph, loading }: Props) {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center space-y-4">
           <div className="inline-block w-10 h-10 border-2 border-purple-500 border-t-transparent rounded-full animate-spin" />
-          <p className="text-sm text-[--fg-muted]">AI 正在分析概念，生成 Explain 图谱...</p>
+          <p className="text-sm text-[--fg-muted]">AI 正在分析概念，整理讲解结构...</p>
         </div>
       </div>
     );
@@ -76,7 +76,7 @@ export function ExplainGraphView({ graph, loading }: Props) {
         <div className="text-center space-y-3 max-w-sm">
           <div className="text-4xl opacity-20">⬡</div>
           <p className="text-sm text-[--fg-muted]">
-            在左侧输入 AI/ML 概念 Prompt，点击「生成 Explain 图谱」后，这里会显示 AI 对概念的理解结构。
+            在左侧输入主题后，系统会直接生成 Storyboard；内部讲解结构不会展示给用户。
           </p>
         </div>
       </div>

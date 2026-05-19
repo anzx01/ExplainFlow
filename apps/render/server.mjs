@@ -50,7 +50,7 @@ const DEFAULT_CHROME =
 const BROWSER_EXECUTABLE = process.env.REMOTION_CHROME_HEADLESS_SHELL || DEFAULT_CHROME;
 const FFPROBE_BINARY = process.env.FFPROBE_PATH || "ffprobe";
 const COMPOSITION_ID = "GeneratedVideo";
-const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3002);
+const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
 const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism() - 2));
 const RENDER_CONCURRENCY = Number.isFinite(Number(process.env.REMOTION_CONCURRENCY))
   ? Math.max(1, Number(process.env.REMOTION_CONCURRENCY))
@@ -61,7 +61,12 @@ const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
 const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "slow";
 const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv444p";
 const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
-const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 10));
+const ENABLE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_SEEDREAM_REFERENCES !== "0";
+const REQUIRE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_REQUIRE_SEEDREAM_REFERENCES !== "0";
+const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDREAM_REFERENCE_MODE ?? "direct")
+  .trim()
+  .toLowerCase();
+const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 16));
 const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
@@ -77,7 +82,7 @@ const RASTER_REVEAL_TRACE_HEIGHT = Math.max(
 );
 const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
   640,
-  Number(process.env.REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE ?? 648),
+  Number(process.env.REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE ?? 896),
 );
 const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
   40,
@@ -176,8 +181,12 @@ function mojibakeScore(value) {
   return (text.match(/[�€ÃÂåæçèéäöü\ue000-\uf8ff]/g) ?? []).length * 3 - (text.match(/[\u3400-\u9fff]/g) ?? []).length;
 }
 
+function localizeChineseTerms(text) {
+  return String(text ?? "").replace(/相互依赖/g, "互相依赖").replace(/互赖/g, "互相依赖");
+}
+
 function cleanUserText(value, fallback = "") {
-  return tryRepairMojibake(value)
+  return localizeChineseTerms(tryRepairMojibake(value))
     .replace(/\x1b\[[0-9;]*m/g, "")
     .replace(/\s+/g, " ")
     .trim()
@@ -193,6 +202,10 @@ function sanitizeStoryboardText(storyboard) {
       ...scene,
       title: cleanUserText(scene?.title, "场景"),
       narration: cleanUserText(scene?.narration, ""),
+      learning_goal: cleanUserText(scene?.learning_goal ?? scene?.learningGoal, ""),
+      learningGoal: cleanUserText(scene?.learningGoal ?? scene?.learning_goal, ""),
+      image_description: cleanUserText(scene?.image_description ?? scene?.imageDescription, ""),
+      imageDescription: cleanUserText(scene?.imageDescription ?? scene?.image_description, ""),
       subtitleText: scene?.subtitleText == null ? scene?.subtitleText : cleanUserText(scene.subtitleText, ""),
       visual_beats: Array.isArray(scene?.visual_beats)
         ? scene.visual_beats.map((beat) => ({
@@ -474,7 +487,7 @@ function normalizeTextForTts(text) {
 }
 
 function cleanNarrationText(text) {
-  let value = String(text ?? "").replace(/\s+/g, " ").trim();
+  let value = localizeChineseTerms(text).replace(/\s+/g, " ").trim();
   if (!value) return "";
   const replacements = [
     [/^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现|看|看到)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*/i, ""],
@@ -517,6 +530,44 @@ function trimNarrationToChars(text, maxChars) {
   const firstSentence = sentences[0]?.trim() || source;
   if (firstSentence.length <= Math.max(limit * 2, 96)) return firstSentence;
   return `${source.slice(0, limit).replace(/[，,；;：:、\s]+$/g, "")}。`;
+}
+
+function splitNarrationSentences(text) {
+  const source = cleanNarrationText(text);
+  if (!source) return [];
+  return (source.match(/[^。！？!?]+[。！？!?]?/g) ?? [source])
+    .map((part) => cleanNarrationText(part))
+    .filter(Boolean);
+}
+
+function distributeNarrationAcrossBeats(sceneNarration, beatCount) {
+  const count = Math.max(1, Number(beatCount) || 1);
+  const source = cleanNarrationText(sceneNarration);
+  if (!source) return [];
+  if (count === 1) return [source];
+  const sentences = splitNarrationSentences(source);
+  if (sentences.length === 0) return [source];
+  const chunks = Array.from({ length: count }, () => []);
+  const totalChars = sentences.reduce((sum, sentence) => sum + sentence.length, 0);
+  const targetChars = Math.max(1, totalChars / count);
+  let chunkIndex = 0;
+  let chunkChars = 0;
+  for (const [sentenceIndex, sentence] of sentences.entries()) {
+    const remainingSentences = sentences.length - sentenceIndex;
+    const remainingSlots = count - chunkIndex - 1;
+    if (
+      chunkIndex < count - 1 &&
+      chunkChars > 0 &&
+      chunkChars + sentence.length > targetChars &&
+      remainingSentences > remainingSlots
+    ) {
+      chunkIndex += 1;
+      chunkChars = 0;
+    }
+    chunks[chunkIndex].push(sentence);
+    chunkChars += sentence.length;
+  }
+  return chunks.map((chunk) => cleanNarrationText(chunk.join(""))).filter(Boolean);
 }
 
 function normalizeVoiceKey(voice) {
@@ -688,17 +739,30 @@ function sceneBeatSpecs(scene) {
         },
       ];
   const sceneBudget = Math.max(5, Number(scene?.duration_estimate ?? 0) || 0);
-  const beatBudget = Math.max(4, Math.min(9, (sceneBudget * 0.66) / Math.max(1, beats.length)));
-  const maxChars = Math.max(32, Math.floor(beatBudget * 4.2));
+  const sceneNarration = cleanNarrationText(scene.narration || scene.title || "");
+  const distributedSceneNarration = distributeNarrationAcrossBeats(sceneNarration, beats.length);
   return beats.map((beat, index) => {
-    const rawText = cleanNarrationText(beat?.narration || scene.narration || scene.title || beat?.draw_intent || "");
+    const rawText = cleanNarrationText(
+      distributedSceneNarration[index] ||
+        beat?.narration ||
+        sceneNarration ||
+        scene.title ||
+        beat?.draw_intent ||
+        "",
+    );
+    const beatEstimate = Math.max(
+      1,
+      estimateNarrationSeconds(rawText) + 0.8,
+      Number(beat?.duration_estimate ?? beat?.duration ?? sceneBudget / Math.max(1, beats.length)) || 6,
+    );
+    const maxChars = Math.max(120, Math.min(260, Math.floor(Math.max(beatEstimate, 8) * 9.5)));
     const text = trimNarrationToChars(rawText, maxChars);
     return {
       id: String(beat?.id || `beat_${index}`),
       index,
       text,
       drawIntent: String(beat?.draw_intent || beat?.drawIntent || scene.title || "").trim(),
-      durationEstimate: Math.max(1, Number(beat?.duration_estimate ?? beat?.duration ?? 6) || 6),
+      durationEstimate: beatEstimate,
     };
   });
 }
@@ -747,11 +811,11 @@ async function injectAudio(storyboard, voice) {
       });
 
       const transitionFrames = 0;
-      const durationFrames = Math.max(
-        Math.round((Number(scene.duration_estimate) || 0) * FPS),
-        cursor + transitionFrames,
-        FPS * 8,
+      const lastAudioEndFrame = audioSegments.reduce(
+        (maxFrame, segment) => Math.max(maxFrame, Number(segment.audioEndFrame ?? segment.endFrame ?? 0) || 0),
+        0,
       );
+      const durationFrames = Math.max(cursor + transitionFrames, lastAudioEndFrame + Math.round(FPS * 0.65), FPS * 8);
       const fallbackAudio = audioSegments.find((segment) => segment.audioUrl)?.audioUrl ?? null;
       const failedSegments = segmentResults.filter((result) => result.status === "rejected");
       if (failedSegments.length > 0) {
@@ -771,7 +835,7 @@ async function injectAudio(storyboard, voice) {
           allowOverTarget: true,
           segments: audioSegments,
         },
-        duration_estimate: Math.max(Number(scene.duration_estimate) || 0, durationFrames / FPS),
+        duration_estimate: durationFrames / FPS,
       };
     }),
   );
@@ -802,7 +866,7 @@ async function injectAudio(storyboard, voice) {
   return {
     ...storyboard,
     scenes,
-    total_duration_estimate: Math.max(Number(storyboard.total_duration_estimate) || 0, totalFrames / FPS),
+    total_duration_estimate: totalFrames / FPS,
     timingPlan: {
       fps: FPS,
       durationFrames: totalFrames,
@@ -985,6 +1049,8 @@ function sceneTextForStrategy(scene) {
     scene?.boardMode,
     scene?.hand_usage,
     scene?.handUsage,
+    scene?.video_style,
+    scene?.videoStyle,
     scene?.visual_style,
     scene?.visualStyle,
     scene?.teacher_board_strategy,
@@ -1058,14 +1124,25 @@ function sceneHandUsage(scene) {
   return String(scene?.hand_usage ?? scene?.handUsage ?? "").trim().toLowerCase();
 }
 
+function sceneVideoStyle(scene, storyboard = null) {
+  return String(
+    scene?.video_style ?? scene?.videoStyle ?? storyboard?.video_style ?? storyboard?.videoStyle ?? "",
+  )
+    .trim()
+    .toLowerCase();
+}
+
 function sceneVisualStyle(scene) {
   return String(scene?.visual_style ?? scene?.visualStyle ?? "").trim().toLowerCase();
 }
 
 function sceneShouldDirectRender(scene, trace) {
+  if (SEEDREAM_REFERENCE_RENDER_MODE === "direct") return true;
+  const videoStyle = sceneVideoStyle(scene);
   if (sceneHandUsage(scene) === "annotate") return true;
   if (sceneBoardMode(scene) === "reference" || sceneVisualStyle(scene) === "technical_reference") return true;
   if (sceneBoardMode(scene) === "clean_canvas" || sceneVisualStyle(scene) === "marketing_doodle") return true;
+  if (["modern_minimal", "editorial", "whiteboard", "playful"].includes(videoStyle)) return true;
   if (sceneBoardMode(scene) === "chalkboard" || sceneVisualStyle(scene) === "math_chalkboard") return false;
   const explicit = explicitRasterStrategy(scene);
   if (explicit === "direct") return true;
@@ -1109,20 +1186,24 @@ function sceneShouldDirectRender(scene, trace) {
 }
 
 function shouldGenerateReferenceImage(scene) {
+  if (!ENABLE_SEEDREAM_REFERENCE_IMAGES) return false;
   const boardMode = sceneBoardMode(scene);
+  const videoStyle = sceneVideoStyle(scene);
   const visualStyle = sceneVisualStyle(scene);
   const handUsage = sceneHandUsage(scene);
   const explicit = explicitRasterStrategy(scene);
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
+  if (explicit === "direct") return true;
+  if (["modern_minimal", "technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) {
+    return true;
+  }
+  if (ENABLE_SEEDREAM_REFERENCE_IMAGES && scene?.image_description) return true;
   if (boardMode === "whiteboard" && visualStyle === "teacher_whiteboard" && handUsage === "trace") {
     return explicit === "direct";
   }
   if (boardMode === "reference" || boardMode === "clean_canvas") return true;
   if (visualStyle === "technical_reference" || visualStyle === "marketing_doodle") return true;
-
-  if (explicit === "direct") return true;
-  if (explicit === "trace") return false;
 
   const complexity = String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase();
   if (complexity === "dense" || complexity === "reference") return true;
@@ -1662,6 +1743,7 @@ async function injectImageTraces(storyboard, jobId) {
       const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
       const boardMode = String(scene.board_mode ?? scene.boardMode ?? "").toLowerCase();
       const handUsage = String(scene.hand_usage ?? scene.handUsage ?? "").toLowerCase();
+      const videoStyle = sceneVideoStyle(scene, storyboard);
       const visualStyle = String(scene.visual_style ?? scene.visualStyle ?? "").toLowerCase();
       const visualRelationScore = countPatternMatches(text, [
         /\boverview(?:[_\s-]?map)?\b/i,
@@ -1678,6 +1760,8 @@ async function injectImageTraces(storyboard, jobId) {
         (strategy === "hybrid" ? 5 : strategy === "direct" ? 4 : strategy === "trace" ? 1 : 0) +
         (handUsage === "annotate" ? 6 : 0) +
         (boardMode === "reference" ? 6 : 0) +
+        (["technical_blueprint", "editorial", "whiteboard", "playful"].includes(videoStyle) ? 5 : 0) +
+        (["modern_minimal", "sharpie"].includes(videoStyle) ? 3 : 0) +
         (visualStyle === "technical_reference" ? 6 : visualStyle === "marketing_doodle" ? 4 : 0) +
         (visualComplexity === "dense" || visualComplexity === "reference" ? 5 : visualComplexity === "medium" ? 2 : 0) +
         Math.min(6, visualRelationScore * 2) +
@@ -1710,11 +1794,22 @@ async function injectImageTraces(storyboard, jobId) {
             image_description: scene.image_description,
             board_mode: scene.board_mode ?? scene.boardMode ?? "whiteboard",
             hand_usage: scene.hand_usage ?? scene.handUsage ?? "trace",
+            video_style: scene.video_style ?? scene.videoStyle ?? storyboard.video_style ?? storyboard.videoStyle ?? "whiteboard",
             visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
+            pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
           })),
         },
         180000,
       );
+      const generatedCount = candidates.filter((scene) => response.images?.[scene.id]).length;
+      if (REQUIRE_SEEDREAM_REFERENCE_IMAGES && generatedCount === 0) {
+        throw new Error(
+          `Seedream reference image generation returned 0/${candidates.length} images. Check ARK_API_KEY, ARK_BASE_URL, SEEDREAM_MODEL, and /imagegen/scenes logs.`,
+        );
+      }
+      if (generatedCount < candidates.length) {
+        console.warn(`[image-trace] Seedream returned ${generatedCount}/${candidates.length} reference image(s)`);
+      }
     }
 
     for (const scene of candidates) {
@@ -2469,7 +2564,10 @@ async function generateRemotionCode(storyboard, options = {}) {
     background_music_volume: backgroundMusicVolume,
     style_prompt:
       "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
+      "Respect scene video_style as the Golpo Canvas visual layer: chalkboard_bw uses black canvas with white chalk only; chalkboard_color uses black canvas with white/cyan chalk and limited yellow/teal emphasis; modern_minimal uses warm light grey, thin lines and one cool accent; technical_blueprint uses deep navy blueprint styling; editorial uses warm off-white bold ink with red/orange accents; whiteboard uses off-white marker-board with blue labels and small colored fills; playful uses warm cream crayon-like pastel accents; sharpie uses bright white thick black marker and highlighter accents. " +
       "Respect scene board_mode, hand_usage and visual_style: whiteboard/trace scenes use a visible hand following the active stroke; reference or annotate scenes may present a complex finished subject directly and then use hand callouts; clean_canvas/marketing_doodle scenes may use colorful finished doodles plus hand annotations; chalkboard/math_chalkboard or hand_usage=none scenes hide the hand and reveal equations or steps line by line. " +
+      "Use the default bold editorial hand-drawn explainer look when scenes include generated reference art: thick black crayon/marker artwork, coral-pink arrows/checks/starbursts/underlines, warm yellow highlight blobs, one large subject or at most three large step groups, and generous blank space. " +
+      "Treat generated reference art as text-free artwork; add readable Chinese titles, labels, ticks, underlines and callouts in the renderer with large handwritten glyph text instead of relying on text baked into the image. " +
       "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
       (subtitlesEnabled
         ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
@@ -2492,11 +2590,16 @@ async function generateRemotionCode(storyboard, options = {}) {
       "final board text should look like solid marker handwriting, not hollow outlined lettering, " +
       "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
       "If storyboard scenes include rasterReveal and referenceImageAsset, obey rasterReveal.renderMode. For trace, reveal the original reference image through animated SVG masks " +
-      "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for a few short nearby teacher callouts, small circles, underlines and emphasis marks over it; avoid long sweeping arrows and avoid large circles covering the diagram. " +
+      "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for large readable side callouts, short underlines, and small edge ticks near the image; avoid pretending to know exact internal object locations, avoid long sweeping arrows, and avoid large circles covering the diagram. " +
       "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
       "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
-      "Use a sparse clean off-white whiteboard canvas close to #F7F7F2, black marker outlines, blue handwritten titles, and purposeful colored teaching strokes only, " +
-      "for normal whiteboard/trace scenes, build diagrams directly in SVG/HTML with drawOps instead of placing a generated reference image behind the strokes. " +
+      "Use a clean warm off-white whiteboard/paper canvas close to #F7F7F2, strong readable marker outlines, blue or black handwritten titles with coral-pink underlines, and purposeful colored teaching strokes, " +
+      "Every scene needs one primary visual anchor made from at least 3-6 meaningful diagram/icon/object elements such as a funnel, route map, balance scale, gear, clock, warning triangle, clipboard, person/group, chart, matrix, cross-section, or system stack. " +
+      "Never render a scene as only a heading plus checklist, bullets, checkmarks, or generic text boxes; a checklist may only be a tiny note beside a larger visual anchor. " +
+      "Use idiomatic natural Chinese for all board titles, labels, callouts, captions, and narration. If the source concept is English, transcreate it into a Chinese phrase a real teacher would say instead of translating word by word; keep English only for fixed technical terms, acronyms, formulas, code names, or search names, optionally in parentheses. Avoid awkward coined shorthand; for example dependence/independence/interdependence can become 依赖 → 独立 → 互相依赖/成熟协作/协作共赢 depending on context, never 互赖. " +
+      "Use staged reveal like the reference videos: title or anchor first, main line-art object second, labels/arrows/callouts third, and one short conclusion last. " +
+      "If a scene is a summary, render a visual synthesis such as a loop, roadmap, hub-and-spoke map, evidence chart, or metaphor object instead of a plain checklist. " +
+      "When scene.referenceImageAsset and scene.rasterReveal exist, always render the generated reference image via RasterRevealImage/RasterFinalOverlay; do not silently replace it with simpler SVG-only shapes. " +
       "Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full AbsoluteFill background is the only whiteboard. " +
       "Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text. " +
       "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
@@ -2543,25 +2646,156 @@ async function generateRemotionCode(storyboard, options = {}) {
   };
 }
 
-function writeGeneratedProject(jobId, generated) {
+function generatedTsxAudioTags(code) {
+  return [...String(code || "").matchAll(/<\s*Audio\b[^>]*>/g)].map((match) => match[0]);
+}
+
+function generatedTsxRendersLiteralAudioSource(code, source) {
+  if (!source) return false;
+  const audioTags = generatedTsxAudioTags(code);
+  if (audioTags.length === 0) return false;
+  const raw = String(source);
+  const escaped = raw.replace(/\//g, "\\/");
+  return audioTags.some((tag) => tag.includes(raw) || tag.includes(escaped));
+}
+
+function codeContainsAudioSource(code, source) {
+  if (!source) return false;
+  const raw = String(source);
+  const escaped = raw.replace(/\//g, "\\/");
+  const codeText = String(code || "");
+  return codeText.includes(raw) || codeText.includes(escaped);
+}
+
+function generatedTsxRendersSegmentAudio(code, source) {
+  if (generatedTsxRendersLiteralAudioSource(code, source)) return true;
+  if (!codeContainsAudioSource(code, source)) return false;
+  const codeText = String(code || "");
+  return (
+    /(?:audioSegments|audio_segments|segments)\s*(?:\?\?)?[\s\S]{0,900}\.map\s*\([\s\S]{0,1200}<\s*Audio\b[\s\S]{0,260}(?:segment|seg|audio)\.(?:audioUrl|audio_url)/i.test(codeText) ||
+    /(?:segment|seg|audio)\.(?:audioUrl|audio_url)[\s\S]{0,260}<\s*\/\s*Sequence\s*>/i.test(codeText)
+  );
+}
+
+function generatedTsxRendersSceneAudio(code, source) {
+  if (generatedTsxRendersLiteralAudioSource(code, source)) return true;
+  if (!codeContainsAudioSource(code, source)) return false;
+  const audioTags = generatedTsxAudioTags(code);
+  return audioTags.some((tag) => /\bscene\.(?:audioUrl|audio_url)\b/.test(tag));
+}
+
+function generatedTsxRendersBackgroundSource(code, source) {
+  if (!source) return false;
+  const audioTags = generatedTsxAudioTags(code);
+  if (audioTags.length === 0) return false;
+  const raw = String(source);
+  const escaped = raw.replace(/\//g, "\\/");
+  if (audioTags.some((tag) => tag.includes(raw) || tag.includes(escaped))) return true;
+  const codeText = String(code || "");
+  if (!codeText.includes(raw) && !codeText.includes(escaped)) return false;
+  return audioTags.some((tag) => /\b(?:BACKGROUND_MUSIC|backgroundMusic|musicUrl|music_url|music)\b/.test(tag));
+}
+
+function storyboardSceneDurationFrames(scene) {
+  const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
+  const estimateFrames = Math.ceil(Number(scene?.duration_estimate ?? 0) * FPS);
+  const segmentFrames = Array.isArray(scene?.audioSegments ?? scene?.audio_segments)
+    ? Math.max(0, ...(scene?.audioSegments ?? scene?.audio_segments).map((segment) => Number(segment?.endFrame ?? 0)))
+    : 0;
+  return Math.max(FPS * 8, timingFrames, estimateFrames, segmentFrames);
+}
+
+function collectMissingVoiceTracks(storyboard, generatedTsx) {
+  const tracks = [];
+  let sceneOffset = 0;
+  for (const [sceneIndex, scene] of (storyboard?.scenes ?? []).entries()) {
+    const sceneDuration = storyboardSceneDurationFrames(scene);
+    const segments = scene?.audioSegments ?? scene?.audio_segments ?? [];
+    const segmentTracks = [];
+    const sceneAudioUrl = scene?.audioUrl ?? scene?.audio_url;
+    const sceneAudioAlreadyRendered = generatedTsxRendersSceneAudio(generatedTsx, sceneAudioUrl);
+    if (Array.isArray(segments)) {
+      for (const [segmentIndex, segment] of segments.entries()) {
+        const src = segment?.audioUrl ?? segment?.audio_url;
+        if (!src || generatedTsxRendersSegmentAudio(generatedTsx, src)) continue;
+        if (sceneAudioAlreadyRendered && String(src) === String(sceneAudioUrl)) continue;
+        const localFrom = Math.max(0, Math.round(Number(segment?.audioStartFrame ?? segment?.audio_start_frame ?? segment?.startFrame ?? segment?.start_frame ?? 0)));
+        const sequenceDuration = Math.round(
+          Number(
+            segment?.audioSequenceDuration ??
+              segment?.audio_sequence_duration ??
+              segment?.duration ??
+              segment?.audioDurationFrames ??
+              segment?.audio_duration_frames ??
+              FPS * 3,
+          ),
+        );
+        segmentTracks.push({
+          id: `scene_${sceneIndex}_segment_${segmentIndex}`,
+          from: sceneOffset + localFrom,
+          durationInFrames: Math.max(1, sequenceDuration),
+          src: String(src),
+        });
+      }
+    }
+    if (segmentTracks.length === 0 && sceneAudioUrl && !sceneAudioAlreadyRendered && !generatedTsxRendersSegmentAudio(generatedTsx, sceneAudioUrl)) {
+      tracks.push({
+        id: `scene_${sceneIndex}_voice`,
+        from: sceneOffset,
+        durationInFrames: sceneDuration,
+        src: String(sceneAudioUrl),
+      });
+    } else {
+      tracks.push(...segmentTracks);
+    }
+    sceneOffset += sceneDuration;
+  }
+  return tracks;
+}
+
+function writeGeneratedProject(jobId, generated, storyboard, options = {}) {
   const projectDir = join(GENERATED_DIR, jobId);
   mkdirSync(projectDir, { recursive: true });
 
   const componentPath = join(projectDir, "GeneratedVideo.tsx");
   const entryPath = join(projectDir, "index.tsx");
+  const extraVoiceTracks = collectMissingVoiceTracks(storyboard, generated.tsx);
+  const backgroundMusicUrl =
+    options.backgroundMusicUrl && !generatedTsxRendersBackgroundSource(generated.tsx, options.backgroundMusicUrl)
+      ? String(options.backgroundMusicUrl)
+      : null;
+  const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
 
   writeFileSync(componentPath, generated.tsx, "utf8");
   writeFileSync(
     entryPath,
     `import React from "react";
-import { Composition, registerRoot } from "remotion";
+import { Audio, Composition, Sequence, registerRoot } from "remotion";
 import { GeneratedVideo } from "./GeneratedVideo";
+
+const EXTRA_VOICE_TRACKS: Array<{ id: string; from: number; durationInFrames: number; src: string }> = ${JSON.stringify(extraVoiceTracks)};
+const BACKGROUND_MUSIC_URL: string | null = ${JSON.stringify(backgroundMusicUrl)};
+const BACKGROUND_MUSIC_VOLUME = ${JSON.stringify(backgroundMusicVolume)};
+
+const GeneratedVideoWithAudio: React.FC = () => {
+  return (
+    <>
+      <GeneratedVideo />
+      {EXTRA_VOICE_TRACKS.map((track) => (
+        <Sequence key={track.id} from={track.from} durationInFrames={track.durationInFrames}>
+          <Audio src={track.src} />
+        </Sequence>
+      ))}
+      {BACKGROUND_MUSIC_URL ? <Audio src={BACKGROUND_MUSIC_URL} volume={BACKGROUND_MUSIC_VOLUME} loop /> : null}
+    </>
+  );
+};
 
 const RemotionRoot: React.FC = () => {
   return (
     <Composition
       id="${COMPOSITION_ID}"
-      component={GeneratedVideo}
+      component={GeneratedVideoWithAudio}
       durationInFrames={${generated.durationInFrames}}
       fps={${generated.fps}}
       width={${generated.width}}
@@ -2678,7 +2912,7 @@ async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   updateJob(jobId, { phase: "codegen", progress: 0 });
   console.log("[codegen] Generating Remotion TSX via LLM...");
   const generated = await generateRemotionCode(storyboardWithTraces, options);
-  const { projectDir, entryPath } = writeGeneratedProject(jobId, generated);
+  const { projectDir, entryPath } = writeGeneratedProject(jobId, generated, storyboardWithTraces, options);
   updateJob(jobId, {
     generatedDir: projectDir,
     actualDurationSeconds: Math.round((generated.durationInFrames / generated.fps) * 10) / 10,

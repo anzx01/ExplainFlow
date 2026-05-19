@@ -2,65 +2,75 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { Button } from "@/components/ui/Button";
+import { useRouter } from "next/navigation";
 import { LeftPanel } from "@/components/studio/LeftPanel";
-import { ExplainGraphView } from "@/components/studio/ExplainGraphView";
 import { generateGraph, generateStoryboard } from "@/lib/api";
-import type { ExplainGraph, Storyboard } from "@/lib/types";
+import { penStyleLabel, videoStyleLabel } from "@/lib/constants";
+import type { PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
 
-type Tab = "graph" | "preview";
+type GenerationStage = "idle" | "graph" | "storyboard";
 
 export default function StudioPage() {
-  const [graph, setGraph] = useState<ExplainGraph | null>(null);
+  const router = useRouter();
   const [storyboard, setStoryboard] = useState<Storyboard | null>(null);
-  const [loadingGraph, setLoadingGraph] = useState(false);
-  const [loadingStoryboard, setLoadingStoryboard] = useState(false);
+  const [generationStage, setGenerationStage] = useState<GenerationStage>("idle");
   const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<Tab>("graph");
   const [projectName, setProjectName] = useState("未命名项目");
   const [targetDuration, setTargetDuration] = useState(120);
+  const [videoStyle, setVideoStyle] = useState<VideoStyleId>("whiteboard");
+  const [penStyle, setPenStyle] = useState<PenStyleId>("marker");
 
   const handleDurationChange = (duration: number) => {
     setTargetDuration(duration);
     if (storyboard) {
       setStoryboard(null);
       sessionStorage.removeItem("explainflow_storyboard");
-      setTab("graph");
     }
   };
 
-  const handleGenerate = async (prompt: string, markdown: string) => {
+  const handleStyleChange = (style: VideoStyleId) => {
+    setVideoStyle(style);
+    if (storyboard) {
+      setStoryboard(null);
+      sessionStorage.removeItem("explainflow_storyboard");
+    }
+  };
+
+  const handlePenStyleChange = (style: PenStyleId) => {
+    setPenStyle(style);
+    if (storyboard) {
+      setStoryboard(null);
+      sessionStorage.removeItem("explainflow_storyboard");
+    }
+  };
+
+  const handleGenerate = async (
+    prompt: string,
+    markdown: string,
+    style: VideoStyleId,
+    pen: PenStyleId
+  ) => {
     setError(null);
-    setLoadingGraph(true);
-    setGraph(null);
+    setGenerationStage("graph");
     setStoryboard(null);
     sessionStorage.removeItem("explainflow_storyboard");
 
     try {
       const g = await generateGraph(prompt, markdown);
-      setGraph(g);
       setProjectName(g.topic);
-      setTab("graph");
+      setGenerationStage("storyboard");
+      const sb = await generateStoryboard(g, targetDuration, style, pen);
+      setStoryboard(sb);
+      sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
+      router.push("/storyboard");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "生成失败，请检查 API 配置");
+      setError(e instanceof Error ? e.message : "生成 Storyboard 失败，请检查 API 配置");
     } finally {
-      setLoadingGraph(false);
+      setGenerationStage("idle");
     }
   };
 
-  const handleGenerateStoryboard = async () => {
-    if (!graph) return;
-    setLoadingStoryboard(true);
-    try {
-      const sb = await generateStoryboard(graph, targetDuration);
-      setStoryboard(sb);
-      sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Storyboard 生成失败");
-    } finally {
-      setLoadingStoryboard(false);
-    }
-  };
+  const isGenerating = generationStage !== "idle";
 
   return (
     <div className="flex flex-col h-screen bg-[--bg-base] text-[--fg-default] overflow-hidden">
@@ -79,7 +89,7 @@ export default function StudioPage() {
               className="bg-transparent text-sm font-medium text-[--fg-default] focus:outline-none border-b border-transparent focus:border-[--border-default] transition-colors min-w-0 w-48"
             />
           </div>
-          {(graph || storyboard) && (
+          {storyboard && (
             <span className="flex items-center gap-1.5 text-xs text-green-500 font-mono">
               <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500" />
               已保存
@@ -88,16 +98,6 @@ export default function StudioPage() {
         </div>
 
         <div className="flex items-center gap-3">
-          {graph && !storyboard && (
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={handleGenerateStoryboard}
-              loading={loadingStoryboard}
-            >
-              生成 Storyboard
-            </Button>
-          )}
           <Link
             href="/jobs"
             className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
@@ -129,44 +129,54 @@ export default function StudioPage() {
         <div className="w-96 flex-shrink-0 bg-[--bg-surface] border-r border-[--border-subtle] flex flex-col overflow-hidden">
           <LeftPanel
             onGenerate={handleGenerate}
-            loading={loadingGraph}
+            loading={isGenerating}
             duration={targetDuration}
             onDurationChange={handleDurationChange}
+            videoStyle={videoStyle}
+            onVideoStyleChange={handleStyleChange}
+            penStyle={penStyle}
+            onPenStyleChange={handlePenStyleChange}
           />
         </div>
 
         {/* Right panel */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Tab bar */}
-          <div className="flex items-end gap-1 px-6 bg-[--bg-surface] border-b border-[--border-subtle] flex-shrink-0 h-11">
-            {(["graph", "preview"] as Tab[]).map((t) => (
-              <button
-                key={t}
-                onClick={() => setTab(t)}
-                className={`flex items-center gap-2 h-full px-4 text-sm border-b-2 transition-colors ${
-                  tab === t
-                    ? "border-purple-500 text-[--fg-default]"
-                    : "border-transparent text-[--fg-muted] hover:text-[--fg-default]"
-                }`}
-              >
-                {t === "graph" ? "⬡ Explain 图谱" : "▶ 预览"}
-              </button>
-            ))}
-          </div>
-
-          {/* Tab content */}
-          <div className="flex-1 overflow-hidden flex flex-col">
-            {tab === "graph" && (
-              <ExplainGraphView graph={graph} loading={loadingGraph} />
-            )}
-            {tab === "preview" && (
-              <div className="flex-1 flex items-center justify-center text-[--fg-muted] text-sm">
-                <div className="text-center space-y-3">
-                  <div className="text-4xl opacity-20">▶</div>
-                  <p>请先生成 Storyboard，再预览视频效果</p>
+          <div className="flex-1 overflow-hidden flex items-center justify-center">
+            <div className="w-full max-w-lg px-8 text-center space-y-5">
+              <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl border border-purple-500/40 bg-purple-500/10 text-2xl text-purple-300">
+                {isGenerating ? (
+                  <span className="inline-block h-7 w-7 rounded-full border-2 border-current border-t-transparent animate-spin" />
+                ) : (
+                  "▶"
+                )}
+              </div>
+              <div className="space-y-2">
+                <h2 className="text-lg font-semibold text-[--fg-default]">
+                  {generationStage === "graph"
+                    ? "正在梳理讲解结构"
+                    : generationStage === "storyboard"
+                      ? "正在生成分镜与旁白"
+                      : "准备生成 Storyboard"}
+                </h2>
+                <p className="text-sm leading-relaxed text-[--fg-muted]">
+                  {isGenerating
+                    ? "生成完成后会自动进入分镜编辑页。"
+                    : "填写左侧内容后，系统会直接产出可编辑的分镜脚本。"}
+                </p>
+              </div>
+              <div className="grid grid-cols-2 gap-3 text-left">
+                <div className="rounded-lg border border-[--border-default] bg-[--bg-surface] p-3">
+                  <p className="text-xs font-semibold text-[--fg-muted]">目标时长</p>
+                  <p className="mt-1 text-sm text-purple-300">{targetDuration}s</p>
+                </div>
+                <div className="rounded-lg border border-[--border-default] bg-[--bg-surface] p-3">
+                  <p className="text-xs font-semibold text-[--fg-muted]">视频风格</p>
+                  <p className="mt-1 text-sm text-purple-300">
+                    {videoStyleLabel(videoStyle)} · {penStyleLabel(penStyle)}
+                  </p>
                 </div>
               </div>
-            )}
+            </div>
           </div>
         </div>
       </div>
