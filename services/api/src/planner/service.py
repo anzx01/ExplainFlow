@@ -501,6 +501,20 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
     - `hand_usage=trace` 表示手逐笔写画；`annotate` 表示主体已出现，手只标注重点；`none` 表示无手，内容按步骤显现。
     - `visual_style=teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference`，按教学表达选择，不是模板库。
 
+通用视觉语法规则：
+- 不按具体题材标签选画法，而按“这一场要讲清的关系”选 `diagram_plan.kind`。
+- `overview_map`：先建立全局地图，适合一个主题下有多个对象、单元或阶段。
+- `comparison`：讲前后、开关、好坏、旧新、A/B、状态变化时，用双栏或上下对比。
+- `process`：讲因果链、机制、流程、变化过程时，用原因 -> 过程 -> 结果箭头。
+- `structure`：讲组成、层级、部件、整体和局部时，用主体图 + 贴近标签 + 局部放大。
+- `interaction`：讲两个或多个对象互相影响、协作、信息交换、反馈关系时，用角色/节点 + 双向箭头 + 共同结果。
+- `tradeoff_matrix`：讲优先级、取舍、二维判断、分类象限时，用坐标/四象限或 2x2 矩阵。
+- `goal_path`：讲目标、路线、倒推、成长路径、阶段推进时，用起点 -> 里程碑 -> 终点路径。
+- `cycle`：讲迭代、复盘、反馈、更新、闭环时，用环形箭头和 3-5 个节点。
+- `formula`：讲公式含义时，用公式 + 变量 callout + 小示意图，不只写符号。
+- `reference_callout`：图很复杂或必须保真时，主体直接呈现，再用 2-4 个局部标注讲重点。
+- `summary`：收束时用少量清单、闭环或框架图，不把正文段落塞到画面上。
+
 参考白板样片的通用板书规则：
 - 一屏只讲一个核心想法；不要把完整报告页、海报页或密集信息图塞进一场。
 - 标题使用短蓝色手写字，位于顶部左侧或顶部居中，可加一条手绘下划线。
@@ -523,14 +537,14 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 颜色有语义：白色主式，cyan/green 表示变量或向量，yellow 表示结论，pink/red 表示目标或关键条件。
 - 每一屏只推进一个推导动作，不要一次性出现整页答案。
 
-MOS/FinFET 专项要求：
+MOS/FinFET 专项要求（只在用户原始主题、graph.topic 或 enhanced brief 明确包含 MOS、MOSFET、晶体管、FinFET 时启用；其他主题严禁引入这些器件内容）：
 - 必须包含 MOS Off/On 对比：未加栅压无沟道无电流；V_G > V_th 后形成反型电子通道。
 - 必须画出 V_DS 驱动源漏电流，把 MOS 总结为电压控制开关。
 - 必须解释短沟道效应为什么随着尺寸缩小出现。
 - 必须画出 FinFET 的三维 fin 和 gate 三面包住沟道。
 - 必须画出 FinFET 截面，标注 W_eff = 2H_fin + W_fin，并显示三面感应电荷。
 
-梯度下降专项要求：
+梯度下降专项要求（只在用户原始主题、graph.topic 或 enhanced brief 明确包含梯度下降/gradient descent 时启用；其他主题严禁引入这些内容）：
 - 必须包含损失曲线、当前位置、梯度方向、负梯度更新、学习率步长、迭代收敛。
 
 输出 JSON：
@@ -547,7 +561,7 @@ MOS/FinFET 专项要求：
       "hand_usage": "trace|annotate|none",
       "visual_style": "teacher_whiteboard|marketing_doodle|math_chalkboard|technical_reference",
       "diagram_plan": {
-        "kind": "comparison|process|structure|cross_section|formula|simulation",
+        "kind": "overview_map|comparison|process|structure|interaction|tradeoff_matrix|goal_path|cycle|cross_section|formula|simulation|reference_callout|summary",
         "layout": "具体画面布局",
         "required_labels": ["必须写在图里的标签"]
       },
@@ -705,70 +719,115 @@ def _scene_floor_duration(scene: Scene) -> float:
     beat_floor = sum(max(2.4, beat.duration_estimate * 0.75) for beat in scene.visual_beats)
     animation_floor = sum(max(1.0, animation.duration * 0.8) for animation in scene.animations)
     narration_floor = _estimate_narration_seconds(scene.narration) + 2.0
-    required = max(12.0, narration_floor, beat_floor + 2.0, animation_floor + 2.0)
-    return round(min(36.0, required), 1)
+    required = max(10.0, narration_floor, beat_floor + 1.0, animation_floor + 1.0)
+    return round(min(32.0, required), 1)
 
 
 def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> Storyboard:
-    """Treat the UI duration as the final contract without starving narration-heavy scenes."""
-    target = float(max(60, min(180, target_duration)))
+    """Use the UI duration as a pacing hint: stretch short lessons, never trim required content."""
+    target = float(max(30, min(300, target_duration)))
     if not storyboard.scenes:
         storyboard.total_duration_estimate = target
         return storyboard
 
-    current = sum(max(0.1, scene.duration_estimate) for scene in storyboard.scenes)
-    if current <= 0:
-        per_scene = target / len(storyboard.scenes)
-        for scene in storyboard.scenes:
-            scene.duration_estimate = round(per_scene, 1)
-        storyboard.total_duration_estimate = target
-        return storyboard
-
     floors = [_scene_floor_duration(scene) for scene in storyboard.scenes]
+    for scene, floor in zip(storyboard.scenes, floors):
+        scene.duration_estimate = round(max(0.1, scene.duration_estimate, floor), 1)
+
+    current = sum(max(0.1, scene.duration_estimate) for scene in storyboard.scenes)
     floor_total = sum(floors)
-    if floor_total <= target:
-        weights = [max(0.1, scene.duration_estimate - floor) for scene, floor in zip(storyboard.scenes, floors)]
-        weight_total = sum(weights) or float(len(storyboard.scenes))
-        remaining = target - floor_total
-        running = 0.0
-        for index, (scene, floor, weight) in enumerate(zip(storyboard.scenes, floors, weights)):
-            if index == len(storyboard.scenes) - 1:
-                duration = max(1.0, target - running)
-            else:
-                duration = floor + remaining * (weight / weight_total)
-                running += duration
-            ratio = duration / max(0.1, scene.duration_estimate)
+    if current >= target:
+        if floor_total >= target:
+            for scene, floor in zip(storyboard.scenes, floors):
+                old_duration = max(0.1, scene.duration_estimate)
+                ratio = floor / old_duration
+                scene.duration_estimate = round(floor, 1)
+                for beat in scene.visual_beats:
+                    beat.duration_estimate = round(max(1.0, beat.duration_estimate * ratio), 1)
+                for animation in scene.animations:
+                    animation.duration = round(min(15.0, max(0.5, animation.duration * ratio)), 1)
+            storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+            return storyboard
+        compressible = max(0.1, current - floor_total)
+        ratio = max(0.0, min(1.0, (target - floor_total) / compressible))
+        for scene, floor in zip(storyboard.scenes, floors):
+            old_duration = max(0.1, scene.duration_estimate)
+            duration = floor + (old_duration - floor) * ratio
+            beat_ratio = duration / old_duration
             scene.duration_estimate = round(duration, 1)
             for beat in scene.visual_beats:
-                beat.duration_estimate = round(max(1.0, beat.duration_estimate * ratio), 1)
+                beat.duration_estimate = round(max(1.0, beat.duration_estimate * beat_ratio), 1)
             for animation in scene.animations:
-                animation.duration = round(max(0.5, min(15.0, animation.duration * ratio)), 1)
-        rounded_total = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
-        delta = round(target - rounded_total, 1)
-        if storyboard.scenes and abs(delta) >= 0.1:
-            storyboard.scenes[-1].duration_estimate = round(max(1.0, storyboard.scenes[-1].duration_estimate + delta), 1)
+                animation.duration = round(min(15.0, max(0.5, animation.duration * beat_ratio)), 1)
         storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
         return storyboard
 
-    scale = target / floor_total
-    running = 0.0
-    for index, scene in enumerate(storyboard.scenes):
-        if index == len(storyboard.scenes) - 1:
-            duration = max(1.0, target - running)
-        else:
-            duration = max(8.0, _scene_floor_duration(scene) * scale)
-            running += duration
-        ratio = duration / max(0.1, scene.duration_estimate)
+    remaining = target - current
+    weights = [max(1.0, scene.duration_estimate) for scene in storyboard.scenes]
+    weight_total = sum(weights) or float(len(storyboard.scenes))
+
+    for scene, weight in zip(storyboard.scenes, weights):
+        old_duration = max(0.1, scene.duration_estimate)
+        duration = old_duration + remaining * (weight / weight_total)
+        ratio = duration / old_duration
         scene.duration_estimate = round(duration, 1)
         for beat in scene.visual_beats:
             beat.duration_estimate = round(max(1.0, beat.duration_estimate * ratio), 1)
         for animation in scene.animations:
-            animation.duration = round(max(0.5, min(15.0, animation.duration * ratio)), 1)
+            animation.duration = round(min(15.0, max(0.5, animation.duration * ratio)), 1)
 
     rounded_total = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     delta = round(target - rounded_total, 1)
     if storyboard.scenes and abs(delta) >= 0.1:
         storyboard.scenes[-1].duration_estimate = round(max(1.0, storyboard.scenes[-1].duration_estimate + delta), 1)
+        old_total_without_last = sum(scene.duration_estimate for scene in storyboard.scenes[:-1])
+        last = storyboard.scenes[-1]
+        last.duration_estimate = round(max(_scene_floor_duration(last), target - old_total_without_last), 1)
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    return storyboard
+
+
+def _max_scene_count_for_target(target_duration: int) -> int:
+    return max(3, min(7, math.ceil(max(60, target_duration) / 22)))
+
+
+def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int) -> Storyboard:
+    max_scenes = _max_scene_count_for_target(target_duration)
+    if len(storyboard.scenes) <= max_scenes:
+        return storyboard
+
+    unique: list[Scene] = []
+    deferred: list[Scene] = []
+    seen: set[str] = set()
+    for scene in storyboard.scenes:
+        kind = _visual_relation_kind_for_scene(scene) or (
+            _clean_text(scene.diagram_plan.kind if scene.diagram_plan else "") or "scene"
+        )
+        if kind in seen:
+            deferred.append(scene)
+            continue
+        seen.add(kind)
+        unique.append(scene)
+
+    candidates = unique + deferred
+    selected = candidates[:max_scenes]
+
+    summary_scene = next(
+        (
+            scene
+            for scene in reversed(candidates)
+            if (_visual_relation_kind_for_scene(scene) == "teaching_board_summary")
+            or (_clean_text(scene.diagram_plan.kind if scene.diagram_plan else "").lower() in {"summary", "checklist", "conclusion"})
+        ),
+        None,
+    )
+    if summary_scene and summary_scene not in selected and selected:
+        selected[-1] = summary_scene
+
+    for index, scene in enumerate(selected):
+        scene.order = index
+        scene.id = f"scene_{index}"
+    storyboard.scenes = selected
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
 
@@ -788,6 +847,8 @@ def _desired_scene_count(graph: ExplainGraph, target_duration: int) -> int:
     brief = _graph_enhanced_brief(graph) or {}
     outline = brief.get("recommended_scene_outline") if isinstance(brief, dict) else None
     outline_count = len(outline) if isinstance(outline, list) else 0
+    coverage_count = len(_brief_coverage_units(graph))
+    scene_cap = _max_scene_count_for_target(target_duration)
     topic_blob = " ".join(
         [
             graph.topic,
@@ -796,19 +857,29 @@ def _desired_scene_count(graph: ExplainGraph, target_duration: int) -> int:
             json.dumps(brief, ensure_ascii=False) if brief else "",
         ]
     ).lower()
-    if any(term in topic_blob for term in ["mos", "mosfet", "finfet", "晶体管", "栅极", "沟道"]):
+    if _contains_semiconductor_topic(topic_blob):
         if target_duration <= 70:
             return 3
         if target_duration <= 95:
             return 4
         if target_duration <= 150:
             return 5
-        return max(6, min(8, outline_count or 6))
+        return min(scene_cap, max(6, min(8, outline_count or 6)))
     if any(term in topic_blob for term in ["gradient", "descent", "梯度下降", "学习率", "损失"]):
-        return max(4, min(6, outline_count or 4))
+        return min(scene_cap, max(4, min(6, outline_count or 4)))
+    if coverage_count >= 7:
+        return max(6, min(scene_cap, 7))
+    if coverage_count >= 4:
+        return max(4, min(scene_cap, 6))
     if outline_count:
-        return max(3, min(8, outline_count))
-    return max(3, min(6, len(graph.nodes), max(3, target_duration // 24)))
+        return max(3, min(scene_cap, outline_count))
+    node_count = len(graph.nodes)
+    duration_based = max(3, target_duration // 20)
+    if node_count >= 7 and target_duration >= 100:
+        return max(6, min(scene_cap, node_count))
+    if node_count > 0:
+        return max(3, min(scene_cap, node_count, duration_based))
+    return max(3, min(scene_cap, duration_based))
 
 
 async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
@@ -869,11 +940,14 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "Generate concrete scenes, not generic slide bullets.",
                 "Each scene must include learning_goal, diagram_plan, visual_beats, narration, image_description and animations.",
                 "Every visual_beat must pair draw_intent with narration so voiceover follows drawing.",
+                "Cover every high-priority teaching_coverage_units item from enhanced_teaching_brief in the actual scene text, labels, beats or narration. Do not merely leave it in the brief.",
+                "Respect desired_scene_count. If coverage units are more numerous than scenes, group related units into one scene with multiple visual_beats instead of adding duplicate scenes.",
+                "For multi-part topics, include an overview map, grouped explanation scenes, then a final checklist/loop summary.",
                 "Use comparison/process/structure/cross-section diagrams and arrows whenever possible.",
                 "Borrow strong science-video teaching techniques: start with a hook or historical/context clue when useful, expand acronyms visually, use picture-in-picture reference diagrams, and introduce one concrete real-world analogy that maps to the mechanism.",
                 "For abstract mechanisms, show the analogy and the technical diagram side by side, then transfer arrows/labels from the analogy to the device/process.",
                 "Use progressive focus: first show the whole object, then zoom/call out one region, then add colored arrows and labels only when the narration reaches them.",
-                "The total duration must match target_duration_seconds. If content is complex, split the drawing more efficiently instead of exceeding the target.",
+                "Treat target_duration_seconds as a pacing hint, not a hard cap. Never drop required concepts or compress narration so much that drawing and voiceover become incomplete.",
                 "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
                 "Underline, circle, or box important concepts like V_G > V_th, electron channel, short-channel effect, FinFET, W_eff, learning rate, and gradient.",
                 "For each scene choose board_mode, hand_usage and visual_style from the brief strategy. Use chalkboard/no hand for math derivations, clean_canvas/annotate for marketing doodles, reference/annotate for complex finished diagrams, and whiteboard/trace for simple teacher boardwork.",
@@ -905,7 +979,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
             animations.append(
                 AnimationInstruction(
                     type=anim_type,
-                    duration=float(a.get("duration", 2.0)),
+                    duration=min(15.0, max(0.5, float(a.get("duration", 2.0)))),
                     content=a.get("content") or "",
                     latex=a.get("latex"),
                     from_node=a.get("from_node"),
@@ -946,7 +1020,9 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         total_duration_estimate=total_duration,
         scenes=scenes,
     )
+    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
+    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
 
     logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)
@@ -972,8 +1048,494 @@ def _storyboard_corpus(storyboard: Storyboard, graph: ExplainGraph) -> str:
     return " ".join(part for part in parts if part).lower()
 
 
+def _graph_source_corpus(graph: ExplainGraph) -> str:
+    brief = _graph_enhanced_brief(graph) or {}
+    parts = [graph.topic, graph.summary, " ".join(graph.key_insights)]
+    if isinstance(brief, dict):
+        parts.extend(
+            [
+                _clean_text(brief.get("original_prompt")),
+                _clean_text(brief.get("topic_type")),
+                json.dumps(brief.get("must_include_points") or [], ensure_ascii=False),
+                json.dumps(brief.get("learning_objectives") or [], ensure_ascii=False),
+            ]
+        )
+    return " ".join(part for part in parts if part).lower()
+
+
+def _storyboard_scene_corpus(storyboard: Storyboard) -> str:
+    parts: list[str] = []
+    for scene in storyboard.scenes:
+        parts.extend([scene.title, scene.narration, scene.learning_goal or "", scene.image_description or ""])
+        if scene.diagram_plan:
+            parts.append(scene.diagram_plan.kind)
+            parts.append(scene.diagram_plan.layout)
+            parts.extend(scene.diagram_plan.required_labels)
+        for beat in scene.visual_beats:
+            parts.extend([beat.draw_intent, beat.narration, *beat.required_labels])
+        for animation in scene.animations:
+            parts.append(animation.content)
+            parts.append(animation.latex or "")
+            if animation.items:
+                parts.extend(animation.items)
+    return " ".join(part for part in parts if part).lower()
+
+
 def _contains_terms(corpus: str, terms: list[str]) -> bool:
     return any(term.lower() in corpus for term in terms)
+
+
+def _contains_semiconductor_topic(corpus: str) -> bool:
+    lowered = corpus.lower()
+    if any(
+        re.search(pattern, lowered)
+        for pattern in [
+            r"(?<![a-z0-9_])mos(?![a-z0-9_])",
+            r"(?<![a-z0-9_])mosfet(?![a-z0-9_])",
+            r"(?<![a-z0-9_])finfet(?![a-z0-9_])",
+        ]
+    ):
+        return True
+    return _contains_terms(corpus, ["晶体管", "场效应管", "栅极", "源极", "漏极", "沟道"])
+
+
+def _brief_coverage_units(graph: ExplainGraph) -> list[dict]:
+    brief = _graph_enhanced_brief(graph) or {}
+    units = brief.get("teaching_coverage_units") if isinstance(brief, dict) else []
+    if isinstance(units, list):
+        return [unit for unit in units if isinstance(unit, dict) and _clean_text(unit.get("label"))]
+    return []
+
+
+def _coverage_unit_label(unit: dict) -> str:
+    return _clean_text(unit.get("label") or unit.get("title") or unit.get("name"))
+
+
+def _coverage_unit_tokens(unit: dict) -> list[str]:
+    values: list[str] = []
+    values.append(_coverage_unit_label(unit))
+    values.extend(_planner_str_list(unit.get("must_show") or unit.get("required_labels") or unit.get("must_draw"), limit=8))
+    values.append(_clean_text(unit.get("teaching_goal")))
+    values.append(_clean_text(unit.get("narration_focus")))
+    tokens: list[str] = []
+    for value in values:
+        value = _clean_text(value).strip(" ：:，,。")
+        if not value:
+            continue
+        tokens.append(value)
+        for piece in re.split(r"[、,，；;：:\s/]+", value):
+            piece = _clean_text(piece).strip("（）()[]【】")
+            if 2 <= len(piece) <= 24:
+                tokens.append(piece)
+    seen: set[str] = set()
+    result: list[str] = []
+    for token in tokens:
+        key = re.sub(r"\s+", "", token).lower()
+        if key and key not in seen:
+            seen.add(key)
+            result.append(token)
+    return result
+
+
+def _coverage_unit_fingerprint(unit: dict) -> set[str]:
+    text = " ".join(_coverage_unit_tokens(unit)).lower()
+    role = _clean_text(unit.get("visual_role") or unit.get("unit_type")).lower()
+    labels = {_clean_text(token).lower() for token in _coverage_unit_tokens(unit) if _clean_text(token)}
+    relation_kind = _diagram_kind_for_coverage_unit(unit)
+    if relation_kind:
+        labels.add(relation_kind)
+    relation_terms = {
+        "overview_map": ["overview", "map", "全局", "概览", "地图", "框架"],
+        "comparison": ["comparison", "compare", "state", "before", "after", "对比", "比较", "状态", "方案"],
+        "process": ["process", "flow", "mechanism", "cause", "effect", "过程", "流程", "机制", "因果"],
+        "structure": ["structure", "component", "part", "结构", "拆解", "组成", "局部"],
+        "tradeoff_matrix": ["tradeoff", "priority", "matrix", "quadrant", "取舍", "优先", "矩阵", "象限"],
+        "interaction": ["interaction", "relationship", "mutual", "沟通", "互动", "关系", "协作"],
+        "goal_path": ["goal", "path", "roadmap", "milestone", "目标", "路径", "路线", "倒推"],
+        "cycle": ["cycle", "loop", "feedback", "iterate", "循环", "闭环", "反馈", "迭代"],
+        "formula": ["formula", "equation", "公式", "="],
+        "summary": ["summary", "checklist", "conclusion", "总结", "清单", "结论"],
+    }
+    for kind, terms in relation_terms.items():
+        if kind in role or any(term in text for term in terms):
+            labels.add(kind)
+            labels.update(term.lower() for term in terms)
+    return {label for label in labels if label}
+
+
+def _coverage_unit_is_covered(unit: dict, scene_corpus: str) -> bool:
+    tokens = _coverage_unit_tokens(unit)
+    if not tokens:
+        return True
+    corpus = scene_corpus.lower()
+    label = _coverage_unit_label(unit).lower()
+    if label and label in corpus:
+        return True
+    strong_tokens = [token.lower() for token in tokens if len(token) >= 3]
+    if not strong_tokens:
+        return False
+    hits = sum(1 for token in strong_tokens[:8] if token in corpus)
+    return hits >= min(2, len(strong_tokens))
+
+
+def _coverage_unit_is_redundant(unit: dict, kept_units: list[dict]) -> bool:
+    current = _coverage_unit_fingerprint(unit)
+    if not current:
+        return False
+    for kept in kept_units:
+        other = _coverage_unit_fingerprint(kept)
+        if not other:
+            continue
+        overlap = current & other
+        if len(overlap) >= 2:
+            return True
+        label = _coverage_unit_label(unit).lower()
+        kept_label = _coverage_unit_label(kept).lower()
+        if label and kept_label and (label in kept_label or kept_label in label):
+            return True
+    return False
+
+
+def _missing_coverage_units(storyboard: Storyboard, graph: ExplainGraph) -> list[dict]:
+    scene_corpus = _storyboard_scene_corpus(storyboard)
+    missing: list[dict] = []
+    for unit in _brief_coverage_units(graph):
+        priority = int(unit.get("priority") or 3)
+        if priority < 3:
+            continue
+        if not _coverage_unit_is_covered(unit, scene_corpus):
+            if _coverage_unit_is_redundant(unit, missing):
+                continue
+            missing.append(unit)
+    return missing
+
+
+def _diagram_kind_for_coverage_unit(unit: dict) -> str:
+    role = _clean_text(unit.get("visual_role") or unit.get("unit_type")).lower()
+    label = _coverage_unit_label(unit).lower()
+    text = f"{role} {label}"
+    if any(term in text for term in ["overview", "map", "whole", "landscape", "全局", "概览", "地图", "总览", "框架"]):
+        return "overview_map"
+    if any(term in text for term in ["formula", "equation", "公式", "="]):
+        return "formula"
+    if any(term in text for term in ["comparison", "compare", "versus", " vs ", "state", "对比", "状态"]):
+        return "comparison"
+    if any(term in text for term in ["tradeoff", "matrix", "quadrant", "priority", "2x2", "取舍", "矩阵", "象限", "优先", "分类"]):
+        return "tradeoff_matrix"
+    if any(term in text for term in ["interaction", "relationship", "communication", "collaboration", "exchange", "mutual", "互相", "互动", "关系", "沟通", "协作", "交换", "影响"]):
+        return "interaction"
+    if any(term in text for term in ["goal", "path", "journey", "roadmap", "milestone", "route", "目标", "路径", "路线", "旅程", "阶段", "里程碑"]):
+        return "goal_path"
+    if any(term in text for term in ["cycle", "loop", "feedback", "iterate", "renew", "循环", "闭环", "反馈", "迭代", "复盘", "更新"]):
+        return "cycle"
+    if any(term in text for term in ["process", "flow", "mechanism", "change", "step", "过程", "流程", "步骤", "变化", "机制"]):
+        return "process"
+    if any(term in text for term in ["summary", "conclusion", "checklist", "总结", "结论", "清单"]):
+        return "summary"
+    if any(term in text for term in ["structure", "object", "component", "结构", "对象", "组成"]):
+        return "structure"
+    return "concept"
+
+
+def _coverage_scene_spec(unit: dict, index: int, topic: str) -> dict:
+    label = _coverage_unit_label(unit) or f"关键单元 {index + 1}"
+    kind = _diagram_kind_for_coverage_unit(unit)
+    must_show = _planner_str_list(unit.get("must_show") or unit.get("required_labels") or unit.get("must_draw"), limit=5)
+    if not must_show:
+        must_show = [label]
+    teaching_goal = _clean_text(unit.get("teaching_goal")) or f"讲清楚 {label} 的含义、原因和结果。"
+    narration_focus = _clean_text(unit.get("narration_focus")) or teaching_goal
+    short_label = _short_text(label, 22)
+
+    if kind == "comparison":
+        diagram_kind = "comparison"
+        layout = "two whiteboard panels contrasting the state before and after the key change"
+        beat_one_draw = f"用双栏对比呈现 {short_label} 的前后状态，并放上最短标签。"
+        beat_two_draw = f"在两栏之间补箭头、差异圈选和结论下划线，让变化原因可见。"
+        beat_one_narration = f"{short_label} 不是一个孤立名词，它需要通过前后状态的差异来理解。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "tradeoff_matrix":
+        diagram_kind = "tradeoff_matrix"
+        layout = "2x2 whiteboard matrix showing two decision axes, four zones, and the preferred zone underlined"
+        beat_one_draw = f"把 {short_label} 放进二维判断矩阵，横轴和纵轴各表达一个关键标准。"
+        beat_two_draw = "圈出最值得关注的区域，并用箭头说明取舍方向。"
+        beat_one_narration = f"{short_label} 适合用两个维度来分清优先级，因为观众需要知道该把注意力放在哪里。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "interaction":
+        diagram_kind = "interaction"
+        layout = "two or three actors/nodes with bidirectional arrows, exchanged signals, and a shared outcome callout"
+        beat_one_draw = f"把 {short_label} 拆成参与对象和它们之间的相互影响。"
+        beat_two_draw = "补双向箭头、信息交换标签和共同结果，让关系不是孤立节点。"
+        beat_one_narration = f"{short_label} 的重点在关系本身：一个对象的变化会影响另一个对象，最后形成共同结果。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "goal_path":
+        diagram_kind = "goal_path"
+        layout = "start point, milestones, target point, and a backcasting arrow on a sparse whiteboard"
+        beat_one_draw = f"把 {short_label} 画成从当前位置到目标的路径。"
+        beat_two_draw = "加入里程碑和倒推箭头，说明每一步为什么服务于终点。"
+        beat_one_narration = f"{short_label} 需要把终点和行动连起来，观众才知道每个阶段为什么存在。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "cycle":
+        diagram_kind = "cycle"
+        layout = "3 to 5 node circular loop with arrows and one highlighted improvement point"
+        beat_one_draw = f"把 {short_label} 做成一个闭环，而不是一次性动作。"
+        beat_two_draw = "用环形箭头连接各节点，并强调下一轮会带来什么改进。"
+        beat_one_narration = f"{short_label} 的关键是重复反馈：结果会反过来改变下一次行动。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "formula":
+        diagram_kind = "formula"
+        layout = "one formula line with variable callouts and a small meaning diagram"
+        beat_one_draw = f"写出 {short_label} 的核心表达，并把变量拆成短标签。"
+        beat_two_draw = "用箭头把公式中的变量连接到旁边的小示意图。"
+        beat_one_narration = f"{short_label} 的关键不只是记住符号，而是知道每个量对应现实中的哪一部分。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "process":
+        diagram_kind = "process"
+        layout = "left-to-right cause-process-result flow with arrows and a small conclusion underline"
+        beat_one_draw = f"把 {short_label} 拆成原因、过程、结果三个节点。"
+        beat_two_draw = "用箭头表示变化方向，并圈出最关键的转折点。"
+        beat_one_narration = f"理解 {short_label} 要抓住因果链：是什么触发了变化，中间发生了什么。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "summary":
+        diagram_kind = "summary"
+        layout = "teacher checklist or loop map summarizing the key units"
+        beat_one_draw = f"把 {short_label} 做成一张总结清单或闭环图。"
+        beat_two_draw = "给核心结论加下划线，并把它连回主题。"
+        beat_one_narration = f"{short_label} 是这一段内容的收束，帮助观众把前面的点重新组织成可复述的框架。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    elif kind == "overview_map":
+        diagram_kind = "overview_map"
+        layout = "central topic with 3 to 5 surrounding units, arrows showing the lesson route, and one highlighted current unit"
+        beat_one_draw = f"先把 {short_label} 放在中心，并展开本主题的几个核心单元。"
+        beat_two_draw = "用路线箭头串起这些单元，让观众知道后面会怎样推进。"
+        beat_one_narration = f"{short_label} 需要先建立全局地图，观众才不会把后面的单元看成散点。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+    else:
+        diagram_kind = "structure"
+        layout = "central concept sketch with nearby short labels, arrows and a concrete example"
+        beat_one_draw = f"在白板中央呈现 {short_label} 的核心对象，并贴近写短标签。"
+        beat_two_draw = "补一个具体例子或局部放大，再用下划线强调结论。"
+        beat_one_narration = f"{short_label} 需要先看见它在整个主题里的位置，再理解它为什么重要。"
+        beat_two_narration = _clean_narration_text(narration_focus)
+
+    return {
+        "title": short_label,
+        "learning_goal": teaching_goal,
+        "render_strategy": "trace",
+        "visual_complexity": "medium",
+        "board_mode": "whiteboard",
+        "hand_usage": "trace",
+        "visual_style": "teacher_whiteboard",
+        "diagram_plan": {
+            "kind": diagram_kind,
+            "layout": layout,
+            "required_labels": must_show[:6],
+        },
+        "visual_beats": [
+            {
+                "draw_intent": beat_one_draw,
+                "narration": beat_one_narration,
+                "required_labels": must_show[:3],
+                "duration_estimate": 8,
+            },
+            {
+                "draw_intent": beat_two_draw,
+                "narration": beat_two_narration,
+                "required_labels": must_show[:5],
+                "duration_estimate": 9,
+            },
+        ],
+        "image_description": (
+            "light grey-white empty whiteboard, black marker line art, sparse blue handwritten title, "
+            f"{layout}, topic {topic}, labels {', '.join(must_show[:6])}, yellow underline for the key term, "
+            "large negative space, no poster, no card, no legend box, no colored background"
+        ),
+        "duration_estimate": 30,
+    }
+
+
+def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> list[dict]:
+    topic = _short_text(graph.topic or "主题", 20)
+    desired = _max_scene_count_for_target(target_duration)
+    base_specs = [
+        {
+            "title": "全局地图",
+            "learning_goal": f"先建立 {topic} 的整体认知，知道接下来会讲哪些部分。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "overview_map", "layout": "central topic with surrounding units and route arrows", "required_labels": ["主题", "现象", "结构", "过程", "结果"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "在中心写主题，周围展开几个核心单元。",
+                    "narration": f"理解 {topic} 要先有全局地图，否则后面的细节会变成零散信息。",
+                    "required_labels": ["主题", "全局地图"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "用箭头串起后续讲解路线。",
+                    "narration": "全局地图把对象、边界和顺序放在同一张白板上，观众能知道每一步服务于什么。",
+                    "required_labels": ["对象", "边界", "顺序"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": f"light grey-white empty whiteboard, central topic {topic}, 4 surrounding units, route arrows, sparse blue handwritten labels, large negative space",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "结构拆解",
+            "learning_goal": "把复杂对象拆成组成部分，说明整体和局部如何连接。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "structure", "layout": "main object broken into parts with nearby labels and a zoom callout", "required_labels": ["整体", "局部", "关键部分"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画一个主体框架，并拆出 3 个局部。",
+                    "narration": "结构拆解的目的，是把一个看起来很大的问题变成几个能分别处理的部分。",
+                    "required_labels": ["整体", "局部"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "圈出关键局部，并补一个放大框。",
+                    "narration": "当关键局部被放大，真正影响结果的连接关系才会变清楚。",
+                    "required_labels": ["关键部分", "连接"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": "sparse teacher whiteboard structure diagram, one central object split into parts, local zoom box, arrows and nearby labels, no poster layout",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "状态对比",
+            "learning_goal": "用对比让观众看见变化前后或方案 A/B 的差异。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "comparison", "layout": "two-panel comparison with difference circles and an arrow between panels", "required_labels": ["A", "B", "差异", "结果"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画左右两个面板，分别标出 A 和 B。",
+                    "narration": "对比图能把选择变得直观：不是只说哪个更好，而是看清差异来自哪里。",
+                    "required_labels": ["A", "B"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "圈出差异，并用箭头指向结果。",
+                    "narration": "当差异和结果连起来，观众才能判断该选哪条路径。",
+                    "required_labels": ["差异", "结果"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": "two-panel whiteboard comparison, panel A and panel B, circled differences, arrow to outcome, sparse handwritten labels",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "优先取舍",
+            "learning_goal": "用二维矩阵说明优先级和取舍规则。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "tradeoff_matrix", "layout": "2x2 matrix with two axes and a highlighted preferred quadrant", "required_labels": ["重要", "紧急", "优先", "取舍"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画 2x2 矩阵和两个判断轴。",
+                    "narration": "取舍需要维度，二维矩阵能把模糊判断变成可讨论的位置。",
+                    "required_labels": ["重要", "紧急"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "圈出优先象限，并用箭头说明移动方向。",
+                    "narration": "优先级不是把所有事情都做完，而是把资源放到最能改变结果的区域。",
+                    "required_labels": ["优先", "取舍"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": "2x2 whiteboard priority matrix, two axes, highlighted quadrant, yellow underline on priority, large negative space",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "目标路径",
+            "learning_goal": "把目标和行动路线连起来，避免只停留在愿望。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "goal_path", "layout": "start point, milestones, target point, and a backcasting arrow", "required_labels": ["现在", "里程碑", "目标", "倒推"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画从现在到目标的路径，并加入里程碑。",
+                    "narration": "目标路径把愿望变成路线，每个里程碑都对应一个可执行阶段。",
+                    "required_labels": ["现在", "目标"],
+                    "duration_estimate": 7,
+                },
+                {
+                    "draw_intent": "从目标反向画倒推箭头，标出下一步。",
+                    "narration": "从终点倒推，能防止行动偏离真正想要的结果。",
+                    "required_labels": ["倒推", "下一步"],
+                    "duration_estimate": 8,
+                },
+            ],
+            "image_description": "whiteboard goal path diagram, current point, milestones, target, backcasting arrow, sparse labels",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "反馈闭环",
+            "learning_goal": "说明结果会回到下一轮行动中，形成持续改进。",
+            "render_strategy": "trace",
+            "visual_complexity": "medium",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "cycle", "layout": "circular feedback loop with plan, act, check, adjust nodes", "required_labels": ["计划", "执行", "检查", "调整"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "画一个四节点闭环。",
+                    "narration": "一次行动只能得到一个结果，反馈闭环会把这个结果变成下一轮改进的依据。",
+                    "required_labels": ["计划", "执行", "检查", "调整"],
+                    "duration_estimate": 8,
+                },
+                {
+                    "draw_intent": "给闭环加循环箭头和改进下划线。",
+                    "narration": "持续改进的关键不是一次完美，而是每一轮都比上一轮更接近目标。",
+                    "required_labels": ["反馈", "改进"],
+                    "duration_estimate": 7,
+                },
+            ],
+            "image_description": "whiteboard circular feedback loop, plan act check adjust, loop arrows, yellow underline on improvement",
+            "duration_estimate": 24,
+        },
+        {
+            "title": "总结框架",
+            "learning_goal": "把全片内容收束成可复述的框架。",
+            "render_strategy": "trace",
+            "visual_complexity": "simple",
+            "board_mode": "whiteboard",
+            "hand_usage": "trace",
+            "visual_style": "teacher_whiteboard",
+            "diagram_plan": {"kind": "summary", "layout": "short teacher checklist connected back to the overview map", "required_labels": ["看全局", "拆结构", "做对比", "定优先", "走闭环"]},
+            "visual_beats": [
+                {
+                    "draw_intent": "写一列短清单，并用勾选符号逐项出现。",
+                    "narration": "最后可以把框架压缩成一句话：看全局，拆结构，做对比，定优先，按目标行动，再用反馈修正。",
+                    "required_labels": ["看全局", "拆结构", "做对比", "定优先", "走闭环"],
+                    "duration_estimate": 9,
+                }
+            ],
+            "image_description": "sparse teacher whiteboard summary checklist with green ticks and a small loop arrow, no long paragraphs",
+            "duration_estimate": 20,
+        },
+    ]
+    return base_specs[:desired]
 
 
 def _scene_from_spec(index: int, spec: dict) -> Scene:
@@ -990,7 +1552,7 @@ def _scene_from_spec(index: int, spec: dict) -> Scene:
     animations = [
         AnimationInstruction(
             type=AnimationType.WHITEBOARD_DRAW,
-            duration=min(15.0, max(4.0, beat.duration_estimate)),
+            duration=min(15.0, max(4.0, float(beat.duration_estimate))),
             content=beat.draw_intent,
             items=beat.required_labels or None,
         )
@@ -1303,6 +1865,28 @@ def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard
     )
 
 
+def _append_missing_coverage_scenes(storyboard: Storyboard, graph: ExplainGraph, target_duration: int, limit: int | None = None) -> Storyboard:
+    missing = _missing_coverage_units(storyboard, graph)
+    if not missing:
+        return storyboard
+    effective_limit = limit if limit is not None else _max_scene_count_for_target(target_duration)
+    room = max(0, effective_limit - len(storyboard.scenes))
+    if room <= 0:
+        return storyboard
+    for unit in missing[:room]:
+        scene = _scene_from_spec(
+            len(storyboard.scenes),
+            _coverage_scene_spec(unit, len(storyboard.scenes), graph.topic),
+        )
+        storyboard.scenes.append(scene)
+    for index, scene in enumerate(storyboard.scenes):
+        scene.order = index
+        if not scene.id:
+            scene.id = f"scene_{index}"
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    return storyboard
+
+
 def _sanitize_storyboard_narration(storyboard: Storyboard) -> Storyboard:
     for scene in storyboard.scenes:
         for beat in scene.visual_beats:
@@ -1313,8 +1897,9 @@ def _sanitize_storyboard_narration(storyboard: Storyboard) -> Storyboard:
 
 def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, target_duration: int) -> Storyboard:
     corpus = _storyboard_corpus(storyboard, graph)
-    semiconductor = _contains_terms(corpus, ["mos", "mosfet", "finfet", "晶体管", "栅极", "沟道"])
-    gradient = _contains_terms(corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
+    source_corpus = _graph_source_corpus(graph)
+    semiconductor = _contains_semiconductor_topic(source_corpus)
+    gradient = _contains_terms(source_corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
     brief = _graph_enhanced_brief(graph) or {}
     default_board_mode = _clean_text(brief.get("recommended_board_mode") if isinstance(brief, dict) else "") or "whiteboard"
     default_hand_usage = _clean_text(brief.get("recommended_hand_usage") if isinstance(brief, dict) else "") or "trace"
@@ -1345,6 +1930,11 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         coverage = sum(1 for group in coverage_groups if _contains_terms(corpus, group))
         if len(storyboard.scenes) < 3 or coverage < 4:
             return _replace_with_specs(storyboard, _gradient_story_specs())
+
+    if not semiconductor and _contains_semiconductor_topic(corpus):
+        storyboard = _replace_with_specs(storyboard, _generic_relation_story_specs(graph, target_duration))
+
+    storyboard = _append_missing_coverage_scenes(storyboard, graph, target_duration)
 
     for scene in storyboard.scenes:
         if not scene.visual_beats:
@@ -1616,8 +2206,11 @@ def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: lis
         end = float(segment.get("endFrame", duration) or duration)
         audio_start = float(segment.get("audioStartFrame", start) or start)
         audio_end = float(segment.get("audioEndFrame", end) or end)
-        window_start = 0.0 if index == 0 else max(0.0, min(start, audio_start - 14.0))
-        window_end = min(max(audio_end + 10.0, end - 2.0), max(1.0, duration - 1.0))
+        # Keep each drawing group inside its own beat. A large pre-audio lead makes the
+        # hand appear to explain the next idea before the narration reaches it.
+        lead_frames = 4.0 if index == 0 else 2.0
+        window_start = max(0.0, start, audio_start - lead_frames)
+        window_end = min(max(audio_end + 8.0, end - 2.0), max(1.0, duration - 1.0))
         window_end = max(window_start + 1.0, window_end)
         _retime_draw_ops_in_window(group, window_start, window_end, str(segment.get("id") or f"beat_{index}"))
 
@@ -1694,6 +2287,44 @@ def _contains_any(corpus: str, terms: list[str]) -> bool:
     return any(term.lower() in corpus for term in terms)
 
 
+def _visual_relation_kind_for_scene(scene: Scene) -> str | None:
+    corpus = _scene_corpus(scene)
+    explicit_kind = _clean_text(scene.diagram_plan.kind if scene.diagram_plan else "").lower().replace("-", "_")
+    layout = _clean_text(scene.diagram_plan.layout if scene.diagram_plan else "").lower()
+    text = f"{explicit_kind} {layout} {corpus}"
+
+    aliases = {
+        "overview_map": {"overview_map", "overview", "map", "concept_map", "framework_map", "roadmap"},
+        "comparison_transform": {"comparison", "compare", "state_comparison", "before_after", "two_panel", "vs"},
+        "process_flow": {"process", "flow", "mechanism", "pipeline", "journey", "sequence"},
+        "interaction_scenario": {"interaction", "relationship", "mutual", "communication", "collaboration", "exchange", "scenario"},
+        "priority_matrix": {"tradeoff_matrix", "priority_matrix", "matrix", "quadrant", "2x2", "classification"},
+        "goal_path": {"goal_path", "goal", "path", "roadmap", "milestone", "backcasting"},
+        "feedback_loop": {"cycle", "loop", "feedback", "iteration", "iterate", "renewal"},
+        "formula_derivation": {"formula", "equation", "derivation"},
+        "teaching_board_summary": {"summary", "checklist", "conclusion"},
+        "teaching_board": {"structure", "component", "part_whole", "concept", "framework"},
+    }
+    for result, values in aliases.items():
+        if explicit_kind in values:
+            return result
+
+    relation_patterns: list[tuple[str, list[str]]] = [
+        ("priority_matrix", ["tradeoff", "quadrant", "2x2", "matrix", "priority", "urgent", "important", "取舍", "矩阵", "象限", "二维", "优先", "紧急", "重要", "分类"]),
+        ("interaction_scenario", ["interaction", "relationship", "mutual", "communication", "collaboration", "exchange", "stakeholder", "actor", "between", "互相", "互动", "关系", "沟通", "协作", "交换", "双方", "共同", "影响"]),
+        ("goal_path", ["goal", "target", "vision", "path", "roadmap", "milestone", "route", "journey", "backcast", "目标", "愿景", "路径", "路线", "里程碑", "倒推", "阶段"]),
+        ("feedback_loop", ["feedback", "loop", "cycle", "iterate", "iteration", "renewal", "repeat", "闭环", "反馈", "循环", "迭代", "复盘", "更新", "重复"]),
+        ("comparison_transform", ["comparison", "compare", "versus", " vs ", "before", "after", "state", "switch", "contrast", "对比", "比较", "前后", "状态", "开关", "变化", "转换"]),
+        ("process_flow", ["process", "flow", "mechanism", "cause", "effect", "step", "pipeline", "过程", "流程", "机制", "因果", "原因", "结果", "步骤", "原理"]),
+        ("teaching_board_summary", ["summary", "checklist", "recap", "conclusion", "总结", "清单", "复盘", "结论", "收束"]),
+        ("teaching_board", ["overview", "map", "framework", "structure", "component", "part", "whole", "概览", "地图", "框架", "结构", "组成", "部件", "整体", "局部"]),
+    ]
+    for result, terms in relation_patterns:
+        if _contains_any(text, terms):
+            return result
+    return None
+
+
 def _scene_steps(scene: Scene) -> list[str]:
     steps: list[str] = []
     if scene.diagram_plan and scene.diagram_plan.required_labels:
@@ -1718,31 +2349,14 @@ def _scene_steps(scene: Scene) -> list[str]:
 def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
     corpus = _scene_corpus(scene)
     types = _animation_type_values(scene)
+    visual_relation_kind = _visual_relation_kind_for_scene(scene)
+    if visual_relation_kind:
+        return "teaching_board" if visual_relation_kind == "teaching_board_summary" else visual_relation_kind
     if scene.diagram_plan and scene.diagram_plan.kind in {"semiconductor_device", "mos_device", "finfet_device"}:
         return "semiconductor_device"
-    if _contains_any(
+    if _contains_semiconductor_topic(corpus) or _contains_any(
         corpus,
-        [
-            "mos",
-            "mosfet",
-            "finfet",
-            "source",
-            "drain",
-            "gate",
-            "oxide",
-            "substrate",
-            "channel",
-            "v_g",
-            "v_ds",
-            "w_eff",
-            "晶体管",
-            "栅极",
-            "源极",
-            "漏极",
-            "沟道",
-            "阈值",
-            "短沟道",
-        ],
+        ["v_g", "v_ds", "w_eff", "阈值", "短沟道"],
     ):
         return "semiconductor_device"
     has_formula = "write_formula" in types or "formula_reveal" in types or bool(
@@ -1768,7 +2382,39 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
         ],
     ):
         return "attention_network"
-    if _contains_any(corpus, ["lora", "low rank", "rank", "matrix", "矩阵", "低秩", "分解", "微调"]):
+    if _contains_any(
+        corpus,
+        [
+            "urgent",
+            "important",
+            "priority",
+            "quadrant",
+            "eisenhower",
+            "time management",
+            "紧急",
+            "重要",
+            "优先",
+            "四象限",
+        ],
+    ):
+        return "priority_matrix"
+    if _contains_any(
+        corpus,
+        [
+            "lora",
+            "low rank",
+            "low-rank",
+            "rank update",
+            "weight matrix",
+            "matrix decomposition",
+            "matrix multiplication",
+            "linear layer",
+            "矩阵",
+            "低秩",
+            "分解",
+            "微调",
+        ],
+    ):
         return "matrix_transform"
     if _contains_any(
         corpus,
@@ -1788,10 +2434,26 @@ def _diagram_kind_for_scene(scene: Scene, scene_index: int) -> str:
         ],
     ):
         return "optimization_curve"
-    if _contains_any(corpus, ["feedback", "loop", "iterate", "iteration", "反馈", "循环", "迭代", "更新"]):
+    if _contains_any(corpus, ["feedback", "loop", "cycle", "iterate", "iteration", "反馈", "循环", "迭代"]):
         return "feedback_loop"
     if has_formula:
         return "formula_derivation"
+    if _contains_any(
+        corpus,
+        [
+            "framework",
+            "method",
+            "checklist",
+            "overview",
+            "summary",
+            "概览",
+            "框架",
+            "方法",
+            "清单",
+            "总结",
+        ],
+    ):
+        return "teaching_board"
     if "step_reveal" in types or _contains_any(corpus, ["process", "pipeline", "workflow", "过程", "步骤", "流程", "原理"]):
         return "process_flow"
     if _contains_any(corpus, ["compare", "versus", " vs ", "change", "transform", "before", "after", "对比", "比较", "变化", "变换", "转换"]):
@@ -2129,9 +2791,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         color: str = ink,
         role: str = "node",
         font_size: int | None = None,
+        beat_id: str | None = None,
     ) -> int:
-        add_stroke(role, _rect_points(x, y, w, h), color, 4, start, 18, close=True)
-        add_text(label, x + w * 0.14, y + h * 0.25, font_size or body_size, color, start + 12, 22, w * 0.78)
+        add_stroke(role, _rect_points(x, y, w, h), color, 4, start, 18, close=True, beat_id=beat_id)
+        add_text(label, x + w * 0.14, y + h * 0.25, font_size or body_size, color, start + 12, 22, w * 0.78, beat_id=beat_id)
         return start + 36
 
     def add_node_circle(
@@ -2144,9 +2807,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         color: str = ink,
         role: str = "node",
         font_size: int | None = None,
+        beat_id: str | None = None,
     ) -> int:
-        add_stroke(role, _circle_points(cx, cy, rx, ry, count=24), color, 4, start, 18)
-        add_text(label, cx - rx * 0.55, cy - ry * 0.28, font_size or body_size, color, start + 12, 22, rx * 1.1)
+        add_stroke(role, _circle_points(cx, cy, rx, ry, count=24), color, 4, start, 18, beat_id=beat_id)
+        add_text(label, cx - rx * 0.55, cy - ry * 0.28, font_size or body_size, color, start + 12, 22, rx * 1.1, beat_id=beat_id)
         return start + 36
 
     def fallback_label(index: int, value: str) -> str:
@@ -2676,6 +3340,39 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             cursor += 6
         return cursor
 
+    def build_priority_matrix(start: int) -> int:
+        cursor = start
+        x = board_center_x - width * 0.25
+        y = diagram_top + height * 0.08
+        w = width * 0.50
+        h = height * 0.42
+        mid_x = x + w * 0.5
+        mid_y = y + h * 0.5
+        add_stroke("matrix_frame", _rect_points(x, y, w, h), ink, 4, cursor, 18, close=True)
+        cursor += 20
+        add_stroke("matrix_axis", _line_points(mid_x, y, mid_x, y + h, count=6), ink, 3, cursor, 10)
+        add_stroke("matrix_axis", _line_points(x, mid_y, x + w, mid_y, count=6), ink, 3, cursor + 6, 10)
+        cursor += 20
+        add_text("重要", x - width * 0.065, y + h * 0.18, body_size, blue, cursor, 16, width * 0.08)
+        add_text("紧急", x + w * 0.72, y + h + height * 0.035, body_size, red, cursor + 8, 16, width * 0.10)
+        cursor += 24
+        quadrant_labels = [
+            (fallback_label(0, "计划"), x + w * 0.10, y + h * 0.16, blue),
+            (fallback_label(1, "危机"), x + w * 0.62, y + h * 0.16, red),
+            (fallback_label(2, "授权"), x + w * 0.62, y + h * 0.62, violet),
+            (fallback_label(3, "减少"), x + w * 0.10, y + h * 0.62, green),
+        ]
+        for index, (label, tx, ty, color) in enumerate(quadrant_labels):
+            add_text(label, tx, ty, max(20, body_size - 2), color, cursor, 20, w * 0.30, emphasis=index == 0, max_chars=10)
+            if index == 0:
+                add_stroke("focus_circle", _circle_points(tx + w * 0.11, ty + body_size * 0.45, w * 0.15, h * 0.16, count=22), yellow, 4, cursor + 18, 12)
+            cursor += 25
+        add_arrow(_curve_points(x + w * 0.25, y + h * 0.77, x + w * 0.25, y + h * 0.32, count=12, wave=height * 0.018), blue, 4, cursor, 14, role="priority_arrow")
+        add_arrow(_curve_points(x + w * 0.77, y + h * 0.28, x + w * 0.36, y + h * 0.28, count=12, wave=height * 0.016), green, 4, cursor + 12, 14, role="priority_arrow")
+        cursor += 34
+        add_text(fallback_label(4, "把时间留给真正重要的事"), x + w * 0.10, y + h + height * 0.085, body_size, violet, cursor, 28, w * 0.70, emphasis=True, max_chars=18)
+        return cursor + 38
+
     def build_feedback_loop(start: int) -> int:
         cursor = start
         cx = board_center_x
@@ -2702,6 +3399,221 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             add_stroke("doodle", _line_points(x0, y0, x0 + math.cos(angle) * 24, y0 + math.sin(angle) * 18, count=3), red, 3, cursor, 5)
             cursor += 6
         return cursor
+
+    def build_goal_path(start: int) -> int:
+        cursor = start
+        x0 = board_center_x - width * 0.30
+        y0 = diagram_top + height * 0.37
+        x1 = board_center_x + width * 0.30
+        y1 = diagram_top + height * 0.18
+        path_points = _curve_points(x0, y0, x1, y1, count=18, wave=height * 0.08)
+        cursor = add_node_circle(fallback_label(0, "现在"), x0, y0, width * 0.055, height * 0.050, cursor, blue, font_size=max(18, body_size - 7))
+        add_arrow(path_points, green, 5, cursor, 24, role="goal_path")
+        cursor += 30
+        milestones = [path_points[5], path_points[10], path_points[14]]
+        for index, point in enumerate(milestones):
+            add_stroke("milestone", _circle_points(point["x"], point["y"], width * 0.020, height * 0.028, count=14), violet if index % 2 else blue, 4, cursor, 8)
+            add_text(fallback_label(index + 2, f"阶段{index + 1}"), point["x"] - width * 0.045, point["y"] + height * 0.035, max(17, body_size - 9), ink, cursor + 6, 14, width * 0.12, max_chars=8)
+            cursor += 18
+        cursor = add_node_circle(fallback_label(1, "目标"), x1, y1, width * 0.065, height * 0.060, cursor, red, font_size=max(19, body_size - 6))
+        add_arrow(_curve_points(x1 - width * 0.03, y1 + height * 0.08, x0 + width * 0.08, y0 - height * 0.06, count=16, wave=-height * 0.055), violet, 4, cursor, 18, role="backcast")
+        cursor += 24
+        add_text(fallback_label(5, "从终点倒推"), board_center_x - width * 0.11, diagram_top + height * 0.48, body_size, violet, cursor, 26, width * 0.28, emphasis=True, max_chars=12)
+        return cursor + 34
+
+    def build_overview_map(start: int) -> int:
+        cursor = start
+        labels = steps or core_lines or [_short_text(scene.title, 18), "现象", "机制", "结果", "总结"]
+        labels = labels[:5]
+        cx = board_center_x
+        cy = diagram_top + height * 0.24
+        cursor = add_node_circle(labels[0], cx, cy, width * 0.090, height * 0.065, cursor, blue, role="overview_center", font_size=max(18, body_size - 5))
+        positions = [
+            (cx - width * 0.24, cy - height * 0.14, red),
+            (cx + width * 0.24, cy - height * 0.13, green),
+            (cx + width * 0.22, cy + height * 0.15, violet),
+            (cx - width * 0.22, cy + height * 0.16, yellow),
+        ]
+        for index, label in enumerate(labels[1:5]):
+            px, py, color = positions[index]
+            add_arrow(_curve_points(cx + (width * 0.085 if px > cx else -width * 0.085), cy, px + (width * 0.065 if px < cx else -width * 0.065), py, count=12, wave=height * 0.020), ink, 3, cursor, 12, role="overview_link")
+            cursor += 14
+            cursor = add_node_box(label, px - width * 0.065, py - height * 0.034, width * 0.13, height * 0.068, cursor, color if color != yellow else ink, role="overview_unit", font_size=max(17, body_size - 8))
+        add_stroke("route", _arc_points(cx, cy, width * 0.30, height * 0.23, -math.pi * 0.82, math.pi * 0.12, count=18), green, 4, cursor, 18)
+        cursor += 22
+        add_text(fallback_label(5, "学习路线"), cx - width * 0.07, cy + height * 0.25, body_size, violet, cursor, 22, width * 0.20, emphasis=True, max_chars=10)
+        return cursor + 30
+
+    def build_interaction_scenario(start: int) -> int:
+        cursor = start
+        corpus_local = _scene_corpus(scene)
+        relation_kind = _visual_relation_kind_for_scene(scene)
+        x = board_center_x - width * 0.30
+        y = diagram_top + height * 0.12
+        panel_w = width * 0.22
+        panel_h = height * 0.25
+
+        def draw_person(cx: float, cy: float, color: str, label: str, start_frame: int) -> int:
+            local = start_frame
+            add_stroke("person", _circle_points(cx, cy, width * 0.028, height * 0.045, count=18), color, 4, local, 10)
+            local += 11
+            add_stroke("person", _line_points(cx, cy + height * 0.045, cx, cy + height * 0.14, count=5), color, 4, local, 8)
+            add_stroke("person", _line_points(cx - width * 0.045, cy + height * 0.085, cx + width * 0.045, cy + height * 0.085, count=5), color, 4, local + 5, 8)
+            add_stroke("person", _line_points(cx, cy + height * 0.14, cx - width * 0.040, cy + height * 0.20, count=4), color, 4, local + 10, 8)
+            add_stroke("person", _line_points(cx, cy + height * 0.14, cx + width * 0.040, cy + height * 0.20, count=4), color, 4, local + 15, 8)
+            add_text(label, cx - width * 0.060, cy + height * 0.225, max(18, body_size - 6), color, local + 18, 18, width * 0.14, max_chars=8)
+            return local + 42
+
+        relation_mode = relation_kind == "interaction_scenario" or _contains_any(
+            corpus_local,
+            [
+                "collabor",
+                "communication",
+                "team",
+                "沟通",
+                "合作",
+                "协作",
+                "交流",
+                "互相",
+                "互动",
+                "关系",
+                "交换",
+                "共同",
+                "双方",
+            ],
+        )
+        renewal_mode = relation_kind == "feedback_loop" or _contains_any(corpus_local, ["renew", "growth", "sharpen", "improve", "更新", "成长", "复盘", "精进", "循环", "闭环", "迭代"])
+        goal_mode = relation_kind == "goal_path" or _contains_any(corpus_local, ["goal", "end", "target", "vision", "目标", "愿景", "路径", "路线", "里程碑", "倒推"])
+
+        if relation_mode:
+            left_end = draw_person(x + panel_w * 0.40, y + panel_h * 0.26, blue, fallback_label(0, "A"), cursor)
+            right_end = draw_person(x + panel_w * 1.75, y + panel_h * 0.26, green, fallback_label(1, "B"), cursor + 10)
+            cursor = max(left_end, right_end)
+            bubble_y = y + panel_h * 0.06
+            add_stroke("speech", _circle_points(x + panel_w * 0.63, bubble_y, width * 0.070, height * 0.052, count=20), blue, 3, cursor, 12)
+            add_text(fallback_label(2, "输入"), x + panel_w * 0.55, bubble_y - height * 0.020, max(18, body_size - 7), blue, cursor + 8, 16, width * 0.14, max_chars=8)
+            add_stroke("speech", _circle_points(x + panel_w * 1.47, bubble_y, width * 0.070, height * 0.052, count=20), green, 3, cursor + 14, 12)
+            add_text(fallback_label(3, "反馈"), x + panel_w * 1.39, bubble_y - height * 0.020, max(18, body_size - 7), green, cursor + 22, 16, width * 0.14, max_chars=8)
+            cursor += 42
+            add_arrow(_curve_points(x + panel_w * 0.70, y + panel_h * 0.50, x + panel_w * 1.48, y + panel_h * 0.50, count=14, wave=height * 0.030), red, 4, cursor, 16, role="mutual_path")
+            add_arrow(_curve_points(x + panel_w * 1.42, y + panel_h * 0.59, x + panel_w * 0.76, y + panel_h * 0.59, count=14, wave=-height * 0.022), violet, 4, cursor + 12, 16, role="mutual_path")
+            cursor += 34
+            add_text(fallback_label(4, "共同结果"), x + panel_w * 0.83, y + panel_h * 0.78, body_size, violet, cursor, 24, width * 0.22, emphasis=True, max_chars=12)
+            add_stroke("emphasis", _curve_points(x + panel_w * 0.83, y + panel_h * 0.92, x + panel_w * 1.25, y + panel_h * 0.92, count=10, wave=height * 0.005), yellow, 4, cursor + 20, 8)
+            return cursor + 40
+
+        if renewal_mode:
+            cx = board_center_x
+            cy = y + panel_h * 0.36
+            nodes = [
+                (fallback_label(0, "身体"), cx, cy - height * 0.15, blue),
+                (fallback_label(1, "智力"), cx + width * 0.18, cy, green),
+                (fallback_label(2, "情感"), cx, cy + height * 0.15, violet),
+                (fallback_label(3, "精神"), cx - width * 0.18, cy, red),
+            ]
+            for label, nx, ny, color in nodes:
+                cursor = add_node_circle(label, nx, ny, width * 0.055, height * 0.048, cursor, color, font_size=max(18, body_size - 7))
+            for start_angle, end_angle in [(-math.pi * 0.45, math.pi * 0.05), (math.pi * 0.05, math.pi * 0.55), (math.pi * 0.55, math.pi * 1.05), (math.pi * 1.05, math.pi * 1.55)]:
+                add_arrow(_arc_points(cx, cy, width * 0.22, height * 0.19, start_angle, end_angle, count=12), ink, 4, cursor, 12, role="renew_loop")
+                cursor += 15
+            add_text(fallback_label(4, "持续更新"), cx - width * 0.075, cy - height * 0.020, body_size, violet, cursor, 24, width * 0.18, emphasis=True, max_chars=10)
+            return cursor + 34
+
+        if goal_mode:
+            person_end = draw_person(x + panel_w * 0.28, y + panel_h * 0.34, blue, fallback_label(0, "现在"), cursor)
+            cursor = max(cursor + 36, person_end)
+            target_x = x + panel_w * 1.55
+            target_y = y + panel_h * 0.32
+            add_stroke("target", _circle_points(target_x, target_y, width * 0.085, height * 0.085, count=24), red, 4, cursor, 12)
+            add_stroke("target", _circle_points(target_x, target_y, width * 0.050, height * 0.050, count=18), red, 3, cursor + 10, 10)
+            add_stroke("target", _circle_points(target_x, target_y, width * 0.018, height * 0.018, count=12), red, 3, cursor + 18, 8)
+            add_text(fallback_label(1, "目标"), target_x - width * 0.050, target_y + height * 0.105, body_size, red, cursor + 20, 18, width * 0.12, max_chars=8)
+            cursor += 40
+            add_arrow(_curve_points(x + panel_w * 0.44, y + panel_h * 0.48, target_x - width * 0.095, target_y, count=14, wave=height * 0.040), green, 4, cursor, 18, role="path")
+            add_text(fallback_label(2, "倒推行动"), x + panel_w * 0.80, y + panel_h * 0.12, body_size, violet, cursor + 12, 24, width * 0.20, emphasis=True, max_chars=10)
+            return cursor + 44
+
+        left_x = x
+        mid_x = x + panel_w * 0.98
+        right_x = x + panel_w * 1.96
+        cursor = add_node_box(fallback_label(0, "输入"), left_x, y + panel_h * 0.20, panel_w * 0.62, panel_h * 0.28, cursor, red, font_size=max(18, body_size - 6))
+        add_arrow(_line_points(left_x + panel_w * 0.66, y + panel_h * 0.34, mid_x - 16, y + panel_h * 0.34, count=6), ink, 4, cursor, 12)
+        cursor += 18
+        cursor = add_node_circle(fallback_label(1, "转换"), mid_x + panel_w * 0.15, y + panel_h * 0.34, width * 0.065, height * 0.060, cursor, blue, font_size=max(18, body_size - 6))
+        add_arrow(_line_points(mid_x + panel_w * 0.30, y + panel_h * 0.34, right_x - 16, y + panel_h * 0.34, count=6), green, 4, cursor, 12)
+        cursor += 18
+        cursor = add_node_box(fallback_label(2, "输出"), right_x, y + panel_h * 0.20, panel_w * 0.62, panel_h * 0.28, cursor, green, font_size=max(18, body_size - 6))
+        add_text(fallback_label(3, "关键关系"), mid_x + panel_w * 0.02, y + panel_h * 0.60, body_size, violet, cursor, 24, width * 0.20, emphasis=True, max_chars=10)
+        return cursor + 40
+
+    def build_teaching_board(start: int) -> int:
+        cursor = start
+        labels = core_lines[:]
+        if scene.diagram_plan and scene.diagram_plan.required_labels:
+            labels = [_short_text(label, 18) for label in scene.diagram_plan.required_labels if _short_text(label, 18)]
+        for beat in getattr(scene, "visual_beats", []) or []:
+            for label in beat.required_labels or []:
+                short = _short_text(label, 18)
+                if short and short not in labels:
+                    labels.append(short)
+            if len(labels) >= 6:
+                break
+        if not labels:
+            labels = [_short_text(scene.title, 18), "原因", "过程", "结果"]
+        labels = labels[:6]
+        corpus = _scene_corpus(scene)
+
+        if _contains_any(corpus, ["summary", "checklist", "总结", "清单", "复盘"]):
+            x = board_center_x - width * 0.25
+            y = diagram_top + height * 0.07
+            row_gap = height * 0.078
+            add_stroke("summary_frame", _rect_points(x - width * 0.025, y - height * 0.025, width * 0.50, row_gap * (len(labels) + 0.8)), ink, 4, cursor, 18, close=True)
+            cursor += 20
+            for index, label in enumerate(labels):
+                row_y = y + index * row_gap
+                check = [
+                    _point(x, row_y + body_size * 0.45),
+                    _point(x + width * 0.012, row_y + body_size * 0.72),
+                    _point(x + width * 0.038, row_y + body_size * 0.10),
+                ]
+                add_stroke("check", check, green, 4, cursor, 8)
+                add_text(label, x + width * 0.055, row_y, body_size, ink if index % 2 else blue, cursor + 6, 24, width * 0.38, emphasis=index == len(labels) - 1, max_chars=18)
+                cursor += 32
+            add_stroke("summary_underline", _curve_points(x + width * 0.05, y + row_gap * len(labels) + 8, x + width * 0.40, y + row_gap * len(labels) + 4, count=12, wave=height * 0.006), yellow, 4, cursor, 10)
+            return cursor + 14
+
+        if _contains_any(corpus, ["comparison", "compare", "versus", " vs ", "before", "after", "对比", "状态"]):
+            return build_comparison_transform(start)
+
+        if _contains_any(corpus, ["process", "flow", "mechanism", "过程", "流程", "步骤", "变化", "机制"]):
+            return build_process_flow(start)
+
+        center_label = labels[0]
+        cx = board_center_x
+        cy = diagram_top + height * 0.24
+        center_rx = width * 0.105
+        center_ry = height * 0.070
+        cursor = add_node_circle(center_label, cx, cy, center_rx, center_ry, cursor, blue, role="center", font_size=max(20, body_size - 2))
+        branch_labels = labels[1:] if len(labels) > 1 else ["现象", "原因", "结果", "例子"]
+        positions = [
+            (cx - width * 0.24, cy - height * 0.13, red),
+            (cx + width * 0.24, cy - height * 0.12, green),
+            (cx - width * 0.22, cy + height * 0.16, violet),
+            (cx + width * 0.22, cy + height * 0.16, yellow),
+            (cx, cy + height * 0.24, blue),
+        ]
+        for index, label in enumerate(branch_labels[:5]):
+            bx, by, color = positions[index]
+            add_arrow(_curve_points(cx + (center_rx if bx > cx else -center_rx), cy, bx + (width * 0.055 if bx < cx else -width * 0.055), by, count=12, wave=height * 0.018 * (1 if index % 2 == 0 else -1)), ink, 3, cursor, 12, role="relation")
+            cursor += 14
+            cursor = add_node_box(label, bx - width * 0.055, by - height * 0.035, width * 0.11, height * 0.07, cursor, color if color != yellow else ink, role="branch", font_size=max(18, body_size - 7))
+            if index in {0, len(branch_labels[:5]) - 1}:
+                add_stroke("emphasis", _curve_points(bx - width * 0.045, by + height * 0.052, bx + width * 0.045, by + height * 0.052, count=8, wave=height * 0.004), yellow, 4, cursor, 8)
+                cursor += 9
+        add_stroke("teacher_mark", _circle_points(cx + center_rx * 0.06, cy, center_rx * 1.14, center_ry * 1.22, count=28), yellow, 4, cursor, 14)
+        cursor += 16
+        add_process_doodles(cursor, cx + width * 0.31, cy + height * 0.14)
+        return min(duration - 8, cursor + 40)
 
     def build_chalkboard_derivation(start: int) -> int:
         cursor = start
@@ -2882,7 +3794,12 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "optimization_curve": build_optimization_curve,
         "attention_network": build_attention_network,
         "matrix_transform": build_matrix_transform,
+        "priority_matrix": build_priority_matrix,
         "feedback_loop": build_feedback_loop,
+        "interaction_scenario": build_interaction_scenario,
+        "goal_path": build_goal_path,
+        "overview_map": build_overview_map,
+        "teaching_board": build_teaching_board,
         "semiconductor_device": build_semiconductor_device,
     }
     if raster_reveal and reference_image_asset:
@@ -2893,17 +3810,6 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         cursor = build_chalkboard_derivation(cursor)
     else:
         cursor = builders.get(diagram_kind, build_process_flow)(cursor)
-
-    note_y = height * 0.79
-    note_lines = [] if diagram_kind == "semiconductor_device" or raster_reveal_spec else core_lines[:1]
-    for note_index, line in enumerate(note_lines):
-        if cursor + 42 > duration - 8:
-            break
-        add_text(line, width * 0.24, note_y + note_index * (body_size + 28), body_size, ink, cursor, 30, width * 0.50, max_chars=24)
-        cursor += 43
-
-    if len(texts) < 2 and cursor + 42 <= duration - 8:
-        add_text(_short_text(scene.narration, 24), width * 0.24, height * 0.78, body_size, ink, cursor, 36, width * 0.50, max_chars=24)
 
     _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
     wash_points = _rect_points(board_center_x - board_draw_w * 0.5, diagram_top + height * 0.02, board_draw_w, board_draw_h)
@@ -2939,9 +3845,9 @@ def _build_fallback_remotion_tsx(
 ) -> tuple[str, int]:
     scene_specs = [
         _build_fallback_scene_spec(scene, index, fps, width, height)
-        for index, scene in enumerate(storyboard.scenes[:6])
+        for index, scene in enumerate(storyboard.scenes)
     ]
-    for scene_spec, scene in zip(scene_specs, storyboard.scenes[:6]):
+    for scene_spec, scene in zip(scene_specs, storyboard.scenes):
         scene_spec["subtitleText"] = _subtitle_text(scene.narration) if subtitles_enabled else None
         if not subtitles_enabled:
             for segment in scene_spec.get("audioSegments") or []:
@@ -2960,7 +3866,7 @@ const PEN_TIP_X = 15;
 const PEN_TIP_Y = 78;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
-const BOARD_BACKGROUND = "#E3E4DE";
+const BOARD_BACKGROUND = "#F7F7F2";
 const BACKGROUND_MUSIC_URL: string | null = __BACKGROUND_MUSIC_URL__;
 const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
@@ -2998,6 +3904,7 @@ const scenes = __SCENES_JSON__ as SceneSpec[];
 const SUBTITLES_ENABLED = __SUBTITLES_ENABLED__;
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
+const MIN_START_PROGRESS = 0.018;
 const sceneBackground = (scene: SceneSpec) => {
   if (scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard") return "#050806";
   if (scene.boardMode === "clean_canvas") return "#F7F7F2";
@@ -3015,13 +3922,14 @@ const progressForOp = (frame: number, op: DrawOp) => {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   } as const;
+  if (frame < op.startFrame) return 0;
   if (op.pace === "glyph") {
-    return interpolate(frame, [op.startFrame, op.endFrame], [0, 1], baseConfig);
+    return Math.max(MIN_START_PROGRESS, interpolate(frame, [op.startFrame, op.endFrame], [0, 1], baseConfig));
   }
-  return interpolate(frame, [op.startFrame, op.endFrame], [0, 1], {
+  return Math.max(MIN_START_PROGRESS, interpolate(frame, [op.startFrame, op.endFrame], [0, 1], {
     ...baseConfig,
     easing: Easing.bezier(0.2, 0.8, 0.2, 1),
-  });
+  }));
 };
 
 const pointOnPolyline = (points: Point[], progress: number): Point => {
@@ -3100,7 +4008,8 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
     const audioEnd = segment.audioEndFrame ?? segment.endFrame;
     return frame >= audioStart && frame < audioEnd;
   });
-  const text = (activeSegment?.subtitleText || scene.subtitleText)?.trim();
+  if (segments.length > 0 && !activeSegment) return null;
+  const text = (activeSegment ? activeSegment.subtitleText : scene.subtitleText)?.trim();
   if (!text) return null;
   const chunks = splitSubtitleText(text);
   if (chunks.length === 0) return null;

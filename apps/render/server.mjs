@@ -61,7 +61,7 @@ const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
 const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "slow";
 const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv444p";
 const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
-const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 3));
+const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 10));
 const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
@@ -496,6 +496,23 @@ async function probePlayableAudio(filePath) {
   }
 }
 
+async function normalizeMusicTrackForRemotion(track) {
+  if (!track) return null;
+  const ext = extname(track.filePath).toLowerCase();
+  if (ext !== ".mp3") return track;
+  const safeName = `${basename(track.id, ext)}_remotion.wav`;
+  const outPath = join(MUSIC_DIR, safeName);
+  if (!existsSync(outPath) || statSync(outPath).size <= 0) {
+    await execFileAsync(
+      "ffmpeg",
+      ["-y", "-i", track.filePath, "-vn", "-acodec", "pcm_s16le", "-ar", "48000", "-ac", "2", outPath],
+      { windowsHide: true, timeout: 120000 },
+    );
+  }
+  const normalized = resolveMusicTrack(safeName);
+  return normalized || track;
+}
+
 async function synthesizeScene(sceneId, text, voice) {
   const narration = String(text ?? "").trim();
   if (!narration) return null;
@@ -569,8 +586,10 @@ async function injectAudio(storyboard, voice) {
         const durationSeconds = audio?.durationSeconds || estimateNarrationSeconds(beat.text);
         const audioDurationFrames = Math.max(1, Math.ceil(durationSeconds * FPS));
         const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
-        const audioStartFrame = cursor + (index === 0 ? BEAT_AUDIO_LEAD_FRAMES : Math.floor(BEAT_AUDIO_LEAD_FRAMES * 0.5));
-        const durationFrames = Math.max(FPS * 3, audioStartFrame - cursor + audioDurationFrames + 12, estimateFrames);
+        const audioLeadFrames = index === 0 ? Math.min(BEAT_AUDIO_LEAD_FRAMES, 4) : 0;
+        const audioStartFrame = cursor + audioLeadFrames;
+        const minimumFrames = Math.max(FPS * 3, estimateFrames);
+        const durationFrames = Math.max(minimumFrames, audioLeadFrames + audioDurationFrames + 14);
         const startFrame = cursor;
         const endFrame = startFrame + durationFrames;
         cursor = endFrame;
@@ -1471,7 +1490,40 @@ async function injectImageTraces(storyboard, jobId) {
         !scene.trace_strokes &&
         !scene.traceStrokes,
     )
-    .slice(0, IMAGE_TRACE_MAX_SCENES);
+    .map((scene, index) => {
+      const text = `${scene.title ?? ""} ${scene.learning_goal ?? ""} ${scene.image_description ?? ""} ${
+        scene.diagram_plan?.kind ?? scene.diagramPlan?.kind ?? ""
+      } ${scene.diagram_plan?.layout ?? scene.diagramPlan?.layout ?? ""}`.toLowerCase();
+      const visualComplexity = String(scene.visual_complexity ?? scene.visualComplexity ?? "").toLowerCase();
+      const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
+      const boardMode = String(scene.board_mode ?? scene.boardMode ?? "").toLowerCase();
+      const handUsage = String(scene.hand_usage ?? scene.handUsage ?? "").toLowerCase();
+      const visualStyle = String(scene.visual_style ?? scene.visualStyle ?? "").toLowerCase();
+      const visualRelationScore = countPatternMatches(text, [
+        /\boverview(?:[_\s-]?map)?\b/i,
+        /\bcomparison|compare|versus|before|after|state|contrast\b/i,
+        /\bprocess|flow|mechanism|cause|effect|simulation|journey\b/i,
+        /\bstructure|component|part[-\s]?whole|cross[-\s]?section\b/i,
+        /\binteraction|relationship|mutual|communication|collaboration|exchange\b/i,
+        /\btradeoff|priority|quadrant|2x2|matrix\b/i,
+        /\bgoal|target|path|roadmap|milestone|backcast\b/i,
+        /\bcycle|loop|feedback|iteration|renewal\b/i,
+        /概览|地图|对比|状态|过程|流程|机制|因果|结构|组成|截面|互动|关系|协作|交换|取舍|优先|象限|目标|路径|路线|循环|闭环|反馈|迭代/i,
+      ]);
+      const score =
+        (strategy === "hybrid" ? 5 : strategy === "direct" ? 4 : strategy === "trace" ? 1 : 0) +
+        (handUsage === "annotate" ? 6 : 0) +
+        (boardMode === "reference" ? 6 : 0) +
+        (visualStyle === "technical_reference" ? 6 : visualStyle === "marketing_doodle" ? 4 : 0) +
+        (visualComplexity === "dense" || visualComplexity === "reference" ? 5 : visualComplexity === "medium" ? 2 : 0) +
+        Math.min(6, visualRelationScore * 2) +
+        (countSceneLabels(scene) >= 6 ? 3 : countSceneLabels(scene) >= 3 ? 1 : 0) -
+        (/(summary|checklist|formula|equation|bullet|list|总结|清单|公式)/i.test(text) ? 2 : 0);
+      return { scene, index, score };
+    })
+    .sort((a, b) => b.score - a.score || a.index - b.index)
+    .slice(0, IMAGE_TRACE_MAX_SCENES)
+    .map((item) => item.scene);
   if (
     candidates.length === 0 &&
     Object.keys(rasterBySceneId).length === 0 &&
@@ -2242,7 +2294,7 @@ async function generateRemotionCode(storyboard, options = {}) {
       "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for a few short nearby teacher callouts, small circles, underlines and emphasis marks over it; avoid long sweeping arrows and avoid large circles covering the diagram. " +
       "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
       "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
-      "Use a sparse light grey-white whiteboard canvas close to #E3E4DE, black marker outlines, blue handwritten titles, and purposeful colored teaching strokes only, " +
+      "Use a sparse clean off-white whiteboard canvas close to #F7F7F2, black marker outlines, blue handwritten titles, and purposeful colored teaching strokes only, " +
       "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
       "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
       "and lots of negative space. " +
@@ -2259,10 +2311,28 @@ async function generateRemotionCode(storyboard, options = {}) {
 
   const validatedTsx = validateGeneratedTsx(response.tsx);
   const glyphTsx = injectGlyphOutlineDrawing(validatedTsx);
+  const plannedSceneFrames = Array.isArray(codegenStoryboard?.scenes)
+    ? codegenStoryboard.scenes.reduce((sum, scene) => {
+        const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
+        const estimateFrames = Math.ceil(Number(scene?.duration_estimate ?? 0) * FPS);
+        const segmentFrames = Array.isArray(scene?.audioSegments ?? scene?.audio_segments)
+          ? Math.max(
+              0,
+              ...(scene?.audioSegments ?? scene?.audio_segments).map((segment) => Number(segment?.endFrame ?? 0)),
+            )
+          : 0;
+        return sum + Math.max(0, timingFrames, estimateFrames, segmentFrames);
+      }, 0)
+    : 0;
 
   return {
     tsx: validateGeneratedTsx(glyphTsx),
-    durationInFrames: Math.max(FPS * 10, Number(response.duration_in_frames ?? FPS * 60)),
+    durationInFrames: Math.max(
+      FPS * 10,
+      Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
+      plannedSceneFrames,
+      Number(response.duration_in_frames ?? FPS * 60),
+    ),
     fps: Number(response.fps ?? FPS),
     width: Number(response.width ?? WIDTH),
     height: Number(response.height ?? HEIGHT),
@@ -2405,7 +2475,10 @@ async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   console.log("[codegen] Generating Remotion TSX via LLM...");
   const generated = await generateRemotionCode(storyboardWithTraces, options);
   const { projectDir, entryPath } = writeGeneratedProject(jobId, generated);
-  updateJob(jobId, { generatedDir: projectDir });
+  updateJob(jobId, {
+    generatedDir: projectDir,
+    actualDurationSeconds: Math.round((generated.durationInFrames / generated.fps) * 10) / 10,
+  });
   console.log("[codegen] Generated project:", projectDir);
 
   await bundleAndRender(jobId, entryPath, outputPath);
@@ -2592,6 +2665,11 @@ const server = http.createServer(async (req, res) => {
         }
         if (!(await probePlayableAudio(backgroundMusicTrack.filePath))) {
           sendJson(res, 400, { error: `background music is not a playable audio file: ${backgroundMusicTrack.id}` });
+          return;
+        }
+        backgroundMusicTrack = await normalizeMusicTrackForRemotion(backgroundMusicTrack);
+        if (!(await probePlayableAudio(backgroundMusicTrack.filePath))) {
+          sendJson(res, 400, { error: `background music could not be normalized: ${backgroundMusicTrack.id}` });
           return;
         }
         backgroundMusicVolumeValue = clampNumber(

@@ -38,6 +38,19 @@ class TeachingBriefSceneOutline(BaseModel):
     visual_style: str | None = None
 
 
+class TeachingCoverageUnit(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    id: str
+    label: str
+    unit_type: str = "concept"
+    teaching_goal: str = ""
+    visual_role: str = "structure"
+    must_show: list[str] = Field(default_factory=list)
+    narration_focus: str | None = None
+    priority: int = Field(default=3, ge=1, le=5)
+
+
 class EnhancedTeachingBrief(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -54,6 +67,7 @@ class EnhancedTeachingBrief(BaseModel):
     recommended_hand_usage: str = "trace"
     recommended_visual_style: str = "teacher_whiteboard"
     recommended_scene_outline: list[TeachingBriefSceneOutline] = Field(default_factory=list)
+    teaching_coverage_units: list[TeachingCoverageUnit] = Field(default_factory=list)
     common_misconceptions: list[str] = Field(default_factory=list)
 
 

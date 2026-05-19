@@ -1,0 +1,421 @@
+﻿{
+    "storyboard":  {
+                       "topic":  "Ã©ÂÂÃ§ÂÂ¨Ã©ÂÂ®Ã©Â¢ÂÃ¨Â§Â£Ã¥ÂÂ³Ã¦Â¡ÂÃ¦ÂÂ¶",
+                       "total_duration_estimate":  153.0,
+                       "scenes":  [
+                                      {
+                                          "id":  "scene_0",
+                                          "order":  0,
+                                          "title":  "Off/On ä¸¤ç§ç¶æ",
+                                          "narration":  "å¨ Off ç¶æï¼æ \u0085åè¿æ²¡æè¶\u0085è¿éå¼ï¼è¡¬åºè¡¨é¢æ²¡æå½¢æè¿ç»­çµå­ééï¼æºæåæ¼æå°±åè¢«æ­å¼çä¸¤ç«¯ã å½ V_G å¤§äº V_thï¼æ \u0085æçµåºä¼å¨è¡¬åºè¡¨é¢æåºåºè¶³å¤çµå­ï¼æåè¿æä¸æ¡ååæ²éã",
+                                          "duration_estimate":  30.0,
+                                          "animations":  [
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  8.0,
+                                                                 "content":  "å·¦ä¾§ç» OFF ç¶æï¼æºæ¼ä¹é´æ­å¼ï¼ç¨åå·æ åº no channel / no currentã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "OFF",
+                                                                               "V_G \u003c V_th",
+                                                                               "no channel"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  9.0,
+                                                                 "content":  "å³ä¾§ç» ON ç¶æï¼ä»æ \u0085æåä¸ç»çµåºç®­å¤´ï¼åç»ä¸æ¡è¿ç»­ electron channelã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "ON",
+                                                                               "V_G \u003e V_th",
+                                                                               "electron channel"
+                                                                           ]
+                                                             }
+                                                         ],
+                                          "node_ids":  [
+
+                                                       ],
+                                          "image_description":  "two-panel whiteboard comparison of a MOS transistor OFF and ON state, left panel labeled OFF V_G \u003c V_th with no channel and crossed current arrow, right panel labeled ON V_G \u003e V_th with a dark electron channel between source and drain and downward gate electric field arrows",
+                                          "image_url":  null,
+                                          "learning_goal":  "ç¨åå¾å¯¹æ¯è§£ééå¼çµåå¦ä½å³å®ææ²¡æè¿ç»­çµå­æ²éã",
+                                          "visual_beats":  [
+                                                               {
+                                                                   "id":  "beat_0",
+                                                                   "draw_intent":  "å·¦ä¾§ç» OFF ç¶æï¼æºæ¼ä¹é´æ­å¼ï¼ç¨åå·æ åº no channel / no currentã",
+                                                                   "narration":  "å¨ Off ç¶æï¼æ \u0085åè¿æ²¡æè¶\u0085è¿éå¼ï¼è¡¬åºè¡¨é¢æ²¡æå½¢æè¿ç»­çµå­ééï¼æºæåæ¼æå°±åè¢«æ­å¼çä¸¤ç«¯ã",
+                                                                   "required_labels":  [
+                                                                                           "OFF",
+                                                                                           "V_G \u003c V_th",
+                                                                                           "no channel"
+                                                                                       ],
+                                                                   "duration_estimate":  8.0
+                                                               },
+                                                               {
+                                                                   "id":  "beat_1",
+                                                                   "draw_intent":  "å³ä¾§ç» ON ç¶æï¼ä»æ \u0085æåä¸ç»çµåºç®­å¤´ï¼åç»ä¸æ¡è¿ç»­ electron channelã",
+                                                                   "narration":  "å½ V_G å¤§äº V_thï¼æ \u0085æçµåºä¼å¨è¡¬åºè¡¨é¢æåºåºè¶³å¤çµå­ï¼æåè¿æä¸æ¡ååæ²éã",
+                                                                   "required_labels":  [
+                                                                                           "ON",
+                                                                                           "V_G \u003e V_th",
+                                                                                           "electron channel"
+                                                                                       ],
+                                                                   "duration_estimate":  9.0
+                                                               }
+                                                           ],
+                                          "diagram_plan":  {
+                                                               "kind":  "comparison",
+                                                               "layout":  "two panels: OFF on the left, ON on the right",
+                                                               "required_labels":  [
+                                                                                       "OFF: V_G \u003c V_th",
+                                                                                       "ON: V_G \u003e V_th",
+                                                                                       "no channel",
+                                                                                       "electron channel"
+                                                                                   ]
+                                                           },
+                                          "render_strategy":  "trace",
+                                          "visual_complexity":  "simple",
+                                          "board_mode":  "whiteboard",
+                                          "hand_usage":  "trace",
+                                          "visual_style":  "teacher_whiteboard"
+                                      },
+                                      {
+                                          "id":  "scene_1",
+                                          "order":  1,
+                                          "title":  "çµæµè¢«çµåæå¼",
+                                          "narration":  "æäºæ²éè¿ä¸ç­äºèªå¨æçµæµï¼æºæ¼ä¹é´è¿éè¦ä¸ä¸ª V_DS æ¥æä¾æ¨å¨è½½æµå­ççµå¿å·®ã äºæ¯çµå­æ²¿æ²éç§»å¨ï¼å½¢ææ¼çµæµ I_Dãç´è§å°è¯´ï¼æ \u0085æçµåè´è´£å¼é¨ï¼æºæ¼çµåè´è´£æçµæµæ¨è¿å»ã",
+                                          "duration_estimate":  29.0,
+                                          "animations":  [
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  7.0,
+                                                                 "content":  "å¨å·²ç»å½¢æçæ²éä¸¤ç«¯ç» V_DS çµæºç¬¦å·ã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "V_DS"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  9.0,
+                                                                 "content":  "æ²¿æ²éç»å¤æ ¹çº¢è²çµæµç®­å¤´ I_Dï¼å¹¶å¨æè¾¹ç»ä¸ä¸ªè¢«æ \u0085åæ§å¶çå¼å\u0085³å¾æ ã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "I_D",
+                                                                               "switch"
+                                                                           ]
+                                                             }
+                                                         ],
+                                          "node_ids":  [
+
+                                                       ],
+                                          "image_description":  "whiteboard MOS ON diagram with electron channel between source and drain, a V_DS battery connected across source and drain, arrows labeled I_D flowing through the channel, small voltage-controlled switch analogy icon",
+                                          "image_url":  null,
+                                          "learning_goal":  "è¯´æ V_DS åªæå¨æ²éå½¢æåæè½æ¨å¨æºæ¼çµæµï¼MOS å æ­¤åçµåæ§å¶å¼å\u0085³ã",
+                                          "visual_beats":  [
+                                                               {
+                                                                   "id":  "beat_0",
+                                                                   "draw_intent":  "å¨å·²ç»å½¢æçæ²éä¸¤ç«¯ç» V_DS çµæºç¬¦å·ã",
+                                                                   "narration":  "æäºæ²éè¿ä¸ç­äºèªå¨æçµæµï¼æºæ¼ä¹é´è¿éè¦ä¸ä¸ª V_DS æ¥æä¾æ¨å¨è½½æµå­ççµå¿å·®ã",
+                                                                   "required_labels":  [
+                                                                                           "V_DS"
+                                                                                       ],
+                                                                   "duration_estimate":  7.0
+                                                               },
+                                                               {
+                                                                   "id":  "beat_1",
+                                                                   "draw_intent":  "æ²¿æ²éç»å¤æ ¹çº¢è²çµæµç®­å¤´ I_Dï¼å¹¶å¨æè¾¹ç»ä¸ä¸ªè¢«æ \u0085åæ§å¶çå¼å\u0085³å¾æ ã",
+                                                                   "narration":  "äºæ¯çµå­æ²¿æ²éç§»å¨ï¼å½¢ææ¼çµæµ I_Dãç´è§å°è¯´ï¼æ \u0085æçµåè´è´£å¼é¨ï¼æºæ¼çµåè´è´£æçµæµæ¨è¿å»ã",
+                                                                   "required_labels":  [
+                                                                                           "I_D",
+                                                                                           "switch"
+                                                                                       ],
+                                                                   "duration_estimate":  9.0
+                                                               }
+                                                           ],
+                                          "diagram_plan":  {
+                                                               "kind":  "process",
+                                                               "layout":  "ON MOS diagram with channel, source-drain battery, current arrows and switch analogy",
+                                                               "required_labels":  [
+                                                                                       "V_DS",
+                                                                                       "I_D",
+                                                                                       "Voltage-controlled switch"
+                                                                                   ]
+                                                           },
+                                          "render_strategy":  "trace",
+                                          "visual_complexity":  "medium",
+                                          "board_mode":  "whiteboard",
+                                          "hand_usage":  "trace",
+                                          "visual_style":  "teacher_whiteboard"
+                                      },
+                                      {
+                                          "id":  "scene_2",
+                                          "order":  2,
+                                          "title":  "ç­æ²éæåº",
+                                          "narration":  "å¨é¿æ²éå¨ä»¶éï¼æ²éè¶³å¤é¿ï¼æ \u0085æåä¸ä¸ªæ¯è¾å¼ºçæ»é¸é¨ï¼è½ä¸»å¯¼ä¸­é´åºåççµè·ã å°ºå¯¸ç»§ç»­ç¼©å°æ¶ï¼æºæåæ¼æç¦»å¾å¤ªè¿ï¼å®ä»¬ççµåºä¼ä¼¸è¿æ²éï¼æ¢èµ°ä¸é¨åæ§å¶æï¼è¿å°±æ¯ç­æ²éæåºçç´è§æ¥æºã",
+                                          "duration_estimate":  29.0,
+                                          "animations":  [
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  7.0,
+                                                                 "content":  "ç»é¿æ²éåå¹³é¢æ \u0085æï¼æ åºæ \u0085æä¸»è¦æ§å¶ä¸­é´æ²éã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "long channel",
+                                                                               "gate control"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  9.0,
+                                                                 "content":  "ææ²éç»ç­ï¼æºæ¼çµåºç®­å¤´æ¤è¿æ²éåºåï¼å¹¶ç»å¤±æ§æç¤ºã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "short channel",
+                                                                               "field intrusion"
+                                                                           ]
+                                                             }
+                                                         ],
+                                          "node_ids":  [
+
+                                                       ],
+                                          "image_description":  "whiteboard comparison of long-channel and short-channel planar MOS devices, long channel controlled by gate, short channel with source and drain electric field arrows intruding into the channel, warning label short-channel effect",
+                                          "image_url":  null,
+                                          "learning_goal":  "è§£éä¸ºä»ä¹å°ºå¯¸ç¼©å°æ¶å¹³é¢ MOS çæ \u0085ææ§å¶ä¼åå¼±ã",
+                                          "visual_beats":  [
+                                                               {
+                                                                   "id":  "beat_0",
+                                                                   "draw_intent":  "ç»é¿æ²éåå¹³é¢æ \u0085æï¼æ åºæ \u0085æä¸»è¦æ§å¶ä¸­é´æ²éã",
+                                                                   "narration":  "å¨é¿æ²éå¨ä»¶éï¼æ²éè¶³å¤é¿ï¼æ \u0085æåä¸ä¸ªæ¯è¾å¼ºçæ»é¸é¨ï¼è½ä¸»å¯¼ä¸­é´åºåççµè·ã",
+                                                                   "required_labels":  [
+                                                                                           "long channel",
+                                                                                           "gate control"
+                                                                                       ],
+                                                                   "duration_estimate":  7.0
+                                                               },
+                                                               {
+                                                                   "id":  "beat_1",
+                                                                   "draw_intent":  "ææ²éç»ç­ï¼æºæ¼çµåºç®­å¤´æ¤è¿æ²éåºåï¼å¹¶ç»å¤±æ§æç¤ºã",
+                                                                   "narration":  "å°ºå¯¸ç»§ç»­ç¼©å°æ¶ï¼æºæåæ¼æç¦»å¾å¤ªè¿ï¼å®ä»¬ççµåºä¼ä¼¸è¿æ²éï¼æ¢èµ°ä¸é¨åæ§å¶æï¼è¿å°±æ¯ç­æ²éæåºçç´è§æ¥æºã",
+                                                                   "required_labels":  [
+                                                                                           "short channel",
+                                                                                           "field intrusion"
+                                                                                       ],
+                                                                   "duration_estimate":  9.0
+                                                               }
+                                                           ],
+                                          "diagram_plan":  {
+                                                               "kind":  "comparison",
+                                                               "layout":  "long-channel MOS versus short-channel MOS with source/drain fields intruding",
+                                                               "required_labels":  [
+                                                                                       "long channel",
+                                                                                       "short channel",
+                                                                                       "short-channel effect"
+                                                                                   ]
+                                                           },
+                                          "render_strategy":  "trace",
+                                          "visual_complexity":  "medium",
+                                          "board_mode":  "whiteboard",
+                                          "hand_usage":  "trace",
+                                          "visual_style":  "teacher_whiteboard"
+                                      },
+                                      {
+                                          "id":  "scene_3",
+                                          "order":  3,
+                                          "title":  "FinFET ä¸é¢å\u0085ä½æ²é",
+                                          "narration":  "FinFET æåæ¥è¶´å¨å¹³é¢ä¸çæ²éç«èµ·æ¥ï¼åæä¸æ¡é³çç¶çä¸ç»´ééã æ \u0085æä¸ååªä»ä¸æ¹æ§å¶ï¼èæ¯åå¤¹å­ä¸æ ·å\u0085ä½é¡¶é¨åä¸¤ä¸ªä¾§å£ï¼ä¸é¢åæ¶æ½å çµåºï¼æ \u0085æ§è½åå°±ææ¾å¢å¼ºã",
+                                          "duration_estimate":  32.0,
+                                          "animations":  [
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  8.0,
+                                                                 "content":  "ç»ä¸ä¸ªç«èµ·ç fin/channelï¼ä¸¤ç«¯åå«è¿æ¥ Source å Drainã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "Fin channel",
+                                                                               "Source",
+                                                                               "Drain"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  10.0,
+                                                                 "content":  "ç» U å½¢ Gate ä»é¡¶é¨åä¸¤ä¾§å\u0085ä½ finï¼å¹¶ä»ä¸é¢ç»æ§å¶ç®­å¤´ã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "Gate wraps 3 sides",
+                                                                               "three-side control"
+                                                                           ]
+                                                             }
+                                                         ],
+                                          "node_ids":  [
+
+                                                       ],
+                                          "image_description":  "simple 3D whiteboard sketch of a FinFET: vertical fin channel standing between source and drain, a U-shaped gate wrapping over the top and both sidewalls of the fin, three control arrows, labels Fin channel, Source, Drain, Gate wraps 3 sides",
+                                          "image_url":  null,
+                                          "learning_goal":  "çæ FinFET ä¸ºä»ä¹ææ²éåæç«èµ·ç finï¼å¹¶è®©æ \u0085æä»ä¸é¢å\u0085ä½å®ã",
+                                          "visual_beats":  [
+                                                               {
+                                                                   "id":  "beat_0",
+                                                                   "draw_intent":  "ç»ä¸ä¸ªç«èµ·ç fin/channelï¼ä¸¤ç«¯åå«è¿æ¥ Source å Drainã",
+                                                                   "narration":  "FinFET æåæ¥è¶´å¨å¹³é¢ä¸çæ²éç«èµ·æ¥ï¼åæä¸æ¡é³çç¶çä¸ç»´ééã",
+                                                                   "required_labels":  [
+                                                                                           "Fin channel",
+                                                                                           "Source",
+                                                                                           "Drain"
+                                                                                       ],
+                                                                   "duration_estimate":  8.0
+                                                               },
+                                                               {
+                                                                   "id":  "beat_1",
+                                                                   "draw_intent":  "ç» U å½¢ Gate ä»é¡¶é¨åä¸¤ä¾§å\u0085ä½ finï¼å¹¶ä»ä¸é¢ç»æ§å¶ç®­å¤´ã",
+                                                                   "narration":  "æ \u0085æä¸ååªä»ä¸æ¹æ§å¶ï¼èæ¯åå¤¹å­ä¸æ ·å\u0085ä½é¡¶é¨åä¸¤ä¸ªä¾§å£ï¼ä¸é¢åæ¶æ½å çµåºï¼æ \u0085æ§è½åå°±ææ¾å¢å¼ºã",
+                                                                   "required_labels":  [
+                                                                                           "Gate wraps 3 sides",
+                                                                                           "three-side control"
+                                                                                       ],
+                                                                   "duration_estimate":  10.0
+                                                               }
+                                                           ],
+                                          "diagram_plan":  {
+                                                               "kind":  "structure",
+                                                               "layout":  "simple 3D fin channel with gate wrapping top and two sidewalls",
+                                                               "required_labels":  [
+                                                                                       "Fin channel",
+                                                                                       "Gate wraps 3 sides",
+                                                                                       "Source",
+                                                                                       "Drain"
+                                                                                   ]
+                                                           },
+                                          "render_strategy":  "hybrid",
+                                          "visual_complexity":  "dense",
+                                          "board_mode":  "reference",
+                                          "hand_usage":  "annotate",
+                                          "visual_style":  "technical_reference"
+                                      },
+                                      {
+                                          "id":  "scene_4",
+                                          "order":  4,
+                                          "title":  "æªé¢éçææå®½åº¦",
+                                          "narration":  "ä»æªé¢çï¼FinFET çæ²éä¸æ¯åªæé¡¶é¨ä¸æ¡çº¿ï¼ä¸¤ä¾§å£ä¹è¢«æ \u0085æå\u0085ä½ï¼æä»¥é½è½åä¸å¯¼éã å½æ \u0085æå çµåï¼é¡¶é¨åä¸¤ä¾§é½è½æåºåºçµè·ï¼æææ²éå®½åº¦å°±æ¥èªä¸¤ä¾§é«åº¦å ä¸é¡¶é¨å®½åº¦ï¼ä¹å°±æ¯ W_eff ç­äº 2H_fin å  W_finã",
+                                          "duration_estimate":  33.0,
+                                          "animations":  [
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  8.0,
+                                                                 "content":  "ç» fin çæªé¢å U å½¢æ \u0085æï¼åå«æ åºé¡¶é¨ W_fin åä¸¤ä¾§ H_finã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "W_fin",
+                                                                               "H_fin"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "whiteboard_draw",
+                                                                 "duration":  10.0,
+                                                                 "content":  "å¨ä¸é¢ç»åº induced electronsï¼ååå\u0085¬å¼ W_eff = 2H_fin + W_finã",
+                                                                 "latex":  null,
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  [
+                                                                               "induced electrons",
+                                                                               "W_eff = 2H_fin + W_fin"
+                                                                           ]
+                                                             },
+                                                             {
+                                                                 "type":  "write_formula",
+                                                                 "duration":  5.0,
+                                                                 "content":  "W_{eff}=2H_{fin}+W_{fin}",
+                                                                 "latex":  "W_{eff}=2H_{fin}+W_{fin}",
+                                                                 "from_node":  null,
+                                                                 "to_node":  null,
+                                                                 "x":  null,
+                                                                 "y":  null,
+                                                                 "items":  null
+                                                             }
+                                                         ],
+                                          "node_ids":  [
+
+                                                       ],
+                                          "image_description":  "FinFET cross-section whiteboard diagram with a U-shaped gate around a rectangular fin, labels H_fin on both sidewalls, W_fin on the top, small induced electron dots on the three gated surfaces, formula W_eff = 2H_fin + W_fin",
+                                          "image_url":  null,
+                                          "learning_goal":  "ç¨ FinFET æªé¢è§£é W_eff = 2H_fin + W_fin åä¸é¢æåºçµè·ã",
+                                          "visual_beats":  [
+                                                               {
+                                                                   "id":  "beat_0",
+                                                                   "draw_intent":  "ç» fin çæªé¢å U å½¢æ \u0085æï¼åå«æ åºé¡¶é¨ W_fin åä¸¤ä¾§ H_finã",
+                                                                   "narration":  "ä»æªé¢çï¼FinFET çæ²éä¸æ¯åªæé¡¶é¨ä¸æ¡çº¿ï¼ä¸¤ä¾§å£ä¹è¢«æ \u0085æå\u0085ä½ï¼æä»¥é½è½åä¸å¯¼éã",
+                                                                   "required_labels":  [
+                                                                                           "W_fin",
+                                                                                           "H_fin"
+                                                                                       ],
+                                                                   "duration_estimate":  8.0
+                                                               },
+                                                               {
+                                                                   "id":  "beat_1",
+                                                                   "draw_intent":  "å¨ä¸é¢ç»åº induced electronsï¼ååå\u0085¬å¼ W_eff = 2H_fin + W_finã",
+                                                                   "narration":  "å½æ \u0085æå çµåï¼é¡¶é¨åä¸¤ä¾§é½è½æåºåºçµè·ï¼æææ²éå®½åº¦å°±æ¥èªä¸¤ä¾§é«åº¦å ä¸é¡¶é¨å®½åº¦ï¼ä¹å°±æ¯ W_eff ç­äº 2H_fin å  W_finã",
+                                                                   "required_labels":  [
+                                                                                           "induced electrons",
+                                                                                           "W_eff = 2H_fin + W_fin"
+                                                                                       ],
+                                                                   "duration_estimate":  10.0
+                                                               }
+                                                           ],
+                                          "diagram_plan":  {
+                                                               "kind":  "cross_section",
+                                                               "layout":  "FinFET cross-section with U-shaped gate, top width and two sidewall heights",
+                                                               "required_labels":  [
+                                                                                       "H_fin",
+                                                                                       "W_fin",
+                                                                                       "W_eff = 2H_fin + W_fin",
+                                                                                       "induced electrons"
+                                                                                   ]
+                                                           },
+                                          "render_strategy":  "hybrid",
+                                          "visual_complexity":  "dense",
+                                          "board_mode":  "reference",
+                                          "hand_usage":  "annotate",
+                                          "visual_style":  "technical_reference"
+                                      }
+                                  ]
+                   }
+}
