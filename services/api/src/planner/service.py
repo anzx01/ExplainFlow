@@ -616,6 +616,29 @@ def _clean_narration_text(value: object) -> str:
     return text
 
 
+def _trim_text_to_chars(text: str, max_chars: int) -> str:
+    text = _clean_narration_text(text)
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+    sentences = [part for part in re.split(r"(?<=[。！？.!?])", text) if part.strip()]
+    kept = ""
+    for sentence in sentences:
+        if len(kept) + len(sentence) <= max_chars:
+            kept += sentence
+        elif not kept:
+            candidate = sentence[:max_chars]
+            pieces = re.split(r"([，,；;：:、])", candidate)
+            if len(pieces) >= 3:
+                candidate = "".join(pieces[:-2])
+            kept = candidate.rstrip("，,；;：:、 ") + "。"
+            break
+    if not kept:
+        kept = text[:max_chars].rstrip("，,；;：:、 ") + "。"
+    if kept[-1] not in "。！？.!?":
+        kept = kept.rstrip("，,；;：:、 ") + "。"
+    return kept
+
+
 def _subtitle_text(value: object) -> str | None:
     text = _clean_narration_text(value)
     return text or None
@@ -699,6 +722,27 @@ def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:
     return narration
 
 
+def _compress_storyboard_narration_to_target(storyboard: Storyboard, target_duration: int) -> Storyboard:
+    if not storyboard.scenes:
+        return storyboard
+    scene_count = max(1, len(storyboard.scenes))
+    target = max(45.0, float(target_duration))
+    speech_budget = max(30.0, target * 0.62)
+    per_scene_budget = speech_budget / scene_count
+    for scene in storyboard.scenes:
+        beats = scene.visual_beats or []
+        beat_count = max(1, len(beats))
+        per_beat_seconds = max(4.0, min(9.0, per_scene_budget / beat_count))
+        max_chars = max(18, int(per_beat_seconds * 3.0))
+        for beat in beats:
+            beat.narration = _trim_text_to_chars(beat.narration, max_chars)
+            beat.duration_estimate = round(max(4.0, min(10.0, per_beat_seconds + 1.0)), 1)
+        scene.narration = _narration_from_beats(scene.narration, beats)
+        scene.duration_estimate = _estimate_scene_duration(min(scene.duration_estimate, per_scene_budget + 4.0), scene.narration, beats, scene.animations)
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    return storyboard
+
+
 def _estimate_narration_seconds(narration: str) -> float:
     cjk_chars = len(re.findall(r"[\u3400-\u9fff]", narration))
     total_chars = len(narration)
@@ -715,12 +759,13 @@ def _estimate_scene_duration(raw_duration: float, narration: str, beats: list[Vi
     return round(min(duration, 55.0), 1)
 
 
-def _scene_floor_duration(scene: Scene) -> float:
+def _scene_floor_duration(scene: Scene, target_scene_seconds: float | None = None) -> float:
     beat_floor = sum(max(2.4, beat.duration_estimate * 0.75) for beat in scene.visual_beats)
     animation_floor = sum(max(1.0, animation.duration * 0.8) for animation in scene.animations)
     narration_floor = _estimate_narration_seconds(scene.narration) + 2.0
     required = max(10.0, narration_floor, beat_floor + 1.0, animation_floor + 1.0)
-    return round(min(32.0, required), 1)
+    cap = 32.0 if target_scene_seconds is None else max(12.0, target_scene_seconds * 1.18)
+    return round(min(cap, required), 1)
 
 
 def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> Storyboard:
@@ -730,7 +775,8 @@ def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> S
         storyboard.total_duration_estimate = target
         return storyboard
 
-    floors = [_scene_floor_duration(scene) for scene in storyboard.scenes]
+    target_scene_seconds = target / max(1, len(storyboard.scenes))
+    floors = [_scene_floor_duration(scene, target_scene_seconds) for scene in storyboard.scenes]
     for scene, floor in zip(storyboard.scenes, floors):
         scene.duration_estimate = round(max(0.1, scene.duration_estimate, floor), 1)
 
@@ -782,7 +828,7 @@ def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> S
         storyboard.scenes[-1].duration_estimate = round(max(1.0, storyboard.scenes[-1].duration_estimate + delta), 1)
         old_total_without_last = sum(scene.duration_estimate for scene in storyboard.scenes[:-1])
         last = storyboard.scenes[-1]
-        last.duration_estimate = round(max(_scene_floor_duration(last), target - old_total_without_last), 1)
+        last.duration_estimate = round(max(_scene_floor_duration(last, target_scene_seconds), target - old_total_without_last), 1)
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
 
@@ -1023,6 +1069,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
+    storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
 
     logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)

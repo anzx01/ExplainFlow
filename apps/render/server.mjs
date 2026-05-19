@@ -388,6 +388,31 @@ function cleanNarrationText(text) {
   return value;
 }
 
+function trimNarrationToChars(text, maxChars) {
+  const limit = Math.max(0, Number(maxChars) || 0);
+  const source = cleanNarrationText(text);
+  if (!limit || source.length <= limit) return source;
+  const sentences = source.match(/[^。！？.!?]+[。！？.!?]?/g) ?? [source];
+  let result = "";
+  for (const sentence of sentences) {
+    const next = `${result}${sentence}`;
+    if (next.length <= limit) {
+      result = next;
+    } else if (!result) {
+      let candidate = sentence.slice(0, limit);
+      const cut = Math.max(candidate.lastIndexOf("，"), candidate.lastIndexOf(","), candidate.lastIndexOf("；"), candidate.lastIndexOf(";"), candidate.lastIndexOf("："), candidate.lastIndexOf(":"), candidate.lastIndexOf("、"));
+      if (cut > Math.floor(limit * 0.45)) candidate = candidate.slice(0, cut);
+      result = candidate.replace(/[，,；;：:、\s]+$/g, "");
+      break;
+    } else {
+      break;
+    }
+  }
+  result = result.replace(/[，,；;：:、\s]+$/g, "");
+  if (result && !/[。！？.!?]$/.test(result)) result += "。";
+  return result || source.slice(0, limit);
+}
+
 function normalizeVoiceKey(voice) {
   const value = String(voice ?? "").trim();
   if (!value) return "xiaoxiao";
@@ -556,8 +581,12 @@ function sceneBeatSpecs(scene) {
           duration_estimate: scene.duration_estimate || 8,
         },
       ];
+  const sceneBudget = Math.max(5, Number(scene?.duration_estimate ?? 0) || 0);
+  const beatBudget = Math.max(4, Math.min(9, (sceneBudget * 0.66) / Math.max(1, beats.length)));
+  const maxChars = Math.max(18, Math.floor(beatBudget * 3.1));
   return beats.map((beat, index) => {
-    const text = cleanNarrationText(beat?.narration || scene.narration || scene.title || beat?.draw_intent || "");
+    const rawText = cleanNarrationText(beat?.narration || scene.narration || scene.title || beat?.draw_intent || "");
+    const text = trimNarrationToChars(rawText, maxChars);
     return {
       id: String(beat?.id || `beat_${index}`),
       index,
