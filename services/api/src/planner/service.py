@@ -163,6 +163,41 @@ def _validate_handwritten_whiteboard_style(code: str) -> None:
         )
 
 
+def _validate_no_paper_surface(code: str) -> None:
+    forbidden = {
+        "washD": "paper-like wash layers are not allowed behind drawings",
+        "boxShadow": "shadowed paper/card surfaces are not allowed",
+        "drop-shadow": "drop-shadow effects create a paper-like backing",
+        "textShadow": "text shadows create a grey backing behind handwriting",
+    }
+    lowered = code.lower()
+    for token, reason in forbidden.items():
+        if token.lower() in lowered:
+            raise ValueError(
+                f"Generated Remotion code contains forbidden paper-surface styling: {token} ({reason})"
+            )
+
+    if re.search(r"\b(?:paper|card|panel|surface|sheet|poster|slide|boardShadow|shadow|wash)\w*\b", code, flags=re.IGNORECASE):
+        raise ValueError("Generated Remotion code must not define paper/card/panel/surface/shadow/wash helpers or variables")
+
+    if re.search(r"\bfilter\s*:\s*['\"][^'\"]+['\"]", code, flags=re.IGNORECASE):
+        raise ValueError("Generated Remotion code must not use CSS filter effects")
+
+    if re.search(r"\brasterReveal\s*:\s*\{|\breferenceImageAsset\s*:\s*['\"]generated/", code, flags=re.IGNORECASE):
+        raise ValueError("Generated Remotion code must not bake rasterReveal/referenceImageAsset into normal generated whiteboard scenes")
+
+    light_surface_pattern = (
+        r"background(?:Color)?\s*:\s*['\"]"
+        r"(?:#fff(?:fff)?|white|#f7f7f2|#f8f8f0|#fafafa|#f5f5f5|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))"
+        r"['\"][\s\S]{0,220}\b(?:borderRadius|boxShadow|position\s*:\s*['\"]absolute['\"])"
+    )
+    if re.search(light_surface_pattern, code, flags=re.IGNORECASE):
+        raise ValueError("Generated Remotion code must not create an inner white/light rectangle behind drawings or text")
+
+    if re.search(r"\b(?:linear-gradient|radial-gradient)\s*\(", code, flags=re.IGNORECASE):
+        raise ValueError("Generated Remotion code must not use gradient washes or panel backgrounds")
+
+
 def _validate_static_file_usage(code: str) -> None:
     allowed_asset = re.compile(
         r"^(?:hand-real-pen\.png|generated/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$"
@@ -344,6 +379,7 @@ def _validate_generated_tsx(tsx: str) -> str:
     _validate_stroke_following_timeline(code)
     _validate_glyph_outline_text(code)
     _validate_handwritten_whiteboard_style(code)
+    _validate_no_paper_surface(code)
     if not re.search(r"\b(KaiTi|STKaiti|Kaiti|楷体)\b", code, flags=re.IGNORECASE):
         raise ValueError("Generated Remotion code must use a Chinese handwriting-style font family such as KaiTi/STKaiti")
     if not _has_teaching_accent(code):
@@ -482,14 +518,16 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 1. 解说必须跟随绘图过程。每个 scene 都要有 learning_goal、diagram_plan、visual_beats。
 2. 每个 visual_beat 都必须用 draw_intent 说明画面正在呈现什么，用 narration 说明知识本身；旁白不能先讲完、图还没画完。
 3. 每个关键点按“现象 -> 原因 -> 结果 -> 类比/总结”展开，避免只写定义和 bullet list。
-4. 优先用状态对比图、过程模拟图、结构图、截面图、箭头和局部放大；少用纯文字列表。
-5. image_description 必须是英文，像给图像生成模型的具体白板线稿说明：布局、标签、箭头、局部放大都要写清楚。
-6. 用优秀老师板书的方式强调重点：关键术语下划线、圈出局部、彩色箭头、局部放大框、对比标记和结论框。
-7. 使用有限教学色彩：red=current/flow, blue=voltage/control, green=channel/valid path, purple=gate/structure, yellow=emphasis underline/callout。
-8. 内容 prompt 与视觉风格分离：这里规划内容和画面，不写模板库、组件库或代码。
-9. 旁白禁止描述绘图动作或镜头调度：不要说“先画/再画/最后画/这里画/左边画/右边画/画出来/标出/写上/看图中/这一步”。draw_intent 可以写绘图动作，但 narration 只讲概念、因果、变化和结论。
-10. 总时长是建议值；如果内容和绘图需要更久，优先保证讲画完整，不要为了卡时长裁掉 beat。
-11. 每个 scene 必须给出抽象绘制策略字段 `render_strategy`、`visual_complexity`、`board_mode`、`hand_usage`、`visual_style`：
+4. 旁白要像一个脑子很清楚、稍微有点幽默感的老师在现场讲：多用具体比喻、轻微反差和口语节奏，例如“别急着开干”“这一步像先摊开地图”“不然很容易原地忙成一团”。幽默只能帮助理解，不能变成段子、网络烂梗或抢戏。
+5. 每个 scene 至少有一句把抽象关系落到生活化类比或具体动作上；每个 visual_beat 的 narration 优先 1-2 个完整短句，不写论文腔。
+6. 优先用状态对比图、过程模拟图、结构图、截面图、箭头和局部放大；少用纯文字列表。
+7. image_description 必须是英文，像给图像生成模型的具体白板线稿说明：布局、标签、箭头、局部放大都要写清楚。
+8. 用优秀老师板书的方式强调重点：关键术语下划线、圈出局部、彩色箭头、局部放大框、对比标记和结论框。
+9. 使用有限教学色彩：red=current/flow, blue=voltage/control, green=channel/valid path, purple=gate/structure, yellow=emphasis underline/callout。
+10. 内容 prompt 与视觉风格分离：这里规划内容和画面，不写模板库、组件库或代码。
+11. 旁白禁止描述绘图动作或镜头调度：不要说“先画/再画/最后画/这里画/左边画/右边画/画出来/标出/写上/看图中/这一步”。draw_intent 可以写绘图动作，但 narration 只讲概念、因果、变化和结论。
+12. 总时长是建议值；如果内容和绘图需要更久，优先保证讲画完整，不要为了卡时长裁掉 beat。
+13. 每个 scene 必须给出抽象绘制策略字段 `render_strategy`、`visual_complexity`、`board_mode`、`hand_usage`、`visual_style`：
     - `trace`：结构简单、元素少、能像老师板书一样分步骤画完的图，例如流程图、状态对比图、公式推导、曲线、单个结构示意图。
     - `direct`：图像特别复杂、标签很多、细节密集、实物/参考图/成品图/三维或多层结构，直接呈现主体，再用手写箭头、圈、下划线讲重点。
     - `hybrid`：主体复杂但局部需要教学强调，先直接呈现主体，再按 visual_beats 手写局部 callout。
@@ -537,13 +575,6 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 颜色有语义：白色主式，cyan/green 表示变量或向量，yellow 表示结论，pink/red 表示目标或关键条件。
 - 每一屏只推进一个推导动作，不要一次性出现整页答案。
 
-MOS/FinFET 专项要求（只在用户原始主题、graph.topic 或 enhanced brief 明确包含 MOS、MOSFET、晶体管、FinFET 时启用；其他主题严禁引入这些器件内容）：
-- 必须包含 MOS Off/On 对比：未加栅压无沟道无电流；V_G > V_th 后形成反型电子通道。
-- 必须画出 V_DS 驱动源漏电流，把 MOS 总结为电压控制开关。
-- 必须解释短沟道效应为什么随着尺寸缩小出现。
-- 必须画出 FinFET 的三维 fin 和 gate 三面包住沟道。
-- 必须画出 FinFET 截面，标注 W_eff = 2H_fin + W_fin，并显示三面感应电荷。
-
 梯度下降专项要求（只在用户原始主题、graph.topic 或 enhanced brief 明确包含梯度下降/gradient descent 时启用；其他主题严禁引入这些内容）：
 - 必须包含损失曲线、当前位置、梯度方向、负梯度更新、学习率步长、迭代收敛。
 
@@ -569,7 +600,7 @@ MOS/FinFET 专项要求（只在用户原始主题、graph.topic 或 enhanced br
         {
           "id": "beat_0",
           "draw_intent": "正在画什么，包含图形、箭头、标签、变化",
-          "narration": "同步讲解的知识内容，只讲概念和因果，不说正在画什么",
+          "narration": "同步讲解的知识内容，只讲概念和因果，不说正在画什么；口语、生动、可带轻微幽默或类比",
           "required_labels": ["本 beat 图上要出现的标签"],
           "duration_estimate": 6
         }
@@ -625,15 +656,21 @@ def _trim_text_to_chars(text: str, max_chars: int) -> str:
     for sentence in sentences:
         if len(kept) + len(sentence) <= max_chars:
             kept += sentence
-        elif not kept:
+        elif not kept and max_chars >= 28:
             candidate = sentence[:max_chars]
             pieces = re.split(r"([，,；;：:、])", candidate)
             if len(pieces) >= 3:
                 candidate = "".join(pieces[:-2])
             kept = candidate.rstrip("，,；;：:、 ") + "。"
             break
+        else:
+            break
     if not kept:
-        kept = text[:max_chars].rstrip("，,；;：:、 ") + "。"
+        first_sentence = sentences[0].strip() if sentences else text
+        if len(first_sentence) <= max(max_chars * 2, 96):
+            kept = first_sentence
+        else:
+            kept = text[:max_chars].rstrip("，,；;：:、 ") + "。"
     if kept[-1] not in "。！？.!?":
         kept = kept.rstrip("，,；;：:、 ") + "。"
     return kept
@@ -837,18 +874,34 @@ def _max_scene_count_for_target(target_duration: int) -> int:
     return max(3, min(7, math.ceil(max(60, target_duration) / 22)))
 
 
-def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int) -> Storyboard:
+def _scene_relation_key(scene: Scene) -> str:
+    return _visual_relation_kind_for_scene(scene) or (
+        _clean_text(scene.diagram_plan.kind if scene.diagram_plan else "") or "scene"
+    )
+
+
+def _reindex_storyboard_scenes(storyboard: Storyboard) -> Storyboard:
+    for index, scene in enumerate(storyboard.scenes):
+        scene.order = index
+        scene.id = f"scene_{index}"
+    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    return storyboard
+
+
+def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int, graph: ExplainGraph | None = None) -> Storyboard:
     max_scenes = _max_scene_count_for_target(target_duration)
     if len(storyboard.scenes) <= max_scenes:
         return storyboard
+
+    protected: list[Scene] = []
+    if graph is not None:
+        protected = _protected_coverage_scenes(storyboard, graph, max_scenes)
 
     unique: list[Scene] = []
     deferred: list[Scene] = []
     seen: set[str] = set()
     for scene in storyboard.scenes:
-        kind = _visual_relation_kind_for_scene(scene) or (
-            _clean_text(scene.diagram_plan.kind if scene.diagram_plan else "") or "scene"
-        )
+        kind = _scene_relation_key(scene)
         if kind in seen:
             deferred.append(scene)
             continue
@@ -856,7 +909,12 @@ def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int) -
         unique.append(scene)
 
     candidates = unique + deferred
-    selected = candidates[:max_scenes]
+    selected: list[Scene] = []
+    for scene in protected + candidates:
+        if scene not in selected:
+            selected.append(scene)
+        if len(selected) >= max_scenes:
+            break
 
     summary_scene = next(
         (
@@ -867,15 +925,96 @@ def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int) -
         ),
         None,
     )
+    protected_set = set(id(scene) for scene in protected)
     if summary_scene and summary_scene not in selected and selected:
-        selected[-1] = summary_scene
+        replace_at = next((i for i in range(len(selected) - 1, -1, -1) if id(selected[i]) not in protected_set), None)
+        if replace_at is None:
+            replace_at = len(selected) - 1
+        if id(selected[replace_at]) not in protected_set:
+            selected[replace_at] = summary_scene
 
-    for index, scene in enumerate(selected):
-        scene.order = index
-        scene.id = f"scene_{index}"
-    storyboard.scenes = selected
-    storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
-    return storyboard
+    if graph is not None:
+        selected = _repair_missing_protected_scenes(selected, storyboard.scenes, graph, max_scenes)
+
+    storyboard.scenes = selected[:max_scenes]
+    return _reindex_storyboard_scenes(storyboard)
+
+
+def _repair_missing_protected_scenes(selected: list[Scene], all_scenes: list[Scene], graph: ExplainGraph, max_scenes: int) -> list[Scene]:
+    selected_storyboard = Storyboard(topic=graph.topic, total_duration_estimate=0, scenes=list(selected))
+    missing = _missing_coverage_units(selected_storyboard, graph)
+    if not missing:
+        return selected
+    result = list(selected)
+    for unit in missing:
+        replacement = _best_scene_for_coverage_unit(all_scenes, unit, result)
+        if replacement is None or replacement in result:
+            continue
+        replace_at = _replaceable_scene_index(result)
+        if replace_at is None and len(result) < max_scenes:
+            result.append(replacement)
+        elif replace_at is not None:
+            result[replace_at] = replacement
+    return result[:max_scenes]
+
+
+def _replaceable_scene_index(scenes: list[Scene], protected_ids: set[int] | None = None) -> int | None:
+    protected_ids = protected_ids or set()
+    for index in range(len(scenes) - 1, -1, -1):
+        if id(scenes[index]) in protected_ids:
+            continue
+        kind = _scene_relation_key(scenes[index]).lower()
+        if kind in {"summary", "teaching_board_summary", "checklist", "conclusion"}:
+            return index
+    for index in range(len(scenes) - 1, -1, -1):
+        if id(scenes[index]) not in protected_ids:
+            return index
+    return None
+
+
+def _protected_coverage_scenes(storyboard: Storyboard, graph: ExplainGraph, limit: int) -> list[Scene]:
+    protected: list[Scene] = []
+    for unit in _high_priority_coverage_units(graph):
+        scene = _best_scene_for_coverage_unit(storyboard.scenes, unit, protected)
+        if scene is not None and scene not in protected:
+            protected.append(scene)
+        if len(protected) >= limit:
+            break
+    return protected
+
+
+def _best_scene_for_coverage_unit(scenes: list[Scene], unit: dict, excluded: list[Scene] | None = None) -> Scene | None:
+    excluded_ids = {id(scene) for scene in excluded or []}
+    expected_kind = _diagram_kind_for_coverage_unit(unit)
+    tokens = [token.lower() for token in _coverage_unit_tokens(unit) if len(token) >= 2]
+    best_score: tuple[int, int] | None = None
+    best_scene: Scene | None = None
+    for index, scene in enumerate(scenes):
+        if id(scene) in excluded_ids:
+            continue
+        corpus = _scene_corpus(scene).lower()
+        score = 0
+        if _coverage_unit_is_covered(unit, corpus):
+            score += 8
+        if expected_kind and expected_kind in {_clean_text(scene.diagram_plan.kind if scene.diagram_plan else "").lower(), _scene_relation_key(scene).lower()}:
+            score += 6
+        score += min(5, sum(1 for token in tokens[:10] if token in corpus))
+        if score <= 0:
+            continue
+        candidate_score = (score, -index)
+        if best_score is None or candidate_score > best_score:
+            best_score = candidate_score
+            best_scene = scene
+    return best_scene
+
+
+def _high_priority_coverage_units(graph: ExplainGraph) -> list[dict]:
+    units = []
+    for unit in _brief_coverage_units(graph):
+        priority = int(unit.get("priority") or 3)
+        if priority >= 3:
+            units.append(unit)
+    return sorted(units, key=lambda item: int(item.get("priority") or 3), reverse=True)
 
 
 def _graph_enhanced_brief(graph: ExplainGraph) -> dict | None:
@@ -992,6 +1131,8 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "Use comparison/process/structure/cross-section diagrams and arrows whenever possible.",
                 "Borrow strong science-video teaching techniques: start with a hook or historical/context clue when useful, expand acronyms visually, use picture-in-picture reference diagrams, and introduce one concrete real-world analogy that maps to the mechanism.",
                 "For abstract mechanisms, show the analogy and the technical diagram side by side, then transfer arrows/labels from the analogy to the device/process.",
+                "Make narration lively and a little witty: every scene needs one concrete everyday metaphor, tiny reversal, or teacher-like aside that clarifies the idea. Avoid dry textbook wording and avoid internet memes.",
+                "Make visuals feel active: prefer route maps, seesaws, sorting counters, warning marks, loop arrows, sticky-note-sized callouts and small teacher doodles over plain boxes and long labels.",
                 "Use progressive focus: first show the whole object, then zoom/call out one region, then add colored arrows and labels only when the narration reaches them.",
                 "Treat target_duration_seconds as a pacing hint, not a hard cap. Never drop required concepts or compress narration so much that drawing and voiceover become incomplete.",
                 "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
@@ -1066,9 +1207,9 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         total_duration_estimate=total_duration,
         scenes=scenes,
     )
-    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
+    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
-    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration)
+    storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
 
@@ -1299,35 +1440,35 @@ def _coverage_scene_spec(unit: dict, index: int, topic: str) -> dict:
         layout = "two whiteboard panels contrasting the state before and after the key change"
         beat_one_draw = f"用双栏对比呈现 {short_label} 的前后状态，并放上最短标签。"
         beat_two_draw = f"在两栏之间补箭头、差异圈选和结论下划线，让变化原因可见。"
-        beat_one_narration = f"{short_label} 不是一个孤立名词，它需要通过前后状态的差异来理解。"
+        beat_one_narration = f"{short_label} 不能单独拎着看，不然就像只看菜单不看菜，味道全靠猜。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "tradeoff_matrix":
         diagram_kind = "tradeoff_matrix"
         layout = "2x2 whiteboard matrix showing two decision axes, four zones, and the preferred zone underlined"
         beat_one_draw = f"把 {short_label} 放进二维判断矩阵，横轴和纵轴各表达一个关键标准。"
         beat_two_draw = "圈出最值得关注的区域，并用箭头说明取舍方向。"
-        beat_one_narration = f"{short_label} 适合用两个维度来分清优先级，因为观众需要知道该把注意力放在哪里。"
+        beat_one_narration = f"{short_label} 需要两个维度来降噪，不然所有方案都在喊“选我”，会议很快变成菜市场。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "interaction":
         diagram_kind = "interaction"
         layout = "two or three actors/nodes with bidirectional arrows, exchanged signals, and a shared outcome callout"
         beat_one_draw = f"把 {short_label} 拆成参与对象和它们之间的相互影响。"
         beat_two_draw = "补双向箭头、信息交换标签和共同结果，让关系不是孤立节点。"
-        beat_one_narration = f"{short_label} 的重点在关系本身：一个对象的变化会影响另一个对象，最后形成共同结果。"
+        beat_one_narration = f"{short_label} 的重点不在单个角色，而在它们怎么互相递球；球传歪了，结果也会跟着跑偏。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "goal_path":
         diagram_kind = "goal_path"
         layout = "start point, milestones, target point, and a backcasting arrow on a sparse whiteboard"
         beat_one_draw = f"把 {short_label} 画成从当前位置到目标的路径。"
         beat_two_draw = "加入里程碑和倒推箭头，说明每一步为什么服务于终点。"
-        beat_one_narration = f"{short_label} 需要把终点和行动连起来，观众才知道每个阶段为什么存在。"
+        beat_one_narration = f"{short_label} 要先把终点钉住，否则行动会很勤奋，但方向可能像没开导航的出租车。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "cycle":
         diagram_kind = "cycle"
         layout = "3 to 5 node circular loop with arrows and one highlighted improvement point"
         beat_one_draw = f"把 {short_label} 做成一个闭环，而不是一次性动作。"
         beat_two_draw = "用环形箭头连接各节点，并强调下一轮会带来什么改进。"
-        beat_one_narration = f"{short_label} 的关键是重复反馈：结果会反过来改变下一次行动。"
+        beat_one_narration = f"{short_label} 不是交卷就散场，而是看一眼结果，再把下一轮动作调准一点。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "formula":
         diagram_kind = "formula"
@@ -1341,28 +1482,28 @@ def _coverage_scene_spec(unit: dict, index: int, topic: str) -> dict:
         layout = "left-to-right cause-process-result flow with arrows and a small conclusion underline"
         beat_one_draw = f"把 {short_label} 拆成原因、过程、结果三个节点。"
         beat_two_draw = "用箭头表示变化方向，并圈出最关键的转折点。"
-        beat_one_narration = f"理解 {short_label} 要抓住因果链：是什么触发了变化，中间发生了什么。"
+        beat_one_narration = f"理解 {short_label} 要抓住因果链，别只盯着结论；那就像只看终点照片，不知道车是怎么开到那里的。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "summary":
         diagram_kind = "summary"
         layout = "teacher checklist or loop map summarizing the key units"
         beat_one_draw = f"把 {short_label} 做成一张总结清单或闭环图。"
         beat_two_draw = "给核心结论加下划线，并把它连回主题。"
-        beat_one_narration = f"{short_label} 是这一段内容的收束，帮助观众把前面的点重新组织成可复述的框架。"
+        beat_one_narration = f"{short_label} 是收口动作，把刚才散落的零件装回工具箱，下次要用时才找得到。"
         beat_two_narration = _clean_narration_text(narration_focus)
     elif kind == "overview_map":
         diagram_kind = "overview_map"
         layout = "central topic with 3 to 5 surrounding units, arrows showing the lesson route, and one highlighted current unit"
         beat_one_draw = f"先把 {short_label} 放在中心，并展开本主题的几个核心单元。"
         beat_two_draw = "用路线箭头串起这些单元，让观众知道后面会怎样推进。"
-        beat_one_narration = f"{short_label} 需要先建立全局地图，观众才不会把后面的单元看成散点。"
+        beat_one_narration = f"{short_label} 要先有全局地图，不然观众会像进了陌生商场，走得很努力但不知道电梯在哪。"
         beat_two_narration = _clean_narration_text(narration_focus)
     else:
         diagram_kind = "structure"
         layout = "central concept sketch with nearby short labels, arrows and a concrete example"
         beat_one_draw = f"在白板中央呈现 {short_label} 的核心对象，并贴近写短标签。"
         beat_two_draw = "补一个具体例子或局部放大，再用下划线强调结论。"
-        beat_one_narration = f"{short_label} 需要先看见它在整个主题里的位置，再理解它为什么重要。"
+        beat_one_narration = f"{short_label} 要先放回整体里看，否则它就像桌上的一颗螺丝，重要但不知道拧在哪。"
         beat_two_narration = _clean_narration_text(narration_focus)
 
     return {
@@ -1404,6 +1545,26 @@ def _coverage_scene_spec(unit: dict, index: int, topic: str) -> dict:
 def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> list[dict]:
     topic = _short_text(graph.topic or "主题", 20)
     desired = _max_scene_count_for_target(target_duration)
+    source_corpus = _graph_source_corpus(graph)
+    framework_terms = [
+        "通用问题解决框架",
+        "问题解决框架",
+        "全局地图",
+        "取舍矩阵",
+        "目标路径",
+        "反馈闭环",
+        "閫氱敤闂瑙ｅ喅妗嗘灦",
+        "闂瑙ｅ喅妗嗘灦",
+        "鍏ㄥ眬鍦板浘",
+        "鍙栬垗鐭╅樀",
+        "鐩爣璺緞",
+        "鍙嶉闂幆",
+    ]
+    is_problem_framework = _contains_terms(source_corpus, framework_terms)
+    if _contains_terms(source_corpus, ["通用问题解决框架", "问题解决框架", "取舍矩阵", "目标路径", "反馈闭环"]):
+        desired = min(5, desired)
+    if is_problem_framework:
+        desired = min(5, desired)
     base_specs = [
         {
             "title": "全局地图",
@@ -1417,18 +1578,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "在中心写主题，周围展开几个核心单元。",
-                    "narration": f"理解 {topic} 要先有全局地图，否则后面的细节会变成零散信息。",
+                    "narration": f"解决问题先别急着撸袖子，得先摊开一张全局地图；不然很可能跑得满头汗，却在错误楼层找门牌。",
                     "required_labels": ["主题", "全局地图"],
                     "duration_estimate": 7,
                 },
                 {
                     "draw_intent": "用箭头串起后续讲解路线。",
-                    "narration": "全局地图把对象、边界和顺序放在同一张白板上，观众能知道每一步服务于什么。",
+                    "narration": "地图上至少要有目标、约束、关键对象和顺序，后面的每一步才知道自己是在给谁打工。",
                     "required_labels": ["对象", "边界", "顺序"],
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": f"light grey-white empty whiteboard, central topic {topic}, 4 surrounding units, route arrows, sparse blue handwritten labels, large negative space",
+            "image_description": f"light grey-white empty whiteboard, playful hand-drawn map for {topic}: central messy knot labeled 问题, compass icon, 4 route signs for 全局/结构/取舍/目标, red warning mark, green route arrow, no poster no card no paper panel",
             "duration_estimate": 24,
         },
         {
@@ -1443,18 +1604,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "画一个主体框架，并拆出 3 个局部。",
-                    "narration": "结构拆解的目的，是把一个看起来很大的问题变成几个能分别处理的部分。",
+                    "narration": "结构拆解像把一台卡住的机器拆开看，别对着整机许愿，先找到哪个齿轮真在咬住结果。",
                     "required_labels": ["整体", "局部"],
                     "duration_estimate": 7,
                 },
                 {
                     "draw_intent": "圈出关键局部，并补一个放大框。",
-                    "narration": "当关键局部被放大，真正影响结果的连接关系才会变清楚。",
+                    "narration": "真正要紧的不是零件数量，而是谁连着谁、谁一动会带着一串人跟着动。",
                     "required_labels": ["关键部分", "连接"],
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "sparse teacher whiteboard structure diagram, one central object split into parts, local zoom box, arrows and nearby labels, no poster layout",
+            "image_description": "sparse teacher whiteboard playful structure diagram, big tangled ball split into 3 gears/blocks, magnifying glass callout, tiny question mark marks, arrows and nearby labels, no poster layout no paper panel",
             "duration_estimate": 24,
         },
         {
@@ -1469,18 +1630,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "画左右两个面板，分别标出 A 和 B。",
-                    "narration": "对比图能把选择变得直观：不是只说哪个更好，而是看清差异来自哪里。",
+                    "narration": "方案一多，大家都会举手说自己很香。对比图先把它们放到同一张桌上，别让嗓门替代判断。",
                     "required_labels": ["A", "B"],
                     "duration_estimate": 7,
                 },
                 {
                     "draw_intent": "圈出差异，并用箭头指向结果。",
-                    "narration": "当差异和结果连起来，观众才能判断该选哪条路径。",
+                    "narration": "差异必须连到结果，才知道这是关键区别，还是包装纸上印得比较热闹。",
                     "required_labels": ["差异", "结果"],
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "two-panel whiteboard comparison, panel A and panel B, circled differences, arrow to outcome, sparse handwritten labels",
+            "image_description": "two-panel whiteboard comparison with lively voting marks, option A and B as simple objects on a scale, circled differences, arrow to outcome, sparse handwritten labels, no poster no card",
             "duration_estimate": 24,
         },
         {
@@ -1495,18 +1656,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "画 2x2 矩阵和两个判断轴。",
-                    "narration": "取舍需要维度，二维矩阵能把模糊判断变成可讨论的位置。",
+                    "narration": "取舍矩阵像给方案排队验票：一个维度看收益，一个维度看代价，谁插队一眼就露馅。",
                     "required_labels": ["重要", "紧急"],
                     "duration_estimate": 7,
                 },
                 {
                     "draw_intent": "圈出优先象限，并用箭头说明移动方向。",
-                    "narration": "优先级不是把所有事情都做完，而是把资源放到最能改变结果的区域。",
+                    "narration": "优先级不是把清单全吃完，而是先夹那块最能顶饱的菜；资源有限，就别假装自己有八只手。",
                     "required_labels": ["优先", "取舍"],
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "2x2 whiteboard priority matrix, two axes, highlighted quadrant, yellow underline on priority, large negative space",
+            "image_description": "2x2 whiteboard priority matrix with four funny方案 tokens, one green winner badge, one red avoid zone, tiny crowd speech marks saying 选我, yellow underline on priority, large negative space no panel",
             "duration_estimate": 24,
         },
         {
@@ -1521,18 +1682,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "画从现在到目标的路径，并加入里程碑。",
-                    "narration": "目标路径把愿望变成路线，每个里程碑都对应一个可执行阶段。",
+                    "narration": "目标路径把愿望变成路线图。只喊我要到终点，听起来很燃，但出租车司机会问：到底往哪拐？",
                     "required_labels": ["现在", "目标"],
                     "duration_estimate": 7,
                 },
                 {
                     "draw_intent": "从目标反向画倒推箭头，标出下一步。",
-                    "narration": "从终点倒推，能防止行动偏离真正想要的结果。",
+                    "narration": "从终点倒推，会逼我们把里程碑说清楚；下一步不再是玄学，而是导航上的第一段路。",
                     "required_labels": ["倒推", "下一步"],
                     "duration_estimate": 8,
                 },
             ],
-            "image_description": "whiteboard goal path diagram, current point, milestones, target, backcasting arrow, sparse labels",
+            "image_description": "whiteboard goal path as a winding road, current point as small confused dot, milestones as flags, target as star, backcasting arrow, tiny taxi/navigation icon, sparse labels no card",
             "duration_estimate": 24,
         },
         {
@@ -1547,18 +1708,18 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "画一个四节点闭环。",
-                    "narration": "一次行动只能得到一个结果，反馈闭环会把这个结果变成下一轮改进的依据。",
+                    "narration": "反馈闭环的意思是，做完别马上散会。结果像小票，别揉了扔，它能告诉你下一轮哪里该调。",
                     "required_labels": ["计划", "执行", "检查", "调整"],
                     "duration_estimate": 8,
                 },
                 {
                     "draw_intent": "给闭环加循环箭头和改进下划线。",
-                    "narration": "持续改进的关键不是一次完美，而是每一轮都比上一轮更接近目标。",
+                    "narration": "厉害的框架不靠一次神操作，而是每轮都校准一点点；像调收音机，噪声少一点，信号就清楚一点。",
                     "required_labels": ["反馈", "改进"],
                     "duration_estimate": 7,
                 },
             ],
-            "image_description": "whiteboard circular feedback loop, plan act check adjust, loop arrows, yellow underline on improvement",
+            "image_description": "whiteboard circular feedback loop with receipt/check ticket metaphor, plan act check adjust nodes, loop arrows, small tuning dial icon, yellow underline on improvement, no paper panel",
             "duration_estimate": 24,
         },
         {
@@ -1573,7 +1734,7 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "visual_beats": [
                 {
                     "draw_intent": "写一列短清单，并用勾选符号逐项出现。",
-                    "narration": "最后可以把框架压缩成一句话：看全局，拆结构，做对比，定优先，按目标行动，再用反馈修正。",
+                    "narration": "最后把工具装回工具箱：看全局，拆结构和过程，做取舍，按目标倒推，再用反馈修正。下次遇到乱麻，就不用徒手薅了。",
                     "required_labels": ["看全局", "拆结构", "做对比", "定优先", "走闭环"],
                     "duration_estimate": 9,
                 }
@@ -1582,6 +1743,12 @@ def _generic_relation_story_specs(graph: ExplainGraph, target_duration: int) -> 
             "duration_estimate": 20,
         },
     ]
+    if _contains_terms(source_corpus, ["通用问题解决框架", "问题解决框架", "取舍矩阵", "目标路径", "反馈闭环"]):
+        priority_titles = {"全局地图", "结构拆解", "优先取舍", "目标路径", "反馈闭环"}
+        selected = [spec for spec in base_specs if spec["title"] in priority_titles][:desired]
+        if is_problem_framework and len(selected) < desired:
+            return [base_specs[index] for index in [0, 1, 3, 4, 5]][:desired]
+        return selected
     return base_specs[:desired]
 
 
@@ -1918,18 +2085,25 @@ def _append_missing_coverage_scenes(storyboard: Storyboard, graph: ExplainGraph,
         return storyboard
     effective_limit = limit if limit is not None else _max_scene_count_for_target(target_duration)
     room = max(0, effective_limit - len(storyboard.scenes))
-    if room <= 0:
-        return storyboard
-    for unit in missing[:room]:
+    protected_ids = {id(scene) for scene in _protected_coverage_scenes(storyboard, graph, max(1, len(storyboard.scenes)))}
+    for unit in missing:
         scene = _scene_from_spec(
             len(storyboard.scenes),
             _coverage_scene_spec(unit, len(storyboard.scenes), graph.topic),
         )
-        storyboard.scenes.append(scene)
+        if room > 0:
+            storyboard.scenes.append(scene)
+            protected_ids.add(id(scene))
+            room -= 1
+            continue
+        replace_at = _replaceable_scene_index(storyboard.scenes, protected_ids)
+        if replace_at is None:
+            continue
+        storyboard.scenes[replace_at] = scene
+        protected_ids.add(id(scene))
     for index, scene in enumerate(storyboard.scenes):
         scene.order = index
-        if not scene.id:
-            scene.id = f"scene_{index}"
+        scene.id = f"scene_{index}"
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
 
@@ -1945,27 +2119,17 @@ def _sanitize_storyboard_narration(storyboard: Storyboard) -> Storyboard:
 def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, target_duration: int) -> Storyboard:
     corpus = _storyboard_corpus(storyboard, graph)
     source_corpus = _graph_source_corpus(graph)
-    semiconductor = _contains_semiconductor_topic(source_corpus)
     gradient = _contains_terms(source_corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
     brief = _graph_enhanced_brief(graph) or {}
     default_board_mode = _clean_text(brief.get("recommended_board_mode") if isinstance(brief, dict) else "") or "whiteboard"
     default_hand_usage = _clean_text(brief.get("recommended_hand_usage") if isinstance(brief, dict) else "") or "trace"
     default_visual_style = _clean_text(brief.get("recommended_visual_style") if isinstance(brief, dict) else "") or "teacher_whiteboard"
-
-    if semiconductor:
-        target_specs = _semiconductor_story_specs_for_target(target_duration)
-        if len(storyboard.scenes) > len(target_specs):
-            return _replace_with_specs(storyboard, target_specs)
-        coverage_groups = [
-            ["off", "on", "v_g", "vth", "v_th", "阈值"],
-            ["v_ds", "i_d", "源漏", "电流"],
-            ["短沟道", "short-channel"],
-            ["finfet", "fin", "三面", "包住"],
-            ["w_eff", "2h_fin", "截面", "有效宽度"],
-        ]
-        coverage = sum(1 for group in coverage_groups if _contains_terms(corpus, group))
-        if len(storyboard.scenes) < min(5, len(target_specs)) or coverage < 4:
-            return _replace_with_specs(storyboard, target_specs)
+    framework_terms = ["通用问题解决框架", "问题解决框架", "全局地图", "取舍矩阵", "目标路径", "反馈闭环"]
+    framework_terms.extend(["通用问题解决框架", "问题解决框架", "全局地图", "取舍矩阵", "目标路径", "反馈闭环"])
+    is_problem_framework = _contains_terms(source_corpus, framework_terms)
+    if is_problem_framework:
+        storyboard = _replace_with_specs(storyboard, _generic_relation_story_specs(graph, target_duration))
+        corpus = _storyboard_corpus(storyboard, graph)
 
     if gradient:
         coverage_groups = [
@@ -1978,10 +2142,11 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         if len(storyboard.scenes) < 3 or coverage < 4:
             return _replace_with_specs(storyboard, _gradient_story_specs())
 
-    if not semiconductor and _contains_semiconductor_topic(corpus):
+    if _contains_semiconductor_topic(corpus):
         storyboard = _replace_with_specs(storyboard, _generic_relation_story_specs(graph, target_duration))
 
-    storyboard = _append_missing_coverage_scenes(storyboard, graph, target_duration)
+    if not is_problem_framework:
+        storyboard = _append_missing_coverage_scenes(storyboard, graph, target_duration)
 
     for scene in storyboard.scenes:
         if not scene.visual_beats:
@@ -2892,15 +3057,14 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         return max(width * 0.06, (width - estimated) * 0.5)
 
     def add_process_doodles(start: int, x: float, y: float) -> int:
-        checks = [
-            [_point(x, y), _point(x + 10, y + 12), _point(x + 30, y - 14)],
-            [_point(x + 8, y + 44), _point(x + 20, y + 56), _point(x + 42, y + 28)],
-            [_point(x + 20, y + 84), _point(x + 30, y + 98), _point(x + 54, y + 68)],
-        ]
         cursor = start
-        for points in checks:
+        labels = ["有谱", "别慌", "下一步"]
+        for index, label in enumerate(labels):
+            row_y = y + index * 44
+            points = [_point(x, row_y), _point(x + 10, row_y + 12), _point(x + 30, row_y - 14)]
             add_stroke("doodle", points, green, 4, cursor, 8)
-            cursor += 9
+            add_text(label, x + 42, row_y - 22, max(18, body_size - 8), green, cursor + 3, 14, width * 0.10, emphasis=False, max_chars=6)
+            cursor += 18
         add_stroke("doodle", _line_points(x + 70, y - 12, x + 108, y - 28, count=4), blue, 3, cursor, 7)
         cursor += 8
         add_stroke("doodle", _line_points(x + 70, y + 4, x + 112, y + 4, count=4), blue, 3, cursor, 7)
@@ -3611,6 +3775,14 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         corpus = _scene_corpus(scene)
 
         if _contains_any(corpus, ["summary", "checklist", "总结", "清单", "复盘"]):
+            summary_defaults = ["看全局", "拆结构", "做取舍", "走目标", "跑反馈"]
+            labels = [label for label in labels if label and not _looks_corrupted_text(label)]
+            for default in summary_defaults:
+                if len(labels) >= 5:
+                    break
+                if default not in labels:
+                    labels.append(default)
+            labels = labels[:5]
             x = board_center_x - width * 0.25
             y = diagram_top + height * 0.07
             row_gap = height * 0.078
@@ -3859,7 +4031,6 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         cursor = builders.get(diagram_kind, build_process_flow)(cursor)
 
     _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
-    wash_points = _rect_points(board_center_x - board_draw_w * 0.5, diagram_top + height * 0.02, board_draw_w, board_draw_h)
     return {
         "title": scene.title,
         "diagramKind": diagram_kind,
@@ -3871,7 +4042,6 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         "audioSegments": audio_segments,
         "transitionFrames": transition_frames,
         "accent": accent,
-        "washD": _path_from_points(wash_points, close=True),
         "drawOps": draw_ops,
         "texts": texts,
         "glyphPaths": [],
@@ -3937,7 +4107,6 @@ type SceneSpec = {
   audioSegments?: AudioSegmentSpec[];
   transitionFrames?: number;
   accent: string;
-  washD: string;
   drawOps: DrawOp[];
   texts: TextSpec[];
   glyphPaths?: GlyphPathSpec[];
@@ -3959,10 +4128,6 @@ const sceneBackground = (scene: SceneSpec) => {
 };
 const sceneCaptionColor = (scene: SceneSpec) =>
   scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard" ? "#F6F2E9" : "#111318";
-const sceneCaptionShadow = (scene: SceneSpec) =>
-  scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard"
-    ? "0 0 8px rgba(0,0,0,0.88), 0 0 16px rgba(0,0,0,0.95)"
-    : "0 1px 0 #fff, 0 0 8px #fff, 0 0 16px #fff";
 
 const progressForOp = (frame: number, op: DrawOp) => {
   const baseConfig = {
@@ -4026,23 +4191,18 @@ const captionWeight = (value: string) =>
 const splitSubtitleText = (value: string): string[] => {
   const source = value.replace(/\s+/g, " ").trim();
   if (!source) return [];
+  const sentences = source.match(/[^。！？.!?；;]+[。！？.!?；;]?/g) ?? [source];
   const chunks: string[] = [];
-  let current = "";
-  for (const char of Array.from(source)) {
-    const candidate = current + char;
-    const shouldBreak = current && captionWeight(candidate) > 54;
-    if (shouldBreak) {
-      chunks.push(current.trim());
-      current = char.trimStart();
+  for (const sentence of sentences) {
+    const clean = sentence.trim();
+    if (!clean) continue;
+    const prev = chunks[chunks.length - 1];
+    if (prev && captionWeight(prev + clean) <= 64) {
+      chunks[chunks.length - 1] = prev + clean;
     } else {
-      current = candidate;
-    }
-    if (/[。！？；.!?;]/.test(char) && captionWeight(current) >= 28) {
-      chunks.push(current.trim());
-      current = "";
+      chunks.push(clean);
     }
   }
-  if (current.trim()) chunks.push(current.trim());
   return chunks.filter(Boolean);
 };
 
@@ -4095,7 +4255,6 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
           lineHeight: 1.42,
           letterSpacing: 0,
           textAlign: "center",
-          textShadow: sceneCaptionShadow(scene),
           whiteSpace: "pre-wrap",
         }}
       >
@@ -4179,6 +4338,7 @@ const RasterMaskStroke = ({ spec, op }: { spec: RasterStrokeSpec; op: DrawOp }) 
 
 const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: number }) => {
   const frame = useCurrentFrame();
+  if (scene.boardMode === "whiteboard" && scene.visualStyle === "teacher_whiteboard" && scene.handUsage === "trace") return null;
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
   if (reveal.renderMode === "direct") return null;
@@ -4217,10 +4377,9 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
   );
 };
 
-const boardShadow = "0 1px 0 rgba(255,255,255,0.65), 0 0 1px rgba(0,0,0,0.10)";
-
 const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
+  if (scene.boardMode === "whiteboard" && scene.visualStyle === "teacher_whiteboard" && scene.handUsage === "trace") return null;
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
   const referenceImageAsset = scene.referenceImageAsset;
@@ -4242,8 +4401,6 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
           opacity,
           pointerEvents: "none",
           zIndex: 4,
-          filter: "contrast(1.04) saturate(1.05)",
-          textShadow: boardShadow,
         }}
       />
     );
@@ -4268,8 +4425,6 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
         opacity,
         pointerEvents: "none",
         zIndex: 12,
-        filter: "contrast(1.04) saturate(1.05)",
-        textShadow: boardShadow,
       }}
     />
   );
@@ -4319,6 +4474,7 @@ const SceneAudio = ({ scene }: { scene: SceneSpec }) => {
 
 const SceneTransitionWipe = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
+  if (scene.boardMode === "whiteboard" && scene.visualStyle === "teacher_whiteboard") return null;
   const transition = Math.max(0, scene.transitionFrames ?? 10);
   if (transition <= 0) return null;
   const start = Math.max(0, scene.duration - transition);
@@ -4388,20 +4544,17 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
           style={{
             position: "absolute",
             inset: 0,
-            background:
-              "radial-gradient(circle at 18% 12%, rgba(255,255,255,0.035), transparent 34%), linear-gradient(180deg, rgba(255,255,255,0.018), rgba(0,0,0,0))",
+            backgroundColor: backgroundColor,
             pointerEvents: "none",
             zIndex: 1,
           }}
         />
       ) : null}
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 10 }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
-        <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />
         <GlyphText scene={scene} />
       </svg>
-      <RasterFinalOverlay scene={scene} />
       <SubtitleOverlay scene={scene} />
       <HandPen tipX={pen.x} tipY={pen.y} visible={showHand && pen.visible} />
       <SceneTransitionWipe scene={scene} />
@@ -4458,7 +4611,10 @@ Target visual reference:
 - Graphics should feel like a teacher's hand-sketched board work: arrows, boxes, curves, charts, objects, callouts, underlines, and concept diagrams are revealed by strokes being drawn.
 - Layout should match a real sparse whiteboard lesson: short blue handwritten title near the top-left or top-center, one central diagram occupying about 45-65% of the canvas width, large empty margins, and short labels placed near the parts they describe.
 - Do not use a fixed left text column. Avoid explanatory paragraphs on the board; use only short labels, one-line conclusions, arrows, circles, brackets, and underlines.
-- Preserve lots of empty white space. Avoid slide-deck cards, polished UI panels, gradients, stock images, and decorative template layouts.
+- Preserve lots of empty white space. Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full canvas background is the only whiteboard.
+- Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text.
+- Make the drawings feel lively and lightly humorous with small teacher-board metaphors, such as wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and playful marker annotations drawn directly on the board.
+- Avoid slide-deck cards, polished UI panels, gradients, stock images, and decorative template layouts.
 - Prefer one meaningful illustrated explanation per scene over dense bullet lists.
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
 - New scenes should begin writing immediately or within the first few frames; avoid one-second blank boards after a cut.
@@ -4487,7 +4643,7 @@ Hard requirements:
 - Never define `const tipX = interpolate(frame, [...])` or `const tipY = interpolate(frame, [...])` at scene level. Pen coordinates must be sampled from active `drawOps.points`.
 - Every animated SVG path/arrow/box/diagram stroke must have a matching drawOp with similar points. The hand tip should be near the visible end of the stroke as strokeDashoffset reveals it.
 - Handwritten text must use a real Chinese handwriting stack like `"STXingkai, 华文行楷, KaiTi, STKaiti, Kaiti SC, cursive"`. Do not use bold sans-serif text.
-- The visual language must be classic teacher whiteboard: add small hand-drawn emphasis marks only when useful, such as ticks, brackets, circles, arrows, local zoom boxes, or callout rays. Do not force mascots or decorative cartoon characters.
+- The visual language must be classic teacher whiteboard: add small hand-drawn emphasis marks only when useful, such as ticks, brackets, circles, arrows, local zoom boxes, or callout rays. Use playful teaching metaphors when they clarify the idea; do not force mascots or decorative cartoon characters.
 - Import Img and staticFile from "remotion" and render the visible hand using <Img src={staticFile("hand-real-pen.png")} />.
 - Define a HandPen component in the same TSX module. It must receive `tipX`, `tipY` coordinates and position the hand image so the actual marker tip follows the currently drawn element.
 - In explicit chalkboard/no-hand scenes, keep the HandPen component defined for other scenes but hide it for that scene; do not force a decorative hand onto math derivations.
@@ -4543,6 +4699,8 @@ async def generate_remotion_code(
         "moving up/down/left/right inside glyphs like real handwriting, "
         "using glyphPaths/GlyphText/DrawGlyphPath so the renderer can replace Chinese text with opentype.js font outlines, "
         "using rasterReveal/referenceImageAsset masks when the storyboard provides an original reference image to reveal, "
+        "never creating inner paper/card/panel/sheet surfaces, shadows, washes, gradients, or backings behind drawings, "
+        "making generic-topic visuals lively with small humorous teacher-board metaphors, "
         "using staticFile('hand-real-pen.png'), <Img>, and getPenPosition(frame) coordinates. "
         "When scene.audioSegments exist, synchronize Audio, subtitles, and drawOps to those beat windows. "
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "

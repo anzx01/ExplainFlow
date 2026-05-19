@@ -141,6 +141,107 @@ function saveJobs() {
   }
 }
 
+function looksLikeMojibake(value) {
+  const text = String(value ?? "");
+  if (!text) return false;
+  const suspicious = (text.match(/[�€ÃÂåæçèéäöü\ue000-\uf8ff]/g) ?? []).length;
+  const cjk = (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+  return suspicious >= 2 && suspicious > Math.max(1, Math.floor(cjk * 0.2));
+}
+
+function tryRepairMojibake(value) {
+  const text = String(value ?? "");
+  if (!looksLikeMojibake(text)) return text;
+  const attempts = [
+    () => Buffer.from(text, "latin1").toString("utf8"),
+    () => Buffer.from(text, "binary").toString("utf8"),
+  ];
+  let best = text;
+  let bestScore = mojibakeScore(text);
+  for (const attempt of attempts) {
+    try {
+      const candidate = attempt();
+      const score = mojibakeScore(candidate);
+      if (score < bestScore && /[\u3400-\u9fff]/.test(candidate)) {
+        best = candidate;
+        bestScore = score;
+      }
+    } catch {}
+  }
+  return best;
+}
+
+function mojibakeScore(value) {
+  const text = String(value ?? "");
+  return (text.match(/[�€ÃÂåæçèéäöü\ue000-\uf8ff]/g) ?? []).length * 3 - (text.match(/[\u3400-\u9fff]/g) ?? []).length;
+}
+
+function cleanUserText(value, fallback = "") {
+  return tryRepairMojibake(value)
+    .replace(/\x1b\[[0-9;]*m/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500) || fallback;
+}
+
+function sanitizeStoryboardText(storyboard) {
+  const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  return {
+    ...storyboard,
+    topic: cleanUserText(storyboard?.topic, "Untitled"),
+    scenes: scenes.map((scene) => ({
+      ...scene,
+      title: cleanUserText(scene?.title, "场景"),
+      narration: cleanUserText(scene?.narration, ""),
+      subtitleText: scene?.subtitleText == null ? scene?.subtitleText : cleanUserText(scene.subtitleText, ""),
+      visual_beats: Array.isArray(scene?.visual_beats)
+        ? scene.visual_beats.map((beat) => ({
+            ...beat,
+            draw_intent: cleanUserText(beat?.draw_intent ?? beat?.drawIntent, ""),
+            narration: cleanUserText(beat?.narration, ""),
+            required_labels: Array.isArray(beat?.required_labels)
+              ? beat.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
+              : beat?.required_labels,
+          }))
+        : scene?.visual_beats,
+      diagram_plan: scene?.diagram_plan
+        ? {
+            ...scene.diagram_plan,
+            kind: cleanUserText(scene.diagram_plan.kind, "process"),
+            layout: cleanUserText(scene.diagram_plan.layout, ""),
+            required_labels: Array.isArray(scene.diagram_plan.required_labels)
+              ? scene.diagram_plan.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
+              : scene.diagram_plan.required_labels,
+          }
+        : scene?.diagram_plan,
+    })),
+  };
+}
+
+function collectStoryboardMojibake(storyboard) {
+  const bad = [];
+  const check = (path, value) => {
+    if (looksLikeMojibake(value)) bad.push(path);
+  };
+  check("topic", storyboard?.topic);
+  for (const [sceneIndex, scene] of (storyboard?.scenes ?? []).entries()) {
+    check(`scenes[${sceneIndex}].title`, scene?.title);
+    check(`scenes[${sceneIndex}].narration`, scene?.narration);
+    for (const [beatIndex, beat] of (scene?.visual_beats ?? []).entries()) {
+      check(`scenes[${sceneIndex}].visual_beats[${beatIndex}].narration`, beat?.narration);
+      check(`scenes[${sceneIndex}].visual_beats[${beatIndex}].draw_intent`, beat?.draw_intent ?? beat?.drawIntent);
+    }
+  }
+  return bad;
+}
+
+function assertStoryboardEncodingHealthy(storyboard) {
+  const bad = collectStoryboardMojibake(storyboard);
+  if (bad.length > 0) {
+    throw new Error(`检测到中文编码异常，已停止渲染。请重新生成 storyboard 后再试。位置：${bad.slice(0, 4).join(", ")}`);
+  }
+}
+
 function updateJob(jobId, patch) {
   if (!jobs[jobId]) return;
   jobs[jobId] = { ...jobs[jobId], ...patch };
@@ -148,6 +249,8 @@ function updateJob(jobId, patch) {
 }
 
 for (const [id, job] of Object.entries(jobs)) {
+  if (job.topic) jobs[id].topic = cleanUserText(job.topic, "Untitled");
+  if (job.error) jobs[id].error = cleanUserText(job.error, job.error);
   if (job.status === "processing") {
     jobs[id].status = "failed";
     jobs[id].error = "Server restarted during render";
@@ -398,7 +501,7 @@ function trimNarrationToChars(text, maxChars) {
     const next = `${result}${sentence}`;
     if (next.length <= limit) {
       result = next;
-    } else if (!result) {
+    } else if (!result && limit >= 28) {
       let candidate = sentence.slice(0, limit);
       const cut = Math.max(candidate.lastIndexOf("，"), candidate.lastIndexOf(","), candidate.lastIndexOf("；"), candidate.lastIndexOf(";"), candidate.lastIndexOf("："), candidate.lastIndexOf(":"), candidate.lastIndexOf("、"));
       if (cut > Math.floor(limit * 0.45)) candidate = candidate.slice(0, cut);
@@ -410,7 +513,10 @@ function trimNarrationToChars(text, maxChars) {
   }
   result = result.replace(/[，,；;：:、\s]+$/g, "");
   if (result && !/[。！？.!?]$/.test(result)) result += "。";
-  return result || source.slice(0, limit);
+  if (result) return result;
+  const firstSentence = sentences[0]?.trim() || source;
+  if (firstSentence.length <= Math.max(limit * 2, 96)) return firstSentence;
+  return `${source.slice(0, limit).replace(/[，,；;：:、\s]+$/g, "")}。`;
 }
 
 function normalizeVoiceKey(voice) {
@@ -583,7 +689,7 @@ function sceneBeatSpecs(scene) {
       ];
   const sceneBudget = Math.max(5, Number(scene?.duration_estimate ?? 0) || 0);
   const beatBudget = Math.max(4, Math.min(9, (sceneBudget * 0.66) / Math.max(1, beats.length)));
-  const maxChars = Math.max(18, Math.floor(beatBudget * 3.1));
+  const maxChars = Math.max(32, Math.floor(beatBudget * 4.2));
   return beats.map((beat, index) => {
     const rawText = cleanNarrationText(beat?.narration || scene.narration || scene.title || beat?.draw_intent || "");
     const text = trimNarrationToChars(rawText, maxChars);
@@ -1000,6 +1106,34 @@ function sceneShouldDirectRender(scene, trace) {
   if (boardworkScore >= 3 && skeletonPixels <= 18000 && maskCoverage <= 0.14) return false;
   if (denseReferenceScore > boardworkScore && metricComplexity >= 1) return true;
   return metricComplexity >= 2;
+}
+
+function shouldGenerateReferenceImage(scene) {
+  const boardMode = sceneBoardMode(scene);
+  const visualStyle = sceneVisualStyle(scene);
+  const handUsage = sceneHandUsage(scene);
+  const explicit = explicitRasterStrategy(scene);
+  if (handUsage === "none") return false;
+  if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
+  if (boardMode === "whiteboard" && visualStyle === "teacher_whiteboard" && handUsage === "trace") {
+    return explicit === "direct";
+  }
+  if (boardMode === "reference" || boardMode === "clean_canvas") return true;
+  if (visualStyle === "technical_reference" || visualStyle === "marketing_doodle") return true;
+
+  if (explicit === "direct") return true;
+  if (explicit === "trace") return false;
+
+  const complexity = String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase();
+  if (complexity === "dense" || complexity === "reference") return true;
+
+  const text = sceneTextForStrategy(scene);
+  const labelCount = countSceneLabels(scene);
+  const wantsFinishedSubject = countPatternMatches(text, [
+    /\b(reference|photo|screenshot|finished|full[-\s]?image|3d|isometric|technical drawing|cad|anatomy|medical|mechanical|circuit|realistic|product interface)\b/i,
+    /(参考图|成品图|截图|三维|立体|技术图|医学|解剖|机械|电路|真实|产品界面|复杂主体|直接呈现)/i,
+  ]);
+  return wantsFinishedSubject > 0 || labelCount >= 12;
 }
 
 function sceneLocalImageBuffer(scene) {
@@ -1509,6 +1643,7 @@ async function injectImageTraces(storyboard, jobId) {
     .filter(
       (scene) =>
         scene.image_description &&
+        shouldGenerateReferenceImage(scene) &&
         sceneHandUsage(scene) !== "none" &&
         sceneBoardMode(scene) !== "chalkboard" &&
         sceneVisualStyle(scene) !== "math_chalkboard" &&
@@ -2072,6 +2207,42 @@ function validateHandwrittenWhiteboardStyle(code) {
   }
 }
 
+function validateNoPaperSurface(code) {
+  const forbidden = [
+    ["washD", "paper-like wash layers are not allowed behind drawings"],
+    ["boxShadow", "shadowed paper/card surfaces are not allowed"],
+    ["drop-shadow", "drop-shadow effects create a paper-like backing"],
+    ["textShadow", "text shadows create a grey backing behind handwriting"],
+  ];
+  for (const [token, reason] of forbidden) {
+    if (code.toLowerCase().includes(token.toLowerCase())) {
+      throw new Error(`Generated TSX contains forbidden paper-surface styling: ${token} (${reason})`);
+    }
+  }
+
+  if (/\b(?:paper|card|panel|surface|sheet|poster|slide|boardShadow|shadow|wash)\w*\b/i.test(code)) {
+    throw new Error("Generated TSX must not define paper/card/panel/surface/shadow/wash helpers or variables");
+  }
+
+  if (/\bfilter\s*:\s*["'][^"']+["']/i.test(code)) {
+    throw new Error("Generated TSX must not use CSS filter effects");
+  }
+
+  if (/\brasterReveal\s*:\s*\{|\breferenceImageAsset\s*:\s*["']generated\//i.test(code)) {
+    throw new Error("Generated TSX must not bake rasterReveal/referenceImageAsset into normal generated whiteboard scenes");
+  }
+
+  const lightSurfacePattern =
+    /background(?:Color)?\s*:\s*["'](?:#fff(?:fff)?|white|#f7f7f2|#f8f8f0|#fafafa|#f5f5f5|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))["'][\s\S]{0,220}\b(?:borderRadius|boxShadow|position\s*:\s*["']absolute["'])/i;
+  if (lightSurfacePattern.test(code)) {
+    throw new Error("Generated TSX must not create an inner white/light rectangle behind drawings or text");
+  }
+
+  if (/\b(?:linear-gradient|radial-gradient)\s*\(/i.test(code)) {
+    throw new Error("Generated TSX must not use gradient washes or panel backgrounds");
+  }
+}
+
 function validateStaticFileUsage(code) {
   const allowedAsset = /^(?:hand-real-pen\.png|generated\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$/;
   const literalCalls = [...code.matchAll(/\bstaticFile\s*\(\s*["']([^"']+)["']\s*\)/g)];
@@ -2153,6 +2324,7 @@ function validateGeneratedTsx(tsx) {
   validateStrokeFollowingTimeline(code);
   validateGlyphOutlineText(code);
   validateHandwrittenWhiteboardStyle(code);
+  validateNoPaperSurface(code);
   if (!/\b(KaiTi|STKaiti|Kaiti|楷体)\b/i.test(code)) {
     throw new Error("Generated TSX must use a Chinese handwriting-style font family such as KaiTi/STKaiti");
   }
@@ -2324,12 +2496,15 @@ async function generateRemotionCode(storyboard, options = {}) {
       "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
       "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
       "Use a sparse clean off-white whiteboard canvas close to #F7F7F2, black marker outlines, blue handwritten titles, and purposeful colored teaching strokes only, " +
+      "for normal whiteboard/trace scenes, build diagrams directly in SVG/HTML with drawOps instead of placing a generated reference image behind the strokes. " +
+      "Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full AbsoluteFill background is the only whiteboard. " +
+      "Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text. " +
       "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
       "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
       "and lots of negative space. " +
       "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
       "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
-      "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; do not force mascots or decorative cartoon characters. " +
+      "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; make visuals lively with small humorous teaching metaphors like wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and marker annotations drawn directly on the board. Do not force mascots or decorative cartoon characters. " +
       (subtitlesEnabled
         ? "Use audioSegments subtitleText only for bottom subtitles. "
         : "Ignore audioSegments subtitleText and do not render any bottom subtitle overlay. ") +
@@ -2664,7 +2839,8 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/render") {
     try {
-      const {
+      const payload = JSON.parse(await readBody(req));
+      let {
         storyboard,
         voice,
         subtitlesEnabled,
@@ -2675,7 +2851,7 @@ const server = http.createServer(async (req, res) => {
         background_music_id,
         backgroundMusicVolume,
         background_music_volume,
-      } = JSON.parse(await readBody(req));
+      } = payload;
       if (!storyboard?.scenes?.length) {
         sendJson(res, 400, { error: "storyboard.scenes is required" });
         return;
@@ -2709,9 +2885,11 @@ const server = http.createServer(async (req, res) => {
         );
       }
       try {
+        storyboard = sanitizeStoryboardText(storyboard);
+        assertStoryboardEncodingHealthy(storyboard);
         await ensureLargeModelAvailable();
       } catch (err) {
-        sendJson(res, 503, { error: err.message });
+        sendJson(res, String(err.message ?? "").startsWith("检测到中文编码异常") ? 400 : 503, { error: err.message });
         return;
       }
 
@@ -2727,7 +2905,7 @@ const server = http.createServer(async (req, res) => {
         outputPath,
         progress: 0,
         phase: "queued",
-        topic: storyboard.topic ?? "Untitled",
+        topic: cleanUserText(storyboard.topic, "Untitled"),
         backgroundMusicId: backgroundMusicTrack?.id ?? null,
         createdAt,
       };
@@ -2815,7 +2993,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const patch = JSON.parse(await readBody(req, 1024 * 1024));
       if (patch.topic !== undefined) {
-        job.topic = String(patch.topic).slice(0, 200);
+        job.topic = cleanUserText(patch.topic, job.topic ?? "Untitled").slice(0, 200);
       }
       saveJobs();
       sendJson(res, 200, { ok: true });
