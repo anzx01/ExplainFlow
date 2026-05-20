@@ -39,6 +39,27 @@ function StatusBadge({ job, now }: { job: RenderJobSummary; now: number }) {
   );
 }
 
+function QaBadge({ job }: { job: RenderJobSummary }) {
+  if (!job.qa) return null;
+  const warningCount = job.qa.checks?.filter((check) => !check.ok && check.severity !== "error").length ?? 0;
+  if (job.qa.ok) {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-emerald-500/10 text-emerald-300 font-mono">
+        QA OK{warningCount ? ` · ${warningCount} warn` : ""}
+      </span>
+    );
+  }
+  const failed = job.qa.checks?.find((check) => !check.ok && check.severity === "error");
+  return (
+    <span
+      className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-red-500/15 text-red-300 font-mono"
+      title={failed?.message}
+    >
+      QA failed
+    </span>
+  );
+}
+
 function TopicCell({
   job,
   onSaved,
@@ -365,6 +386,9 @@ export default function JobsPage() {
                       </td>
                       <td className="px-4 py-3">
                         <StatusBadge job={job} now={now} />
+                        <div className="mt-1">
+                          <QaBadge job={job} />
+                        </div>
                         {job.error && (
                           <p className="text-xs text-red-400 mt-0.5 max-w-48 truncate" title={job.error}>
                             {job.error}
@@ -441,6 +465,24 @@ export default function JobsPage() {
                   <span>状态</span>
                   <span className="text-green-400">已完成</span>
                 </div>
+                {previewJob.qa && (
+                  <div className="rounded-md border border-[--border-default] bg-[--bg-base] p-3 space-y-2">
+                    <div className="flex justify-between">
+                      <span>QA</span>
+                      <span className={previewJob.qa.ok ? "text-green-400" : "text-red-400"}>
+                        {previewJob.qa.ok ? "通过" : "失败"}
+                      </span>
+                    </div>
+                    {previewJob.qa.checks
+                      ?.filter((check) => !check.ok)
+                      .slice(0, 3)
+                      .map((check) => (
+                        <p key={check.id} className="text-[11px] text-red-300 leading-relaxed">
+                          {check.message}
+                        </p>
+                      ))}
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span>创建时间</span>
                   <span>

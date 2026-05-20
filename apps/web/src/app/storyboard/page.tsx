@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { StoryboardView } from "@/components/storyboard/StoryboardView";
+import { generateSceneImage, synthesizeSceneAudio } from "@/lib/api";
 import type { BackgroundMusicTrack, RenderJobStatus, Storyboard } from "@/lib/types";
 import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 
@@ -12,7 +13,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type RenderState = "idle" | "submitting" | "polling" | "done" | "failed";
 
-type RenderPhase = "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
+type RenderPhase = "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "qa" | "done" | "failed" | null;
 
 const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
   queued: "排队中",
@@ -21,6 +22,8 @@ const PHASE_LABEL: Record<NonNullable<RenderPhase>, string> = {
   codegen: "生成动画代码",
   bundling: "编译 Remotion",
   rendering: "渲染视频",
+  qa: "自动验收",
+  failed: "失败",
   done: "已完成",
 };
 
@@ -262,6 +265,8 @@ export default function StoryboardPage() {
   const [musicTracks, setMusicTracks] = useState<BackgroundMusicTrack[]>([]);
   const [selectedMusicId, setSelectedMusicId] = useState("");
   const [musicError, setMusicError] = useState<string | null>(null);
+  const [sceneActionError, setSceneActionError] = useState<string | null>(null);
+  const [busySceneAction, setBusySceneAction] = useState<string | null>(null);
   const backgroundMusicVolume = 0.12;
 
   useEffect(() => {
@@ -278,16 +283,92 @@ export default function StoryboardPage() {
   }, []);
 
   const handleSceneUpdate = (sceneId: string, updates: Partial<Storyboard["scenes"][number]>) => {
+    persistStoryboard((current) => ({
+      ...current,
+      scenes: current.scenes.map((scene) =>
+        scene.id === sceneId ? { ...scene, ...updates } : scene
+      ),
+    }));
+  };
+
+  const persistStoryboard = (updater: (current: Storyboard) => Storyboard) => {
     setStoryboard((current) => {
-      const next = {
-        ...current,
-        scenes: current.scenes.map((scene) =>
-          scene.id === sceneId ? { ...scene, ...updates } : scene
-        ),
-      };
+      const next = updater(current);
       sessionStorage.setItem("explainflow_storyboard", JSON.stringify(next));
       return next;
     });
+  };
+
+  const withSceneAction = async (sceneId: string, action: string, fn: () => Promise<void>) => {
+    setBusySceneAction(`${sceneId}:${action}`);
+    setSceneActionError(null);
+    try {
+      await fn();
+    } catch (error) {
+      setSceneActionError(error instanceof Error ? error.message : "场景修复失败");
+    } finally {
+      setBusySceneAction(null);
+    }
+  };
+
+  const handleRegenerateSceneImage = async (scene: Storyboard["scenes"][number]) => {
+    await withSceneAction(scene.id, "image", async () => {
+      const imageUrl = await generateSceneImage(storyboard, scene);
+      persistStoryboard((current) => ({
+        ...current,
+        scenes: current.scenes.map((item) =>
+          item.id === scene.id
+            ? {
+                ...item,
+                image_url: imageUrl,
+                imageUrl,
+                reference_image_base64: imageUrl,
+                render_strategy: item.render_strategy || "hybrid",
+                hand_usage: item.hand_usage || "annotate",
+              }
+            : item
+        ),
+      }));
+    });
+  };
+
+  const handleRegenerateSceneAudio = async (scene: Storyboard["scenes"][number]) => {
+    await withSceneAction(scene.id, "audio", async () => {
+      const audioUrl = await synthesizeSceneAudio(scene.narration || scene.title);
+      persistStoryboard((current) => ({
+        ...current,
+        scenes: current.scenes.map((item) =>
+          item.id === scene.id ? { ...item, audioUrl } : item
+        ),
+      }));
+    });
+  };
+
+  const handleRepairSceneCallouts = (scene: Storyboard["scenes"][number]) => {
+    const trimLabels = (labels: string[] | undefined) => (labels ?? []).slice(0, 4);
+    persistStoryboard((current) => ({
+      ...current,
+      scenes: current.scenes.map((item) => {
+        if (item.id !== scene.id) return item;
+        return {
+          ...item,
+          render_strategy: "hybrid",
+          hand_usage: item.hand_usage === "none" ? "none" : "annotate",
+          visual_complexity: item.visual_complexity === "dense" ? "medium" : item.visual_complexity,
+          diagram_plan: item.diagram_plan
+            ? {
+                ...item.diagram_plan,
+                required_labels: trimLabels(item.diagram_plan.required_labels),
+              }
+            : item.diagram_plan,
+          visual_beats: (item.visual_beats ?? []).map((beat) => ({
+            ...beat,
+            required_labels: trimLabels(beat.required_labels),
+          })),
+          qa_fix_hint: "callouts_repaired_short_labels_near_subject",
+        };
+      }),
+    }));
   };
 
   useEffect(() => {
@@ -411,6 +492,11 @@ export default function StoryboardPage() {
               {musicError}
             </span>
           )}
+          {sceneActionError && (
+            <span className="max-w-48 truncate text-xs text-red-400" title={sceneActionError}>
+              {sceneActionError}
+            </span>
+          )}
           <RenderButton
             storyboard={storyboard}
             subtitlesEnabled={subtitlesEnabled}
@@ -428,6 +514,10 @@ export default function StoryboardPage() {
           storyboard={storyboard}
           videoUrl={videoUrl}
           onSceneUpdate={handleSceneUpdate}
+          onRegenerateSceneImage={handleRegenerateSceneImage}
+          onRegenerateSceneAudio={handleRegenerateSceneAudio}
+          onRepairSceneCallouts={handleRepairSceneCallouts}
+          busySceneAction={busySceneAction}
         />
       </div>
     </div>

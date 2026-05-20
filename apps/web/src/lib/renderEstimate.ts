@@ -1,6 +1,16 @@
 import type { Storyboard } from "./types";
 
-export type RenderPhase = "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
+export type RenderPhase =
+  | "queued"
+  | "tts"
+  | "imagegen"
+  | "codegen"
+  | "bundling"
+  | "rendering"
+  | "qa"
+  | "done"
+  | "failed"
+  | null;
 
 const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
@@ -29,6 +39,8 @@ function phaseWeights(storyboard?: Storyboard | null): Record<Exclude<RenderPhas
     codegen: 2,
     bundling: 7,
     rendering: clamp(duration * 0.18, 14, 42),
+    qa: 3,
+    failed: 0,
     done: 0,
   };
 }
@@ -44,9 +56,9 @@ export function estimateRemainingSeconds({
   elapsed: number;
   storyboard?: Storyboard | null;
 }): number | null {
-  if (phase === "done") return 0;
+  if (phase === "done" || phase === "failed") return 0;
   const weights = phaseWeights(storyboard);
-  const order: Exclude<RenderPhase, null>[] = ["queued", "tts", "imagegen", "codegen", "bundling", "rendering", "done"];
+  const order: Exclude<RenderPhase, null>[] = ["queued", "tts", "imagegen", "codegen", "bundling", "rendering", "qa", "done", "failed"];
   const active = phase ?? "queued";
   const activeIndex = Math.max(0, order.indexOf(active));
   const total = order.reduce((sum, item) => sum + weights[item], 0);

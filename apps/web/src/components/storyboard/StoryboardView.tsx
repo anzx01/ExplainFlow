@@ -2,12 +2,16 @@
 
 import { useEffect, useState } from "react";
 import type { Scene, Storyboard, AnimationInstruction } from "@/lib/types";
-import { videoStyleLabel } from "@/lib/constants";
+import { penStyleLabel, videoStyleLabel } from "@/lib/constants";
 
 interface Props {
   storyboard: Storyboard;
   videoUrl?: string | null;
   onSceneUpdate?: (sceneId: string, updates: Partial<Scene>) => void;
+  onRegenerateSceneImage?: (scene: Scene) => Promise<void> | void;
+  onRegenerateSceneAudio?: (scene: Scene) => Promise<void> | void;
+  onRepairSceneCallouts?: (scene: Scene) => Promise<void> | void;
+  busySceneAction?: string | null;
 }
 
 const ANIM_LABELS: Record<string, string> = {
@@ -74,6 +78,9 @@ function SceneCard({
             {scene.video_style || scene.videoStyle
               ? ` · ${videoStyleLabel(scene.video_style ?? scene.videoStyle)}`
               : ""}
+            {scene.pen_style || scene.penStyle
+              ? ` · ${penStyleLabel(scene.pen_style ?? scene.penStyle)}`
+              : ""}
             {scene.visual_style ? ` · ${STYLE_LABELS[scene.visual_style] ?? scene.visual_style}` : ""}
           </p>
         </div>
@@ -85,10 +92,19 @@ function SceneCard({
 function SceneEditor({
   scene,
   onUpdate,
+  onRegenerateImage,
+  onRegenerateAudio,
+  onRepairCallouts,
+  busyAction,
 }: {
   scene: Scene;
   onUpdate?: (updates: Partial<Scene>) => void;
+  onRegenerateImage?: (scene: Scene) => Promise<void> | void;
+  onRegenerateAudio?: (scene: Scene) => Promise<void> | void;
+  onRepairCallouts?: (scene: Scene) => Promise<void> | void;
+  busyAction?: string | null;
 }) {
+  const isBusy = (action: string) => busyAction === `${scene.id}:${action}`;
   return (
     <div className="h-full flex flex-col overflow-y-auto p-5 space-y-5">
       <div>
@@ -145,9 +161,52 @@ function SceneEditor({
         </div>
       </div>
 
-      <div>
-        <button className="w-full h-9 rounded-lg border border-purple-500/50 hover:border-purple-500 text-sm text-purple-400 hover:text-purple-300 transition-colors">
-          ↺ 重生成此场景
+      {(scene.image_url || scene.imageUrl) && (
+        <div>
+          <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+            图片预览
+          </h3>
+          <img
+            src={scene.image_url ?? scene.imageUrl ?? ""}
+            alt=""
+            className="w-full aspect-video object-contain rounded-lg bg-[--bg-base] border border-[--border-default]"
+          />
+        </div>
+      )}
+
+      {scene.audioUrl && (
+        <div>
+          <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+            配音预听
+          </h3>
+          <audio src={scene.audioUrl} controls className="w-full h-9" />
+        </div>
+      )}
+
+      <div className="space-y-2">
+        <button
+          onClick={() => onRegenerateImage?.(scene)}
+          disabled={Boolean(busyAction)}
+          title="调用图像生成，替换本场参考图"
+          className="w-full h-9 rounded-md border border-purple-500/50 hover:border-purple-500 disabled:opacity-50 text-sm text-purple-300 transition-colors"
+        >
+          {isBusy("image") ? "生成图片中..." : "重新生成本场图片"}
+        </button>
+        <button
+          onClick={() => onRegenerateAudio?.(scene)}
+          disabled={Boolean(busyAction)}
+          title="合成本场旁白，供预听和微调文案"
+          className="w-full h-9 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-sm text-[--fg-muted] hover:text-[--fg-default] transition-colors"
+        >
+          {isBusy("audio") ? "配音生成中..." : "重新配音本场"}
+        </button>
+        <button
+          onClick={() => onRepairCallouts?.(scene)}
+          disabled={Boolean(busyAction)}
+          title="收紧标签数量并改用短标注策略"
+          className="w-full h-9 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-sm text-[--fg-muted] hover:text-[--fg-default] transition-colors"
+        >
+          修复标注位置
         </button>
       </div>
     </div>
@@ -205,7 +264,15 @@ function ScenePlaceholder({ scene }: { scene: Scene }) {
   );
 }
 
-export function StoryboardView({ storyboard, videoUrl, onSceneUpdate }: Props) {
+export function StoryboardView({
+  storyboard,
+  videoUrl,
+  onSceneUpdate,
+  onRegenerateSceneImage,
+  onRegenerateSceneAudio,
+  onRepairSceneCallouts,
+  busySceneAction,
+}: Props) {
   const [selectedId, setSelectedId] = useState<string>(storyboard.scenes[0]?.id ?? "");
 
   useEffect(() => {
@@ -259,6 +326,10 @@ export function StoryboardView({ storyboard, videoUrl, onSceneUpdate }: Props) {
           <SceneEditor
             scene={selectedScene}
             onUpdate={(updates) => onSceneUpdate?.(selectedScene.id, updates)}
+            onRegenerateImage={onRegenerateSceneImage}
+            onRegenerateAudio={onRegenerateSceneAudio}
+            onRepairCallouts={onRepairSceneCallouts}
+            busyAction={busySceneAction}
           />
         )}
       </div>

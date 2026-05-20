@@ -3,6 +3,25 @@ from pydantic import BaseModel, Field
 from src.planner.models import Storyboard
 
 
+class RenderQaCheck(BaseModel):
+    id: str
+    ok: bool
+    severity: str = "info"
+    message: str
+    details: dict | None = None
+    suggestion: str | None = None
+
+
+class RenderQaResult(BaseModel):
+    ok: bool
+    checkedAt: str | None = None
+    durationSeconds: float | None = None
+    hasAudio: bool | None = None
+    fileSizeBytes: int | None = None
+    checks: list[RenderQaCheck] = Field(default_factory=list)
+    suggestions: list[str] = Field(default_factory=list)
+
+
 class RenderJobRequest(BaseModel):
     storyboard: Storyboard
     voice: str = "xiaoxiao"
@@ -22,6 +41,7 @@ class RenderJobStatus(BaseModel):
     error: str | None = None
     createdAt: str | None = None
     actualDurationSeconds: float | None = None
+    qa: RenderQaResult | None = None
 
 
 class RenderJobSummary(BaseModel):
@@ -32,6 +52,7 @@ class RenderJobSummary(BaseModel):
     topic: str | None = None
     createdAt: str | None = None
     actualDurationSeconds: float | None = None
+    qa: RenderQaResult | None = None
     error: str | None = None
 
 
