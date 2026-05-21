@@ -3599,7 +3599,9 @@ def _audio_segments_for_scene(scene: Scene, fps: int) -> tuple[list[dict], int, 
                     "duration": end - start,
                     "audioStartFrame": audio_start,
                     "audioEndFrame": audio_end,
-                    "audioSequenceDuration": max(1, end - audio_start),
+                    # Use audioDurationFrames as audioSequenceDuration to prevent audio overlap
+                    # Don't use end - audio_start which would extend beyond audio duration
+                    "audioSequenceDuration": max(1, audio_duration),
                     "audioUrl": raw.get("audioUrl") or raw.get("audio_url"),
                     "audioDurationFrames": audio_duration,
                     "drawBudgetFrames": max(1, int(round(float(raw.get("drawBudgetFrames") or raw.get("draw_budget_frames") or (end - start - 8))))),

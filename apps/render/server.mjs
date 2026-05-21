@@ -63,6 +63,7 @@ const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
 const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "slow";
 const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv444p";
 const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
+const SKIP_IMAGE_TRACE = process.env.SKIP_IMAGE_TRACE === "1";
 const ENABLE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_SEEDREAM_REFERENCES !== "0";
 const REQUIRE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_REQUIRE_SEEDREAM_REFERENCES !== "0";
 const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDREAM_REFERENCE_MODE ?? "direct")
@@ -966,16 +967,23 @@ async function injectAudio(storyboard, voice) {
           const reason = result.status === "rejected" ? result.reason?.message : "empty audio";
           throw new Error(`缺少音频片段：${scene.id || `scene_${sceneIndex}`}/${beat.id} (${reason || "TTS failed"})`);
         }
-        const durationSeconds = audio?.durationSeconds || estimateNarrationSeconds(beat.text);
-        const audioDurationFrames = Math.max(1, Math.ceil(durationSeconds * FPS));
+        // Use actual audio duration for precise timing
+        const actualAudioDurationSeconds = audio?.durationSeconds ?? estimateNarrationSeconds(beat.text);
+        const audioDurationFrames = Math.max(1, Math.ceil(actualAudioDurationSeconds * FPS));
         const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
-        const audioLeadFrames = index === 0 ? Math.min(BEAT_AUDIO_LEAD_FRAMES, 4) : 0;
-        const audioStartFrame = cursor + audioLeadFrames;
+        // No lead frames - audio starts immediately with visuals for better sync
+        const audioLeadFrames = 0;
+        const audioStartFrame = cursor;
         const minimumFrames = Math.max(FPS * 3, estimateFrames);
-        const durationFrames = Math.max(minimumFrames, audioLeadFrames + audioDurationFrames + 14);
+        const durationFrames = Math.max(minimumFrames, audioDurationFrames + 14);
         const startFrame = cursor;
         const endFrame = startFrame + durationFrames;
         cursor = endFrame;
+
+        // Determine when this beat's audio should end - before next beat starts
+        // Use audioDurationFrames as the authoritative duration
+        const currentAudioDuration = audioDurationFrames;
+
         return {
           id: beat.id,
           index,
@@ -983,10 +991,13 @@ async function injectAudio(storyboard, voice) {
           endFrame,
           duration: durationFrames,
           audioStartFrame,
-          audioEndFrame: audioStartFrame + audioDurationFrames,
-          audioSequenceDuration: Math.max(1, endFrame - audioStartFrame),
+          // audioEndFrame: when audio actually finishes playing
+          audioEndFrame: audioStartFrame + currentAudioDuration,
+          // audioSequenceDuration: how long to render the audio - use audioDurationFrames
+          // This ensures audio doesn't overlap with next beat's audio
+          audioSequenceDuration: currentAudioDuration,
           audioUrl: audio?.audioUrl ?? null,
-          audioDurationFrames,
+          audioDurationFrames: currentAudioDuration,
           drawBudgetFrames: Math.max(1, durationFrames - 4),
           subtitleText: beat.text,
           narration: beat.text,
@@ -2238,6 +2249,10 @@ async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene) {
 }
 
 async function injectImageTraces(storyboard, jobId) {
+  if (SKIP_IMAGE_TRACE) {
+    console.log("[image-trace] SKIP_IMAGE_TRACE enabled, skipping trace generation");
+    return storyboard;
+  }
   if (!ENABLE_IMAGE_TRACE || IMAGE_TRACE_MAX_SCENES <= 0) return storyboard;
 
   const rasterBySceneId = {};
@@ -2814,19 +2829,8 @@ function validateStrokeFollowingTimeline(code) {
     );
   }
 
-  // Count SVG elements - need variety for rich visuals
-  const svgElements = {
-    arrows: (code.match(/<path[^>]*arrow|arrow[^>]*>/gi) || []).length,
-    circles: (code.match(/<circle|ellipse/gi) || []).length,
-    rects: (code.match(/<rect/gi) || []).length,
-    lines: (code.match(/<line/gi) || []).length,
-  };
-  const svgCount = svgElements.arrows + svgElements.circles + svgElements.rects + svgElements.lines;
-  if (svgCount < 10) {
-    throw new Error(
-      `TSX must include at least 10 SVG elements for rich visuals (found ${svgCount}). Use arrows, circles, rectangles, and lines for diagrams.`
-    );
-  }
+  // SVG element validation is relaxed - drawOps with path/stroke kinds provide visual content
+  // The strokeDasharray animation and drawOps define the visual elements, not raw SVG tags
   const pointCount = [
     ...code.matchAll(/\{\s*["']?x["']?\s*:\s*-?\d+(?:\.\d+)?\s*,\s*["']?y["']?\s*:\s*-?\d+(?:\.\d+)?\s*\}/g),
   ].length;
