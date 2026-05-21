@@ -1820,10 +1820,11 @@ def _apply_video_style_to_scene(scene: Scene, video_style: str) -> None:
             scene.visual_style = "technical_reference"
             scene.render_strategy = "hybrid"
         else:
-            scene.board_mode = "clean_canvas"
-            scene.hand_usage = "annotate"
-            scene.visual_style = "marketing_doodle"
-            scene.render_strategy = "hybrid" if scene.render_strategy == "trace" else scene.render_strategy or "hybrid"
+            # Default to teacher_whiteboard for whiteboard style (user's expected behavior)
+            scene.board_mode = "whiteboard"
+            scene.hand_usage = "trace"
+            scene.visual_style = "teacher_whiteboard"
+            scene.render_strategy = scene.render_strategy or "trace"
     elif style in {"modern_minimal", "editorial", "playful", "sharpie"}:
         scene.board_mode = "clean_canvas"
         scene.hand_usage = "annotate" if style != "sharpie" else "trace"
@@ -1845,7 +1846,10 @@ def _apply_pen_style_to_scene(scene: Scene, pen_style: str) -> None:
         return
     if not scene.hand_usage or scene.hand_usage == "none":
         scene.hand_usage = "annotate"
-    if style == "marker" and scene.hand_usage == "trace" and scene.video_style not in {"sharpie"}:
+    # For teacher_whiteboard style, keep trace hand_usage regardless of pen_style
+    if scene.visual_style == "teacher_whiteboard" and scene.hand_usage == "annotate":
+        scene.hand_usage = "trace"
+    if style == "marker" and scene.hand_usage == "trace" and scene.video_style not in {"sharpie"} and scene.visual_style not in {"teacher_whiteboard"}:
         scene.hand_usage = "annotate"
 
 
@@ -4258,6 +4262,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         image_h = float(raster_reveal.get("imageHeight") or raster_reveal.get("image_height") or 1)
         image_aspect = max(0.1, image_w / max(1.0, image_h))
         render_mode = _clean_text(raster_reveal.get("renderMode") or raster_reveal.get("render_mode")).lower()
+        # For teacher_whiteboard, force trace mode so the hand draws the diagram stroke by stroke
+        if visual_style == "teacher_whiteboard" and render_mode == "direct":
+            render_mode = "trace"
+
         if render_mode == "direct":
             region_x = width * 0.245
             region_y = height * 0.18
@@ -4445,6 +4453,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             )
 
         if not prepared:
+            # For teacher_whiteboard with no strokes, fallback to procedural drawing
             return builders.get(diagram_kind, build_process_flow)(start)
 
         window_start = min(max(0, start), max(0, duration - 32))
@@ -5946,6 +5955,18 @@ Target visual reference:
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
 - New scenes should begin writing immediately or within the first few frames; avoid one-second blank boards after a cut.
 - Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
+- CRITICAL - Diverse annotations required: Board annotations must use at least 3 different types. NEVER use only underlines. Required variety includes:
+  - Squiggly/curly underlines for wavy emphasis (NOT straight lines)
+  - Circled highlights around key terms
+  - Hand-drawn arrows pointing to important elements
+  - Starburst/exclamation marks for warnings or key points
+  - Colored highlight blobs behind important text
+  - Hand-drawn connector arrows between related elements
+  - Question mark annotations for thought-provoking moments
+  - Dashed underlines for secondary emphasis
+  - Bracket callouts around regions
+  - Small tick marks for list items
+  Mix these naturally throughout each scene, not all at once.
 - If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
 - When scenes include audioSegments, use beat-level timing. DrawOps use startFrame/endFrame, but Audio and subtitles must start at audioStartFrame when provided, so the board can write a title or base outline before narration begins. Never play a whole-scene narration over unrelated drawing when beat audio is available.
 - If background_music_url is provided, add one global low-volume looping <Audio> track using that exact URL and background_music_volume. It should sit behind all scene narration and never replace scene voiceover audio.
