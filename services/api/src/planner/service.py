@@ -7,6 +7,7 @@ from copy import deepcopy
 from src.core.visual_prompts import BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT
 from src.core.llm import chat_json, check_llm_connection
 from src.core.config import settings
+from src.core.text_utils import localize_chinese_terms, clean_text as utils_clean_text
 from src.explain.models import ExplainGraph
 from .models import (
     AnimationInstruction,
@@ -352,8 +353,21 @@ def _validate_stroke_following_timeline(code: str) -> None:
 
     if not re.search(r"\b['\"]?kind['\"]?\s*:\s*['\"]text['\"]", code):
         raise ValueError("drawOps must include text operations with kind: 'text'")
-    if not re.search(r"\b['\"]?kind['\"]?\s*:\s*['\"](?:path|stroke|shape|arrow|box)['\"]", code):
-        raise ValueError("drawOps must include path/stroke operations for diagrams")
+    # Count path/stroke operations for diagrams - each scene needs 3-5 diagram elements
+    path_ops = re.findall(r"\b['\"]?kind['\"]?\s*:\s*['\"](?:path|stroke|shape|arrow|box|circle|line)['\"]", code, flags=re.IGNORECASE)
+    if len(path_ops) < 8:
+        raise ValueError(
+            f"drawOps must include at least 8 path/stroke operations for diagrams (found {len(path_ops)}). "
+            "Each scene needs 3-5 distinct diagram elements like arrows, boxes, shapes, or connectors."
+        )
+
+    # Count text operations - each scene needs 2-4 text labels
+    text_ops = re.findall(r"\b['\"]?kind['\"]?\s*:\s*['\"]text['\"]", code, flags=re.IGNORECASE)
+    if len(text_ops) < 5:
+        raise ValueError(
+            f"drawOps must include at least 5 text operations (found {len(text_ops)}). "
+            "Each scene needs title, labels, and conclusion text."
+        )
 
     point_count = len(
         re.findall(
@@ -420,6 +434,7 @@ def _validate_handwritten_whiteboard_style(code: str) -> None:
 
 
 def _validate_no_paper_surface(code: str) -> None:
+    # Strictly forbidden patterns that create paper-like effects
     forbidden = {
         "washD": "paper-like wash layers are not allowed behind drawings",
         "boxShadow": "shadowed paper/card surfaces are not allowed",
@@ -433,8 +448,25 @@ def _validate_no_paper_surface(code: str) -> None:
                 f"Generated Remotion code contains forbidden paper-surface styling: {token} ({reason})"
             )
 
-    if re.search(r"\b(?:paper|card|panel|surface|sheet|poster|slide|boardShadow|shadow|wash)\w*\b", code, flags=re.IGNORECASE):
-        raise ValueError("Generated Remotion code must not define paper/card/panel/surface/shadow/wash helpers or variables")
+    # Only reject CSS property assignments that create paper/card/panel effects
+    # Allow variable names, comments, and descriptive terms
+    paper_surface_props = [
+        r"\bpaper\s*:\s*[^;]+",
+        r"\bcard\s*:\s*[^;]+",
+        r"\bpanel\s*:\s*[^;]+",
+        r"\bsurface\s*:\s*[^;]+",
+        r"\bsheet\s*:\s*[^;]+",
+        r"\bposter\s*:\s*[^;]+",
+        r"\bslide\s*:\s*[^;]+",
+        r"\bboardShadow\s*:\s*[^;]+",
+        r"\bshadow\s*:\s*[^;]+",
+        r"\bwash\s*:\s*[^;]+",
+    ]
+    for pattern in paper_surface_props:
+        if re.search(pattern, lowered):
+            raise ValueError(
+                "Generated Remotion code must not define paper/card/panel/surface/shadow/wash helpers or variables"
+            )
 
     if re.search(r"\bfilter\s*:\s*['\"][^'\"]+['\"]", code, flags=re.IGNORECASE):
         raise ValueError("Generated Remotion code must not use CSS filter effects")
@@ -442,6 +474,7 @@ def _validate_no_paper_surface(code: str) -> None:
     if re.search(r"\brasterReveal\s*:\s*\{|\breferenceImageAsset\s*:\s*['\"]generated/", code, flags=re.IGNORECASE):
         raise ValueError("Generated Remotion code must not bake rasterReveal/referenceImageAsset into normal generated whiteboard scenes")
 
+    # Check for light/white background with border/shadow styling (paper-like effect)
     light_surface_pattern = (
         r"background(?:Color)?\s*:\s*['\"]"
         r"(?:#fff(?:fff)?|white|#f7f7f2|#f8f8f0|#fafafa|#f5f5f5|rgb\(\s*255\s*,\s*255\s*,\s*255\s*\))"
@@ -895,24 +928,14 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 
 
 def _localize_chinese_terms(text: str) -> str:
-    # Lightweight guardrail for known hard-translation artifacts. The main
-    # localization rule lives in the prompts so new concepts are transcreated,
-    # not merely replaced here.
-    replacements = {
-        "相互依赖": "互相依赖",
-        "互赖": "互相依赖",
-        "同理心倾听": "先理解别人",
-        "协同增效": "统合综效",
-        "削尖锯子": "不断更新",
-    }
-    for source, target in replacements.items():
-        text = text.replace(source, target)
-    return text
+    """Localize Chinese terms (delegates to shared module)."""
+    return localize_chinese_terms(text)
 
 
 def _clean_text(value: object) -> str:
+    """Clean and localize text."""
     text = "" if value is None else str(value)
-    return _localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
+    return localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
 
 
 def _normalize_video_style(value: str | None) -> str:
@@ -5802,7 +5825,18 @@ Target visual reference:
 - Graphics should feel like a teacher's hand-sketched board work: arrows, boxes, curves, charts, objects, callouts, underlines, and concept diagrams are revealed by strokes being drawn.
 - Layout should match a real sparse whiteboard lesson: short blue handwritten title near the top-left or top-center, one central diagram occupying about 45-65% of the canvas width, large empty margins, and short labels placed near the parts they describe.
 - Do not use a fixed left text column. Avoid explanatory paragraphs on the board; use only short labels, one-line conclusions, arrows, circles, brackets, and underlines.
-- Every scene must have one primary visual anchor made from at least 3-6 meaningful diagram/icon/object elements, such as a funnel, route map, balance scale, gear, clock, warning triangle, clipboard, person/group, chart, matrix, cross-section, or system stack.
+- Every scene MUST have at least 5-8 distinct visual elements drawn, including:
+  * The scene title as a short blue handwritten header
+  * 1-3 large central diagram/icon/object illustrations (like a funnel, scale, gear, person, chart, map, matrix, cross-section, etc.)
+  * 2-4 labeled arrows connecting elements or pointing to key parts
+  * 1-2 colored callout boxes or circles highlighting important points
+  * 1-2 underlines or brackets for emphasis
+  * Short conclusion text or key takeaway label
+- A scene that only has title text + bullet list or checkmarks is NOT acceptable. The diagram must be the hero of each scene.
+- For topics like "how to improve English listening/reading", draw concrete visual metaphors:
+  * For listening: headphones, waveform, ear, speech bubble, TV/screen, book, clock/timer, path/road
+  * For reading: book, magnifying glass, eye, pen/highlighter, page with lines, comprehension ladder, brain with connections
+  * Use person icons, action arrows, and process diagrams to make abstract skills tangible
 - Never make a scene that is only a heading plus checklist, bullets, checkmarks, or generic text boxes. Checklist/checkmark marks may only be tiny supporting annotations beside a larger visual anchor.
 - Use staged reveal like the reference videos: title or anchor first, main line-art object second, labels/arrows/callouts third, and one short conclusion last.
 - Preserve lots of empty white space. Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full canvas background is the only whiteboard.

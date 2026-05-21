@@ -3,6 +3,7 @@ import os
 import subprocess
 import tempfile
 from pathlib import Path
+from uuid import uuid4
 
 import edge_tts
 
@@ -13,13 +14,23 @@ VOICES: dict[str, str] = {
 }
 
 
+def _create_uuid_temp_path(suffix: str) -> Path:
+    """Create a temp file with UUID-based name to avoid concurrent conflicts."""
+    return Path(tempfile.gettempdir()) / f"explainflow_tts_{uuid4()}{suffix}"
+
+
+def _cleanup_temp_file(path: Path) -> None:
+    """Safely remove a temp file, ignoring errors."""
+    try:
+        if path.exists():
+            path.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
 def _synthesize_with_windows_sapi(text: str) -> Path:
-    wav_tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-    wav_tmp.close()
-    wav_path = Path(wav_tmp.name)
-    mp3_tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-    mp3_tmp.close()
-    mp3_path = Path(mp3_tmp.name)
+    wav_path = _create_uuid_temp_path(".wav")
+    mp3_path = _create_uuid_temp_path(".mp3")
 
     env = os.environ.copy()
     env["EXPLAINFLOW_TTS_TEXT"] = text
@@ -90,17 +101,12 @@ $synth.Dispose()
             raise RuntimeError("ffmpeg did not create usable MP3 audio")
         return mp3_path
     finally:
-        try:
-            wav_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        _cleanup_temp_file(wav_path)
 
 
 async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
     voice = VOICES[voice_key]
-    tmp = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-    tmp.close()
-    out_path = Path(tmp.name)
+    out_path = _create_uuid_temp_path(".mp3")
 
     try:
         communicate = edge_tts.Communicate(text, voice)
@@ -109,10 +115,7 @@ async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
             return out_path
         raise RuntimeError("No usable audio was received from Edge TTS")
     except Exception:
-        try:
-            out_path.unlink(missing_ok=True)
-        except Exception:
-            pass
+        _cleanup_temp_file(out_path)
         return await asyncio.to_thread(_synthesize_with_windows_sapi, text)
 
 

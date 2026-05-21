@@ -85,13 +85,16 @@ Python Pydantic 模型在各模块 `models.py`，与上述类型对应。`Scene`
 - `OPENAI_API_KEY` — DeepSeek API Key（必填）
 - `OPENAI_BASE_URL` — 默认 `https://api.deepseek.com/v1`
 - `LLM_MODEL` — 默认 `deepseek-chat`
+- `LLM_MAX_RETRIES` — LLM 调用最大重试次数，默认 3
+- `LLM_RETRY_BASE_DELAY_S` — 重试基础延迟（秒），默认 1.0
+- `CORS_ALLOWED_ORIGINS` — CORS 允许的 origin 列表（逗号分隔），默认 `http://localhost:3000,http://127.0.0.1:3000`
 
 **`apps/web/.env.local`（从 `.env.local.example` 复制）：**
 - `NEXT_PUBLIC_API_URL` — 默认 `http://localhost:8000`
 
 ## 渲染服务器关键细节
 
-- Remotion bundle 的静态文件服务在端口 **3002**（避免与 Next.js 3000 冲突），通过 `RenderInternals.serveStatic()` 显式指定
+- Remotion bundle 的静态文件服务默认从端口 **3100** 开始寻找可用端口（通过 `REMOTION_STATIC_PORT` 环境变量配置），避免与 Next.js 3000 和主服务 3001 冲突，通过 `RenderInternals.serveStatic()` 显式指定
 - Playwright Chrome 路径硬编码在 `server.mjs` 和 `scripts/dev-render.sh` 中（`C:/Users/DELL/AppData/...`），换机器需修改
 - 作业状态持久化到 `outputs/jobs.json`，服务器重启时 `processing` 状态的作业自动置为 `failed`
 - 视频输出到 `outputs/{topic}_{jobId8}.mp4`，TTS 音频临时文件在 `outputs/audio/`

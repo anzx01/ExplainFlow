@@ -20,6 +20,7 @@ import {
   statSync,
   unlinkSync,
   writeFileSync,
+  writeFile as writeFileAsync,
 } from "fs";
 import { basename, dirname, extname, join, resolve } from "path";
 import { createHash, randomUUID } from "crypto";
@@ -138,7 +139,38 @@ function loadJobs() {
 
 const jobs = loadJobs();
 
-function saveJobs() {
+// Track pending save operations to avoid concurrent writes
+let saveOperation = null;
+
+/**
+ * Asynchronously save jobs to disk without blocking the event loop.
+ * Debounces concurrent calls to avoid excessive disk I/O.
+ */
+async function saveJobsAsync() {
+  // If a save is already in progress, wait for it instead of starting another
+  if (saveOperation) {
+    return saveOperation;
+  }
+
+  saveOperation = (async () => {
+    try {
+      const data = JSON.stringify(jobs, null, 2);
+      await promisify(writeFileAsync)(JOBS_FILE, data, "utf8");
+    } catch (err) {
+      console.warn("[jobs] Failed to save jobs.json:", err.message);
+    } finally {
+      saveOperation = null;
+    }
+  })();
+
+  return saveOperation;
+}
+
+/**
+ * Synchronous save for use during startup/initialization only.
+ * Should not be called after the server is fully started.
+ */
+function saveJobsSync() {
   try {
     writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), "utf8");
   } catch (err) {
@@ -258,7 +290,7 @@ function assertStoryboardEncodingHealthy(storyboard) {
 function updateJob(jobId, patch) {
   if (!jobs[jobId]) return;
   jobs[jobId] = { ...jobs[jobId], ...patch };
-  saveJobs();
+  saveJobsAsync();
 }
 
 for (const [id, job] of Object.entries(jobs)) {
@@ -269,7 +301,7 @@ for (const [id, job] of Object.entries(jobs)) {
     jobs[id].error = "Server restarted during render";
   }
 }
-saveJobs();
+saveJobsSync();
 
 function readBody(req, limitBytes = 10 * 1024 * 1024) {
   return new Promise((resolvePromise, reject) => {
@@ -2254,8 +2286,34 @@ function validateStrokeFollowingTimeline(code) {
   if (!/\b["']?kind["']?\s*:\s*["']text["']/.test(code)) {
     throw new Error("drawOps must include text operations with kind: 'text'");
   }
-  if (!/\b["']?kind["']?\s*:\s*["'](?:path|stroke|shape|arrow|box)["']/.test(code)) {
-    throw new Error("drawOps must include path/stroke operations for diagrams");
+  // Count path/stroke operations for diagrams - each scene needs 3-5 diagram elements
+  const pathOps = [...code.matchAll(/\b["']?kind["']?\s*:\s*["'](?:path|stroke|shape|arrow|box|circle|line)["']/gi)];
+  if (pathOps.length < 8) {
+    throw new Error(
+      `drawOps must include at least 8 path/stroke operations for diagrams (found ${pathOps.length}). Each scene needs 3-5 distinct diagram elements.`
+    );
+  }
+
+  // Count text operations - each scene needs 2-4 text labels
+  const textOps = [...code.matchAll(/\b["']?kind["']?\s*:\s*["']text["']/gi)];
+  if (textOps.length < 5) {
+    throw new Error(
+      `drawOps must include at least 5 text operations (found ${textOps.length}). Each scene needs title, labels, and conclusion text.`
+    );
+  }
+
+  // Count SVG elements - need variety for rich visuals
+  const svgElements = {
+    arrows: (code.match(/<path[^>]*arrow|arrow[^>]*>/gi) || []).length,
+    circles: (code.match(/<circle|ellipse/gi) || []).length,
+    rects: (code.match(/<rect/gi) || []).length,
+    lines: (code.match(/<line/gi) || []).length,
+  };
+  const svgCount = svgElements.arrows + svgElements.circles + svgElements.rects + svgElements.lines;
+  if (svgCount < 10) {
+    throw new Error(
+      `TSX must include at least 10 SVG elements for rich visuals (found ${svgCount}). Use arrows, circles, rectangles, and lines for diagrams.`
+    );
   }
   const pointCount = [
     ...code.matchAll(/\{\s*["']?x["']?\s*:\s*-?\d+(?:\.\d+)?\s*,\s*["']?y["']?\s*:\s*-?\d+(?:\.\d+)?\s*\}/g),
@@ -2315,8 +2373,26 @@ function validateNoPaperSurface(code) {
     }
   }
 
-  if (/\b(?:paper|card|panel|surface|sheet|poster|slide|boardShadow|shadow|wash)\w*\b/i.test(code)) {
-    throw new Error("Generated TSX must not define paper/card/panel/surface/shadow/wash helpers or variables");
+  // Only reject CSS property assignments that create paper/card/panel effects
+  // Allow variable names, comments, and descriptive terms
+  // Match only style-object property shorthand (e.g. { paper: value }) by requiring a
+  // preceding opening brace or parenthesis, avoiding false-positives on variable/param names
+  const paperSurfaceProps = [
+    /[{(]\s*\bpaper\s*:/i,
+    /[{(]\s*\bcard\s*:/i,
+    /[{(]\s*\bpanel\s*:/i,
+    /[{(]\s*\bsurface\s*:/i,
+    /[{(]\s*\bsheet\s*:/i,
+    /[{(]\s*\bposter\s*:/i,
+    /[{(]\s*\bslide\s*:/i,
+    /[{(]\s*\bboardShadow\s*:/i,
+    /[{(]\s*\bshadow\b\s*:/i,
+    /[{(]\s*\bwash\s*:/i,
+  ];
+  for (const pattern of paperSurfaceProps) {
+    if (pattern.test(code)) {
+      throw new Error("Generated TSX must not define paper/card/panel/surface/shadow/wash helpers or variables");
+    }
   }
 
   if (/\bfilter\s*:\s*["'][^"']+["']/i.test(code)) {
@@ -2530,6 +2606,59 @@ function validateGeneratedTsx(tsx) {
   return code;
 }
 
+// Get style-specific visual instructions based on user selection
+function getStyleInstructions(videoStyle, penStyle) {
+  const style = String(videoStyle || "auto").toLowerCase();
+  const pen = String(penStyle || "marker").toLowerCase();
+
+  const visualStyles = {
+    whiteboard: {
+      base: "WHITEBOARD STYLE: Use warm off-white (#F7F7F2 or similar) canvas background. Draw with black marker outlines (2-3px stroke), blue titles/labels, and small colored accents (coral-pink, yellow, green). Include doodle-style icons, arrows, circles, and callout boxes. Visible hand holding a marker must draw each element.",
+      elements: "Add these whiteboard elements: hand-drawn arrows, doodle-style boxes/circles, starbursts for emphasis, small icon sketches (ear/headphones for listening, book/magnifier for reading, gears for process, scales for comparison), and teacher-style annotations.",
+    },
+    sharpie: {
+      base: "SHARPIE STYLE: Use bright white canvas with THICK black marker strokes (4-6px). Draw bold uppercase-style titles, rough quick sketches, and raw hand-drawn shapes. Use blue/yellow/red highlighter accents sparingly. A visible hand with thick marker must draw every element.",
+      elements: "Use these sharpie elements: thick bold arrows, large rough circles/boxes, underline strokes, highlighter marks, and raw sketch icons. Every stroke should look bold and immediate, like a real sharpie on whiteboard.",
+    },
+    chalkboard_bw: {
+      base: "CHALKBOARD B&W STYLE: Use dark black (#1a1a1a or similar) background with WHITE CHALK only. Draw sparse chalk-like line art, rough edges, and dusty chalk texture. NO visible hand - content appears line by line like chalk writing.",
+      elements: "Use these chalkboard elements: rough chalk lines, sparse icon sketches, formula-like text, and subtle chalk dust texture. Content reveals progressively like someone writing on a real chalkboard.",
+    },
+    chalkboard_color: {
+      base: "CHALKBOARD COLOR STYLE: Use dark black (#1a1a1a or similar) background. Draw with WHITE chalk main lines, CYAN for emphasis, YELLOW for conclusions/highlights. NO visible hand - content appears step by step.",
+      elements: "Use these colored chalk elements: white main chalk strokes, cyan arrows/highlights, yellow key conclusions, subtle chalk texture. Color has meaning: white=main, cyan=emphasis, yellow=result.",
+    },
+    editorial: {
+      base: "EDITORIAL STYLE: Use warm off-white paper-like canvas with BOLD BLACK INK illustrations and RED/ORANGE accent strokes. Draw magazine-quality sketchy illustrations with thick imperfect lines, paper sheet collage elements, and refined callouts.",
+      elements: "Use these editorial elements: bold black ink drawings, red/orange arrows and callouts, paper/card collage shapes, media icons, and polished sketch illustrations. Each element should feel like quality editorial illustration.",
+    },
+    technical_blueprint: {
+      base: "TECHNICAL BLUEPRINT STYLE: Use deep navy blue (#0a1628 or similar) canvas with PALE BLUE (#4a9eff) precise linework. Draw engineering-style diagrams with grid feel, measurement ticks, wireframe shapes, and structured panels.",
+      elements: "Use these blueprint elements: precise blue lines, grid overlay, engineering symbols, wireframe boxes, measurement annotations, and structured technical diagrams. Add subtle cyan glow effects for emphasis.",
+    },
+    modern_minimal: {
+      base: "MODERN MINIMAL STYLE: Use warm light grey (#f5f5f5) canvas with THIN BLACK lines and ONE cool accent color (blue or violet). Draw clean aligned icons, minimal shapes, and generous whitespace. Keep composition sparse and elegant.",
+      elements: "Use these minimal elements: thin precise lines, aligned icon groups, minimal arrows, subtle color accents, and lots of white space. Each element should feel clean and intentional.",
+    },
+    playful: {
+      base: "PLAYFUL STYLE: Use warm cream (#fff8e7) canvas with COLORFUL crayon-like strokes. Draw friendly rounded shapes, pastel accents, smiley marks, and bouncy compositions. Use visible hand with colorful markers.",
+      elements: "Use these playful elements: rounded doodles, pastel colors (pink, mint, lavender, peach), smiley faces, music notes, bouncing shapes, and friendly character sketches. Make it approachable and fun.",
+    },
+  };
+
+  const penStyles = {
+    marker: "Use visible hand holding marker. Hand must follow each stroke path, moving up/down/left/right naturally.",
+    pen: "Use visible hand holding pen. Hand should move smoothly, drawing fine strokes.",
+    fountain_pen: "Use visible hand with fountain pen. Draw elegant thin strokes with occasional ink flow variation.",
+    no_hand: "NO visible hand. Content appears through opacity reveals, not stroke animation.",
+  };
+
+  const selectedStyle = visualStyles[style] || visualStyles.whiteboard;
+  const selectedPen = penStyles[pen] || penStyles.marker;
+
+  return `${selectedStyle.base} ${selectedStyle.elements} ${selectedPen}`;
+}
+
 async function generateRemotionCode(storyboard, options = {}) {
   const subtitlesEnabled = Boolean(options.subtitlesEnabled);
   const codegenStoryboard = subtitlesEnabled
@@ -2554,96 +2683,130 @@ async function generateRemotionCode(storyboard, options = {}) {
       };
   const backgroundMusicUrl = options.backgroundMusicUrl || null;
   const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
-  const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
-    storyboard: codegenStoryboard,
-    fps: FPS,
-    width: WIDTH,
-    height: HEIGHT,
-    subtitles_enabled: subtitlesEnabled,
-    background_music_url: backgroundMusicUrl,
-    background_music_volume: backgroundMusicVolume,
-    style_prompt:
-      "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
-      "Respect scene video_style as the Golpo Canvas visual layer: chalkboard_bw uses black canvas with white chalk only; chalkboard_color uses black canvas with white/cyan chalk and limited yellow/teal emphasis; modern_minimal uses warm light grey, thin lines and one cool accent; technical_blueprint uses deep navy blueprint styling; editorial uses warm off-white bold ink with red/orange accents; whiteboard uses off-white marker-board with blue labels and small colored fills; playful uses warm cream crayon-like pastel accents; sharpie uses bright white thick black marker and highlighter accents. " +
-      "Respect scene board_mode, hand_usage and visual_style: whiteboard/trace scenes use a visible hand following the active stroke; reference or annotate scenes may present a complex finished subject directly and then use hand callouts; clean_canvas/marketing_doodle scenes may use colorful finished doodles plus hand annotations; chalkboard/math_chalkboard or hand_usage=none scenes hide the hand and reveal equations or steps line by line. " +
-      "Use the default bold editorial hand-drawn explainer look when scenes include generated reference art: thick black crayon/marker artwork, coral-pink arrows/checks/starbursts/underlines, warm yellow highlight blobs, one large subject or at most three large step groups, and generous blank space. " +
-      "Treat generated reference art as text-free artwork; add readable Chinese titles, labels, ticks, underlines and callouts in the renderer with large handwritten glyph text instead of relying on text baked into the image. " +
-      "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
-      (subtitlesEnabled
-        ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
-        : "Do not render subtitles or caption overlays. ") +
-      (backgroundMusicUrl
-        ? `Add one global low-volume looping background music Audio track with src="${backgroundMusicUrl}" and volume=${backgroundMusicVolume}; keep it behind narration. `
-        : "Do not add background music. ") +
-      "Import Img and staticFile from remotion and render <Img src={staticFile(\"hand-real-pen.png\")} /> " +
-      "inside a HandPen component positioned from getPenPosition(frame) coordinates. " +
-      "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; " +
-      "position with left: tipX - PEN_TIP_X and top: tipY - PEN_TIP_Y so the marker tip touches the active stroke. " +
-      "HandPen must return an absolutely positioned HTML div wrapping Img, and <HandPen> must be rendered as a sibling after the SVG, never inside SVG. " +
-      "In chalkboard/no-hand scenes keep the HandPen component defined but pass visible={false}; do not show a decorative hand. " +
-      "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). " +
-      "When two drawOps are separated by a short gap, keep the hand visible and move it from the previous stroke endpoint to the next stroke start without drawing, like a teacher lifting the marker. " +
-      "If scenes include audioSegments, render each segment's audioUrl in its own Sequence using audioStartFrame when present, and keep matching drawOps inside the same beat window. " +
-      "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
-      "Use glyphPaths/GlyphText/DrawGlyphPath for Chinese text so the renderer can preprocess opentype.js font outline paths, " +
-      "after each large glyph outline finishes, a light same-color fill is allowed so handwriting does not look hollow, " +
-      "final board text should look like solid marker handwriting, not hollow outlined lettering, " +
-      "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
-      "If storyboard scenes include rasterReveal and referenceImageAsset, obey rasterReveal.renderMode. For trace, reveal the original reference image through animated SVG masks " +
-      "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for large readable side callouts, short underlines, and small edge ticks near the image; avoid pretending to know exact internal object locations, avoid long sweeping arrows, and avoid large circles covering the diagram. " +
-      "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
-      "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
-      "Use a clean warm off-white whiteboard/paper canvas close to #F7F7F2, strong readable marker outlines, blue or black handwritten titles with coral-pink underlines, and purposeful colored teaching strokes, " +
-      "Every scene needs one primary visual anchor made from at least 3-6 meaningful diagram/icon/object elements such as a funnel, route map, balance scale, gear, clock, warning triangle, clipboard, person/group, chart, matrix, cross-section, or system stack. " +
-      "Never render a scene as only a heading plus checklist, bullets, checkmarks, or generic text boxes; a checklist may only be a tiny note beside a larger visual anchor. " +
-      "Use idiomatic natural Chinese for all board titles, labels, callouts, captions, and narration. If the source concept is English, transcreate it into a Chinese phrase a real teacher would say instead of translating word by word; keep English only for fixed technical terms, acronyms, formulas, code names, or search names, optionally in parentheses. Avoid awkward coined shorthand; for example dependence/independence/interdependence can become 依赖 → 独立 → 互相依赖/成熟协作/协作共赢 depending on context, never 互赖. " +
-      "Use staged reveal like the reference videos: title or anchor first, main line-art object second, labels/arrows/callouts third, and one short conclusion last. " +
-      "If a scene is a summary, render a visual synthesis such as a loop, roadmap, hub-and-spoke map, evidence chart, or metaphor object instead of a plain checklist. " +
-      "When scene.referenceImageAsset and scene.rasterReveal exist, always render the generated reference image via RasterRevealImage/RasterFinalOverlay; do not silently replace it with simpler SVG-only shapes. " +
-      "Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full AbsoluteFill background is the only whiteboard. " +
-      "Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text. " +
-      "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
-      "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
-      "and lots of negative space. " +
-      "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
-      "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
-      "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; make visuals lively with small humorous teaching metaphors like wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and marker annotations drawn directly on the board. Do not force mascots or decorative cartoon characters. " +
-      (subtitlesEnabled
-        ? "Use audioSegments subtitleText only for bottom subtitles. "
-        : "Ignore audioSegments subtitleText and do not render any bottom subtitle overlay. ") +
-      "For every drawOp that is tied to a beat, keep the beatId field and draw within that beat's time window, so the hand is emphasizing the same idea that the voice is explaining. " +
-      "Do not use SVG <animate>; all timing must be driven by Remotion frame values. " +
-      "Do not use templates, local components, slide-deck cards, stock images, or component libraries.",
-  });
 
-  const validatedTsx = validateGeneratedTsx(response.tsx);
-  const glyphTsx = injectGlyphOutlineDrawing(validatedTsx);
-  const plannedSceneFrames = Array.isArray(codegenStoryboard?.scenes)
-    ? codegenStoryboard.scenes.reduce((sum, scene) => {
-        const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
-        const estimateFrames = Math.ceil(Number(scene?.duration_estimate ?? 0) * FPS);
-        const segmentFrames = Array.isArray(scene?.audioSegments ?? scene?.audio_segments)
-          ? Math.max(
-              0,
-              ...(scene?.audioSegments ?? scene?.audio_segments).map((segment) => Number(segment?.endFrame ?? 0)),
-            )
-          : 0;
-        return sum + Math.max(0, timingFrames, estimateFrames, segmentFrames);
-      }, 0)
-    : 0;
+  // Extract video_style and pen_style from storyboard
+  const videoStyle = storyboard?.video_style ?? storyboard?.videoStyle ?? "auto";
+  const penStyle = storyboard?.pen_style ?? storyboard?.penStyle ?? "marker";
 
-  return {
-    tsx: validateGeneratedTsx(glyphTsx),
-    durationInFrames: Math.max(
-      FPS * 10,
-      Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
-      plannedSceneFrames,
-      Number(response.duration_in_frames ?? FPS * 60),
-    ),
-    fps: Number(response.fps ?? FPS),
-    width: Number(response.width ?? WIDTH),
-    height: Number(response.height ?? HEIGHT),
-  };
+  // Generate style-specific visual instructions based on user selection
+  const styleInstructions = getStyleInstructions(videoStyle, penStyle);
+
+  // Retry logic for validation failures
+  const MAX_RETRIES = 2;
+  let lastError = null;
+
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    const isRetry = attempt > 0;
+    const retryHint = isRetry
+      ? " IMPORTANT: The previous generation included forbidden paper/card/panel/surface/shadow/wash styling patterns. CRITICAL: Do NOT define any variable named paper, card, panel, surface, sheet, poster, slide, boardShadow, shadow, or wash in your code. Do NOT use washD, boxShadow, textShadow, drop-shadow, or gradients. Only use AbsoluteFill for the canvas background."
+      : "";
+
+    const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
+      storyboard: codegenStoryboard,
+      fps: FPS,
+      width: WIDTH,
+      height: HEIGHT,
+      subtitles_enabled: subtitlesEnabled,
+      background_music_url: backgroundMusicUrl,
+      background_music_volume: backgroundMusicVolume,
+      style_prompt:
+        "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
+        `USER SELECTED STYLE: ${videoStyle.toUpperCase()} with ${penStyle.toUpperCase()} pen. ${styleInstructions} ` +
+        "Respect scene video_style as the Golpo Canvas visual layer: chalkboard_bw uses black canvas with white chalk only; chalkboard_color uses black canvas with white/cyan chalk and limited yellow/teal emphasis; modern_minimal uses warm light grey, thin lines and one cool accent; technical_blueprint uses deep navy blueprint styling; editorial uses warm off-white bold ink with red/orange accents; whiteboard uses off-white marker-board with blue labels and small colored fills; playful uses warm cream crayon-like pastel accents; sharpie uses bright white thick black marker and highlighter accents. " +
+        "Respect scene board_mode, hand_usage and visual_style: whiteboard/trace scenes use a visible hand following the active stroke; reference or annotate scenes may present a complex finished subject directly and then use hand callouts; clean_canvas/marketing_doodle scenes may use colorful finished doodles plus hand annotations; chalkboard/math_chalkboard or hand_usage=none scenes hide the hand and reveal equations or steps line by line. " +
+        "Use the default bold editorial hand-drawn explainer look when scenes include generated reference art: thick black crayon/marker artwork, coral-pink arrows/checks/starbursts/underlines, warm yellow highlight blobs, one large subject or at most three large step groups, and generous blank space. " +
+        "Treat generated reference art as text-free artwork; add readable Chinese titles, labels, ticks, underlines and callouts in the renderer with large handwritten glyph text instead of relying on text baked into the image. " +
+        "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
+        (subtitlesEnabled
+          ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
+          : "Do not render subtitles or caption overlays. ") +
+        (backgroundMusicUrl
+          ? `Add one global low-volume looping background music Audio track with src="${backgroundMusicUrl}" and volume=${backgroundMusicVolume}; keep it behind narration. `
+          : "Do not add background music. ") +
+        "Import Img and staticFile from remotion and render <Img src={staticFile(\"hand-real-pen.png\")} /> " +
+        "inside a HandPen component positioned from getPenPosition(frame) coordinates. " +
+        "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; " +
+        "position with left: tipX - PEN_TIP_X and top: tipY - PEN_TIP_Y so the marker tip touches the active stroke. " +
+        "HandPen must return an absolutely positioned HTML div wrapping Img, and <HandPen> must be rendered as a sibling after the SVG, never inside SVG. " +
+        "In chalkboard/no-hand scenes keep the HandPen component defined but pass visible={false}; do not show a decorative hand. " +
+        "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). " +
+        "When two drawOps are separated by a short gap, keep the hand visible and move it from the previous stroke endpoint to the next stroke start without drawing, like a teacher lifting the marker. " +
+        "If scenes include audioSegments, render each segment's audioUrl in its own Sequence using audioStartFrame when present, and keep matching drawOps inside the same beat window. " +
+        "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
+        "Use glyphPaths/GlyphText/DrawGlyphPath for Chinese text so the renderer can preprocess opentype.js font outline paths, " +
+        "after each large glyph outline finishes, a light same-color fill is allowed so handwriting does not look hollow, " +
+        "final board text should look like solid marker handwriting, not hollow outlined lettering, " +
+        "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
+        "If storyboard scenes include rasterReveal and referenceImageAsset, obey rasterReveal.renderMode. For trace, reveal the original reference image through animated SVG masks " +
+        "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for large readable side callouts, short underlines, and small edge ticks near the image; avoid pretending to know exact internal object locations, avoid long sweeping arrows, and avoid large circles covering the diagram. " +
+        "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
+        "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
+        "Use a clean warm off-white whiteboard canvas close to #F7F7F2, strong readable marker outlines, blue or black handwritten titles with coral-pink underlines, and purposeful colored teaching strokes. " +
+        "CRITICAL RESTRICTION - Do NOT use these variable names in your code: paper, card, panel, surface, sheet, poster, slide, boardShadow, shadow, wash. The canvas background is AbsoluteFill only. " +
+        "CRITICAL RESTRICTION - Do NOT use these CSS patterns in your code: washD, boxShadow, textShadow, drop-shadow, dropShadow, CSS filter, linear-gradient, radial-gradient. " +
+        "Every scene needs one primary visual anchor made from at least 3-6 meaningful diagram/icon/object elements such as a funnel, route map, balance scale, gear, clock, warning triangle, clipboard, person/group, chart, matrix, cross-section, or system stack. " +
+        "Never render a scene as only a heading plus checklist, bullets, checkmarks, or generic text boxes; a checklist may only be a tiny note beside a larger visual anchor. " +
+        "Use idiomatic natural Chinese for all board titles, labels, callouts, captions, and narration. If the source concept is English, transcreate it into a Chinese phrase a real teacher would say instead of translating word by word; keep English only for fixed technical terms, acronyms, formulas, code names, or search names, optionally in parentheses. Avoid awkward coined shorthand; for example dependence/independence/interdependence can become 依赖 → 独立 → 互相依赖/成熟协作/协作共赢 depending on context, never 互赖. " +
+        "Use staged reveal like the reference videos: title or anchor first, main line-art object second, labels/arrows/callouts third, and one short conclusion last. " +
+        "If a scene is a summary, render a visual synthesis such as a loop, roadmap, hub-and-spoke map, evidence chart, or metaphor object instead of a plain checklist. " +
+        "When scene.referenceImageAsset and scene.rasterReveal exist, always render the generated reference image via RasterRevealImage/RasterFinalOverlay; do not silently replace it with simpler SVG-only shapes. " +
+        "Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full AbsoluteFill background is the only whiteboard. " +
+        "Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text. " +
+        "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
+        "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. " +
+        "and lots of negative space. " +
+        "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
+        "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
+        "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; make visuals lively with small humorous teaching metaphors like wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and marker annotations drawn directly on the board. Do not force mascots or decorative cartoon characters. " +
+        (subtitlesEnabled
+          ? "Use audioSegments subtitleText only for bottom subtitles. "
+          : "Ignore audioSegments subtitleText and do not render any bottom subtitle overlay. ") +
+        "For every drawOp that is tied to a beat, keep the beatId field and draw within that beat's time window, so the hand is emphasizing the same idea that the voice is explaining. " +
+        "Do not use SVG <animate>; all timing must be driven by Remotion frame values. " +
+        "Do not use templates, local components, slide-deck cards, stock images, or component libraries." +
+        retryHint,
+    });
+
+    try {
+      const validatedTsx = validateGeneratedTsx(response.tsx);
+      const glyphTsx = injectGlyphOutlineDrawing(validatedTsx);
+      const plannedSceneFrames = Array.isArray(codegenStoryboard?.scenes)
+        ? codegenStoryboard.scenes.reduce((sum, scene) => {
+            const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
+            const estimateFrames = Math.ceil(Number(scene?.duration_estimate ?? 0) * FPS);
+            const segmentFrames = Array.isArray(scene?.audioSegments ?? scene?.audio_segments)
+              ? Math.max(
+                  0,
+                  ...(scene?.audioSegments ?? scene?.audio_segments).map((segment) => Number(segment?.endFrame ?? 0)),
+                )
+              : 0;
+            return sum + Math.max(0, timingFrames, estimateFrames, segmentFrames);
+          }, 0)
+        : 0;
+
+      return {
+        tsx: validateGeneratedTsx(glyphTsx),
+        durationInFrames: Math.max(
+          FPS * 10,
+          Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
+          plannedSceneFrames,
+          Number(response.duration_in_frames ?? FPS * 60),
+        ),
+        fps: Number(response.fps ?? FPS),
+        width: Number(response.width ?? WIDTH),
+        height: Number(response.height ?? HEIGHT),
+      };
+    } catch (err) {
+      lastError = err;
+      console.warn(`[codegen] Validation failed (attempt ${attempt + 1}/${MAX_RETRIES + 1}): ${err.message}`);
+      if (attempt < MAX_RETRIES) {
+        await sleep(1500); // Brief delay before retry
+        continue;
+      }
+    }
+  }
+
+  throw lastError ?? new Error("generateRemotionCode failed after retries");
 }
 
 function generatedTsxAudioTags(code) {
@@ -3143,7 +3306,7 @@ const server = http.createServer(async (req, res) => {
         backgroundMusicId: backgroundMusicTrack?.id ?? null,
         createdAt,
       };
-      saveJobs();
+      saveJobsAsync();
 
       sendJson(res, 202, { jobId, createdAt });
 
@@ -3191,7 +3354,7 @@ const server = http.createServer(async (req, res) => {
         if (deleteJobRecord(jobId)) deleted.push(jobId);
         else missing.push(jobId);
       }
-      saveJobs();
+      saveJobsAsync();
       sendJson(res, 200, { ok: true, deleted, missing });
     } catch {
       sendJson(res, 400, { error: "invalid JSON" });
@@ -3229,7 +3392,7 @@ const server = http.createServer(async (req, res) => {
       if (patch.topic !== undefined) {
         job.topic = cleanUserText(patch.topic, job.topic ?? "Untitled").slice(0, 200);
       }
-      saveJobs();
+      saveJobsAsync();
       sendJson(res, 200, { ok: true });
     } catch {
       sendJson(res, 400, { error: "invalid JSON" });
@@ -3244,7 +3407,7 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     deleteJobRecord(jobId);
-    saveJobs();
+    saveJobsAsync();
     sendJson(res, 200, { ok: true });
     return;
   }

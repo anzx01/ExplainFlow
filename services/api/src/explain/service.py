@@ -4,6 +4,15 @@ import re
 
 from src.core.visual_prompts import BOLD_EDITORIAL_BOARD_RULES, BOLD_EDITORIAL_LAYOUT_RULES
 from src.core.llm import chat_json, check_llm_connection
+from src.core.topic_terms import (
+    SEMICONDUCTOR_TERMS,
+    GRADIENT_TERMS,
+    COOKING_TERMS,
+    COOKING_GRAPH_TERMS,
+    CHALKBOARD_MATH_SIGNALS,
+    MARKETING_SIGNALS,
+)
+from src.core.text_utils import clean_text, as_str_list, contains_any_text, normalize_text
 from .models import (
     ConceptEdge,
     ConceptNode,
@@ -134,71 +143,7 @@ SYSTEM_PROMPT = """你是通用技术教学视频的 Explain Graph 规划专家�
   "key_insights": ["3-8 条核心洞察，必须覆盖 brief 的关键事实"]
 }"""
 
-SEMICONDUCTOR_TERMS = [
-    "mos",
-    "mosfet",
-    "finfet",
-    "晶体管",
-    "场效应管",
-    "栅极",
-    "源极",
-    "漏极",
-    "沟道",
-]
-
-GRADIENT_TERMS = ["gradient", "descent", "梯度下降", "学习率", "损失函数", "loss"]
-
-COOKING_TERMS = [
-    "cook",
-    "cooking",
-    "recipe",
-    "food",
-    "dish",
-    "wok",
-    "skillet",
-    "stir-fry",
-    "stir fry",
-    "sauce",
-    "tofu",
-    "mapo",
-    "麻婆",
-    "豆腐",
-    "烹饪",
-    "做法",
-    "好吃",
-    "食材",
-    "炒",
-    "煸",
-    "爆香",
-    "锅",
-    "菜",
-    "勾芡",
-    "出锅",
-    "装盘",
-]
-
-COOKING_GRAPH_TERMS = [
-    "食材",
-    "豆腐",
-    "肉末",
-    "豆瓣酱",
-    "花椒",
-    "蒜苗",
-    "红油",
-    "炒锅",
-    "炒",
-    "煸",
-    "烧",
-    "勾芡",
-    "装盘",
-    "wok",
-    "tofu",
-    "sauce",
-    "recipe",
-    "cook",
-]
-
-MAPO_TOFU_SCENES = [
+STYLE_STRATEGY_RULES = [
     {
         "title": "食材先备齐",
         "learning_goal": "让观众知道一盘麻婆豆腐需要哪些关键食材。",
@@ -400,38 +345,20 @@ STYLE_STRATEGY_RULES = [
 ]
 
 
-def _localize_chinese_terms(text: str) -> str:
-    replacements = {
-        "相互依赖": "互相依赖",
-        "互赖": "互相依赖",
-        "同理心倾听": "先理解别人",
-        "协同增效": "统合综效",
-        "削尖锯子": "不断更新",
-    }
-    for source, target in replacements.items():
-        text = text.replace(source, target)
-    return text
-
-
 def _clean(value: object) -> str:
+    """Clean a value for display: normalize whitespace and apply Chinese localization."""
+    from src.core.text_utils import localize_chinese_terms
     text = "" if value is None else str(value)
     text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-    return _localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
+    return localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
 
 
 def _as_str_list(value: object, limit: int | None = None) -> list[str]:
-    if isinstance(value, list):
-        items = [_clean(item) for item in value]
-    elif isinstance(value, str):
-        items = [_clean(part) for part in re.split(r"[\n；;]+", value)]
-    else:
-        items = []
-    items = [item for item in items if item]
-    return items[:limit] if limit else items
+    return as_str_list(value, limit)
 
 
 def _norm(value: str) -> str:
-    return re.sub(r"\s+", "", value).lower()
+    return normalize_text(value)
 
 
 def _append_unique(items: list[str], additions: list[str], limit: int | None = None) -> list[str]:
@@ -449,8 +376,7 @@ def _append_unique(items: list[str], additions: list[str], limit: int | None = N
 
 
 def _contains_any_text(text: str, terms: list[str]) -> bool:
-    lowered = text.lower()
-    return any(term.lower() in lowered for term in terms)
+    return contains_any_text(text, terms)
 
 
 def _looks_corrupted_text(text: str) -> bool:
@@ -1016,25 +942,11 @@ def _ensure_brief_minimums(brief: EnhancedTeachingBrief, req: GenerateGraphReque
 
     blob = _request_blob(req)
     blob_lower = blob.lower()
-    chalkboard_math_signals = [
-        "数学",
-        "解题",
-        "推导",
-        "证明",
-        "integral",
-        "积分",
-        "derivative",
-        "导数证明",
-        "geometry",
-        "几何证明",
-        "iit",
-    ]
-    marketing_signals = ["广告", "营销", "产品", "推广", "brand", "marketing", "ad ", "ads", "golpo", "landing"]
-    if any(signal in blob_lower for signal in chalkboard_math_signals):
+    if any(signal in blob_lower for signal in CHALKBOARD_MATH_SIGNALS):
         brief.recommended_board_mode = "chalkboard"
         brief.recommended_hand_usage = "none"
         brief.recommended_visual_style = "math_chalkboard"
-    elif any(signal in blob_lower for signal in marketing_signals):
+    elif any(signal in blob_lower for signal in MARKETING_SIGNALS):
         brief.recommended_board_mode = "clean_canvas"
         brief.recommended_hand_usage = "annotate"
         brief.recommended_visual_style = "marketing_doodle"
