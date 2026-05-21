@@ -1,4 +1,4 @@
-import type { ExplainGraph, Storyboard, RenderJobSummary, PenStyleId, VideoStyleId } from "./types";
+import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -63,5 +63,50 @@ export async function updateJobTopic(jobId: string, topic: string): Promise<void
   await request<{ ok: boolean }>(`/render/job/${jobId}`, {
     method: "PATCH",
     body: JSON.stringify({ topic }),
+  });
+}
+
+export async function generateSceneImage(storyboard: Storyboard, scene: Scene): Promise<string> {
+  const sceneId = scene.id;
+  const data = await post<{ images: Record<string, string | null> }>("/imagegen/scenes", {
+    scenes: [
+      {
+        scene_id: sceneId,
+        topic: storyboard.topic,
+        title: scene.title,
+        image_description:
+          scene.image_description ||
+          scene.imageDescription ||
+          scene.learning_goal ||
+          scene.title,
+        board_mode: scene.board_mode || "clean_canvas",
+        hand_usage: scene.hand_usage || "annotate",
+        video_style: scene.video_style || scene.videoStyle || storyboard.video_style || "whiteboard",
+        visual_style: scene.visual_style || "teacher_whiteboard",
+        pen_style: scene.pen_style || scene.penStyle || storyboard.pen_style || "marker",
+      },
+    ],
+  });
+  const image = data.images?.[sceneId];
+  if (!image) throw new Error("Scene image generation returned empty result");
+  return image.startsWith("data:image/") ? image : `data:image/png;base64,${image}`;
+}
+
+export async function synthesizeSceneAudio(text: string, voice = "xiaoxiao"): Promise<string> {
+  const res = await fetch(`${BASE_URL}/narration/synthesize`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice }),
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`API /narration/synthesize failed (${res.status}): ${body}`);
+  }
+  const blob = await res.blob();
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read synthesized audio"));
+    reader.readAsDataURL(blob);
   });
 }

@@ -4,6 +4,12 @@ import math
 import re
 from copy import deepcopy
 
+from src.core.golpo_styles import (
+    golpo_pen_style_presets,
+    golpo_video_style_aliases,
+    golpo_video_style_presets,
+    golpo_video_styles,
+)
 from src.core.visual_prompts import BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT
 from src.core.llm import chat_json, check_llm_connection
 from src.core.config import settings
@@ -27,7 +33,7 @@ ALLOWED_IMPORTS = {"react", "remotion"}
 HAND_ASSET = "hand-real-pen.png"
 REMOTION_CODE_CACHE: dict[str, GenerateRemotionCodeResponse] = {}
 REMOTION_CODE_CACHE_MAX_ITEMS = 16
-VIDEO_STYLE_PRESETS: dict[str, dict[str, str]] = {
+_LEGACY_VIDEO_STYLE_PRESETS: dict[str, dict[str, str]] = {
     "auto": {
         "name": "智能推荐",
         "board_mode": "",
@@ -216,8 +222,32 @@ VIDEO_STYLE_PRESETS: dict[str, dict[str, str]] = {
         "image_rule": "Alias for Whiteboard.",
     },
 }
-ALLOWED_VIDEO_STYLES = set(VIDEO_STYLE_PRESETS)
-PEN_STYLE_PRESETS: dict[str, dict[str, str]] = {
+_LEGACY_VIDEO_STYLE_ALIASES: dict[str, str] = {
+    "colorful_story": "whiteboard",
+    "teacher_whiteboard": "whiteboard",
+    "howto_demo": "whiteboard",
+    "math_chalkboard": "chalkboard_color",
+    "technical_reference": "technical_blueprint",
+    "whiteboard_bw": "whiteboard",
+    "whiteboard_color": "whiteboard",
+    "sharpie_bw": "sharpie",
+    "sharpie_color": "sharpie",
+    "editorial_blue": "editorial",
+    "editorial_paper": "editorial",
+    "chalkboard_black_white": "chalkboard_bw",
+    "technical": "technical_blueprint",
+}
+_LEGACY_GOLPO_CANVAS_VIDEO_STYLES = {
+    "chalkboard_bw",
+    "chalkboard_color",
+    "modern_minimal",
+    "technical_blueprint",
+    "editorial",
+    "whiteboard",
+    "playful",
+    "sharpie",
+}
+_LEGACY_PEN_STYLE_PRESETS: dict[str, dict[str, str]] = {
     "no_hand": {
         "name": "No Hand",
         "rule": "Do not show a hand. Reveal content through chalk/line drawing animation or direct staged appearances.",
@@ -235,6 +265,11 @@ PEN_STYLE_PRESETS: dict[str, dict[str, str]] = {
         "rule": "Use a bold marker-in-hand feeling: thick confident strokes, whiteboard-session energy and strong callouts.",
     },
 }
+VIDEO_STYLE_PRESETS: dict[str, dict[str, str]] = golpo_video_style_presets()
+VIDEO_STYLE_ALIASES: dict[str, str] = golpo_video_style_aliases()
+GOLPO_CANVAS_VIDEO_STYLES = golpo_video_styles()
+ALLOWED_VIDEO_STYLES = set(VIDEO_STYLE_PRESETS) | set(VIDEO_STYLE_ALIASES)
+PEN_STYLE_PRESETS: dict[str, dict[str, str]] = golpo_pen_style_presets()
 ALLOWED_PEN_STYLES = set(PEN_STYLE_PRESETS)
 COOKING_TOPIC_TERMS = (
     "cook",
@@ -765,10 +800,11 @@ highlight_region — 黄色高亮区域
 image_description 设计要点：
 - 必须是英文
 - 描述一张白板手绘风格插图的内容（黑色线条，白色背景）
+- 必须是 text-free artwork，不要要求图像模型生成可读标题、段落、标签、按钮或水印；可读文字由渲染端叠加
 - 聚焦该场景的核心视觉概念，例如：
   "a simple diagram showing a neural network with input, hidden, and output layers connected by arrows"
   "a whiteboard sketch of gradient descent showing a ball rolling down a curved loss surface"
-  "labeled anatomy diagram of a transformer attention mechanism with query, key, value boxes"
+  "an unlabeled anatomy-style diagram of a transformer attention mechanism with three clean box groups and blank callout space"
 
 输出 JSON 格式（严格遵守）：
 {
@@ -780,7 +816,7 @@ image_description 设计要点：
       "narration": "旁白文案，口语化中文，完整句子",
       "duration_estimate": 25,
       "node_ids": ["node_0"],
-      "image_description": "English description of the whiteboard sketch illustration for this scene",
+      "image_description": "English text-free description of the whiteboard sketch illustration for this scene",
       "animations": [
         {
           "type": "write_text",
@@ -810,7 +846,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 4. 旁白要像一个脑子很清楚、稍微有点幽默感的老师在现场讲：多用具体比喻、轻微反差和口语节奏，例如“别急着开干”“这一步像先摊开地图”“不然很容易原地忙成一团”。幽默只能帮助理解，不能变成段子、网络烂梗或抢戏。
 5. 每个 scene 至少有一句把抽象关系落到生活化类比或具体动作上；每个 visual_beat 的 narration 优先 1-2 个完整短句，不写论文腔。
 6. 优先用状态对比图、过程模拟图、结构图、截面图、箭头和局部放大；少用纯文字列表。
-7. image_description 必须是英文，像给图像生成模型的具体白板线稿说明：布局、标签、箭头、局部放大都要写清楚。
+7. image_description 必须是英文，像给图像生成模型的具体画面说明：布局、主体、箭头、局部放大和留白都要写清楚，但不要让图像模型生成可读标签。
 8. 用优秀老师板书的方式强调重点：关键术语下划线、圈出局部、彩色箭头、局部放大框、对比标记和结论框。
 9. 使用有限教学色彩：red=current/flow, blue=voltage/control, green=channel/valid path, purple=gate/structure, yellow=emphasis underline/callout。
 10. 内容 prompt 与视觉风格分离：这里规划内容和画面，不写模板库、组件库或代码。
@@ -912,7 +948,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
       "narration": "完整中文旁白，由 visual_beats 串起来，口语化但技术准确",
       "duration_estimate": 28,
       "node_ids": ["node_0"],
-      "image_description": "English whiteboard line-art diagram prompt with exact labels, layout, arrows and process changes",
+      "image_description": "English text-free image prompt with exact subject, layout, blank callout spaces, arrows, object states and process changes; no readable labels or words",
       "animations": [
         {
           "type": "whiteboard_draw",
@@ -938,9 +974,56 @@ def _clean_text(value: object) -> str:
     return localize_chinese_terms(re.sub(r"\s+", " ", text).strip())
 
 
+def _normalize_image_description_text(value: object) -> str:
+    text = _clean_text(value)
+    if not text:
+        return ""
+    replacements = [
+        (r"\b(left|right|top|bottom|center)\s+panel\s+labeled\s+[^,.;。]+", r"\1 panel with a blank label space"),
+        (r"\blabeled\s+", ""),
+        (r"\blabel(?:s|ed)?\s+[^.;。]*", "blank callout spaces"),
+        (r"\bwith\s+(?:exact\s+)?labels?\s+(?:for|showing|on|such as|including)\b", "with blank callout spaces for"),
+        (r"\blabels?\s*[:：][^.;。]*", "blank callout spaces"),
+        (r"\blabeled\b", "unlabeled"),
+        (r"\bshort\s+(?:nearby\s+|handwritten\s+|blue\s+)?labels?\b", "blank nearby callout spaces"),
+        (r"\breadable\s+(?:title|text|label|labels|words?)\b", "blank callout space"),
+        (r"\bshort\s+(?:blue\s+)?handwritten\s+title\b", "blank title area"),
+        (r"\btopic heading\b", "blank heading area"),
+        (r"\bcaption(?:s)?\b", "blank callout area"),
+        (r"\bformula\s+[^,.;。]+", "formula-shaped blank math area"),
+        (r"\b(?:tokens?|speech marks)\s+saying\s+[^,.;。]+", "blank speech marks"),
+    ]
+    for pattern, replacement in replacements:
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    if "text-free" not in text.lower():
+        text = f"{text}. text-free artwork; no readable words, no letters, no labels, no title, no watermark"
+    elif "no readable" not in text.lower():
+        text = f"{text}; no readable words, letters, labels, title, or watermark"
+    return re.sub(r"\s+", " ", text).strip(" .") + "."
+
+
+def _style_image_rule_in_description(scene: Scene, video_style: str) -> bool:
+    text = (scene.image_description or "").lower()
+    if not text:
+        return False
+    style = _canonical_video_style(video_style)
+    checks = {
+        "chalkboard_bw": ["pure black chalkboard", "white chalk-only"],
+        "chalkboard_color": ["black chalkboard", "cyan", "yellow"],
+        "modern_minimal": ["warm light grey", "one restrained blue"],
+        "technical_blueprint": ["deep navy", "pale blue"],
+        "editorial": ["warm off-white", "red or orange"],
+        "whiteboard": ["off-white whiteboard", "blue handwritten-style"],
+        "playful": ["warm cream", "crayon"],
+        "sharpie": ["bright white", "sharpie"],
+    }
+    return all(fragment in text for fragment in checks.get(style, []))
+
+
 def _normalize_video_style(value: str | None) -> str:
     style = _clean_text(value).lower()
-    return style if style in ALLOWED_VIDEO_STYLES else "auto"
+    style = VIDEO_STYLE_ALIASES.get(style, style)
+    return style if style in VIDEO_STYLE_PRESETS else "whiteboard"
 
 
 def _video_style_preset(value: str | None) -> dict[str, str]:
@@ -1578,7 +1661,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 duration_estimate=dur,
                 animations=animations,
                 node_ids=s.get("node_ids") or [],
-                image_description=s.get("image_description") or None,
+                image_description=_normalize_image_description_text(s.get("image_description")) or None,
                 learning_goal=s.get("learning_goal") or None,
                 visual_beats=visual_beats,
                 diagram_plan=diagram_plan,
@@ -1745,11 +1828,12 @@ def _apply_video_style_to_scene(scene: Scene, video_style: str) -> None:
         scene.board_mode = "clean_canvas"
         scene.hand_usage = "annotate" if style != "sharpie" else "trace"
         scene.visual_style = style
-        scene.render_strategy = "hybrid" if style != "sharpie" else scene.render_strategy or "trace"
+        scene.render_strategy = "hybrid" if style != "sharpie" else "hybrid"
 
     image_rule = preset["image_rule"]
-    if scene.image_description and image_rule not in scene.image_description:
+    if scene.image_description and not _style_image_rule_in_description(scene, style):
         scene.image_description = f"{scene.image_description}. {image_rule}".strip(". ")
+    scene.image_description = _normalize_image_description_text(scene.image_description)
 
 
 def _apply_pen_style_to_scene(scene: Scene, pen_style: str) -> None:
@@ -2291,12 +2375,14 @@ def _scene_from_spec(index: int, spec: dict) -> Scene:
         duration_estimate=duration,
         animations=animations,
         node_ids=spec.get("node_ids", []),
-        image_description=spec["image_description"],
+        image_description=_normalize_image_description_text(spec["image_description"]),
         render_strategy=spec.get("render_strategy", ""),
         visual_complexity=spec.get("visual_complexity", ""),
         board_mode=spec.get("board_mode", ""),
         hand_usage=spec.get("hand_usage", ""),
+        video_style=spec.get("video_style"),
         visual_style=spec.get("visual_style", ""),
+        pen_style=spec.get("pen_style"),
     )
 
 
@@ -2564,6 +2650,9 @@ def _gradient_story_specs() -> list[dict]:
 
 def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard:
     scenes = [_scene_from_spec(index, spec) for index, spec in enumerate(specs)]
+    for scene in scenes:
+        if scene.image_description:
+            scene.image_description = _normalize_image_description_text(scene.image_description)
     return Storyboard(
         topic=storyboard.topic,
         total_duration_estimate=round(sum(scene.duration_estimate for scene in scenes), 1),
@@ -2616,6 +2705,7 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
     video_style = _canonical_video_style(storyboard.video_style)
     storyboard.video_style = video_style
     pen_style = _normalize_pen_style(storyboard.pen_style)
+    storyboard.pen_style = pen_style
     is_cooking_topic = _is_cooking_topic_text(f"{corpus} {source_corpus}")
     gradient = _contains_terms(source_corpus, ["gradient", "descent", "梯度下降", "学习率", "损失"])
     brief = _graph_enhanced_brief(graph) or {}
@@ -2643,11 +2733,14 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
 
     if _contains_semiconductor_topic(corpus):
         storyboard = _replace_with_specs(storyboard, _generic_relation_story_specs(graph, target_duration))
+        corpus = _storyboard_corpus(storyboard, graph)
 
     if not is_problem_framework:
         storyboard = _append_missing_coverage_scenes(storyboard, graph, target_duration)
+        corpus = _storyboard_corpus(storyboard, graph)
     if is_cooking_topic:
         storyboard = _apply_mapo_cooking_defaults(storyboard, target_duration)
+        corpus = _storyboard_corpus(storyboard, graph)
 
     for scene in storyboard.scenes:
         if not scene.visual_beats:
@@ -2676,7 +2769,7 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
             scene.visual_style = default_visual_style
         scene.title = _clean_text(scene.title)
         scene.learning_goal = _clean_text(scene.learning_goal)
-        scene.image_description = _clean_text(scene.image_description)
+        scene.image_description = _normalize_image_description_text(scene.image_description)
         if scene.diagram_plan:
             scene.diagram_plan.kind = _clean_text(scene.diagram_plan.kind)
             scene.diagram_plan.layout = _clean_text(scene.diagram_plan.layout)
@@ -2692,6 +2785,7 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         cooking_suffix = _cooking_prompt_suffix(scene_corpus)
         if cooking_suffix and cooking_suffix not in (scene.image_description or ""):
             scene.image_description = f"{scene.image_description}. {cooking_suffix}".strip(". ")
+            scene.image_description = _normalize_image_description_text(scene.image_description)
         is_math_board = (
             video_style in {"auto", "chalkboard_bw", "chalkboard_color"}
             and default_visual_style == "math_chalkboard"
@@ -5324,6 +5418,9 @@ const MIN_START_PROGRESS = 0.018;
 const sceneBackground = (scene: SceneSpec) => {
   if (scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard") return "#050806";
   if (scene.videoStyle === "technical_blueprint") return "#18364A";
+  if (scene.videoStyle === "modern_minimal") return "#F1F3F0";
+  if (scene.videoStyle === "editorial") return "#FAF4EA";
+  if (scene.videoStyle === "whiteboard") return "#FBFCF8";
   if (scene.videoStyle === "playful") return "#FBF7D8";
   if (scene.videoStyle === "sharpie") return "#FFFDF7";
   if (scene.boardMode === "clean_canvas") return "#F7F7F2";

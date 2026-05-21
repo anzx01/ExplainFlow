@@ -50,6 +50,7 @@ const DEFAULT_CHROME =
   "C:\\Users\\DELL\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1223\\chrome-headless-shell-win64\\chrome-headless-shell.exe";
 const BROWSER_EXECUTABLE = process.env.REMOTION_CHROME_HEADLESS_SHELL || DEFAULT_CHROME;
 const FFPROBE_BINARY = process.env.FFPROBE_PATH || "ffprobe";
+const FFMPEG_BINARY = process.env.FFMPEG_PATH || "ffmpeg";
 const COMPOSITION_ID = "GeneratedVideo";
 const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
 const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism() - 2));
@@ -90,6 +91,20 @@ const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
   Number(process.env.REMOTION_DIRECT_IMAGE_STROKE_THRESHOLD ?? 280),
 );
 const HAND_ASSET = "hand-real-pen.png";
+const MIN_RENDER_OUTPUT_BYTES = Math.max(1024, Number(process.env.RENDER_QA_MIN_BYTES ?? 50000) || 50000);
+const MIN_RENDER_FRAME_STDDEV = Math.max(0.5, Number(process.env.RENDER_QA_MIN_FRAME_STDDEV ?? 2.5) || 2.5);
+const GOLPO_STYLE_CONFIG = loadGolpoStyleConfig();
+const VIDEO_STYLE_ALIASES = new Map(Object.entries(GOLPO_STYLE_CONFIG.aliases ?? {}));
+const GOLPO_VIDEO_STYLES = new Set(GOLPO_STYLE_CONFIG.video_style_order ?? [
+  "chalkboard_bw",
+  "chalkboard_color",
+  "modern_minimal",
+  "technical_blueprint",
+  "editorial",
+  "whiteboard",
+  "playful",
+  "sharpie",
+]);
 const SCENE_PREROLL_FRAMES = Math.max(0, Math.min(90, Number(process.env.SCENE_PREROLL_FRAMES ?? 0) || 0));
 const BEAT_AUDIO_LEAD_FRAMES = Math.max(0, Math.min(36, Number(process.env.BEAT_AUDIO_LEAD_FRAMES ?? 8) || 8));
 const MUSIC_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"]);
@@ -125,6 +140,43 @@ mkdirSync(AUDIO_DIR, { recursive: true });
 mkdirSync(MUSIC_DIR, { recursive: true });
 mkdirSync(GENERATED_DIR, { recursive: true });
 mkdirSync(PUBLIC_GENERATED_DIR, { recursive: true });
+
+function loadGolpoStyleConfig() {
+  const fallback = {
+    video_style_order: [
+      "chalkboard_bw",
+      "chalkboard_color",
+      "modern_minimal",
+      "technical_blueprint",
+      "editorial",
+      "whiteboard",
+      "playful",
+      "sharpie",
+    ],
+    aliases: {
+      colorful_story: "whiteboard",
+      teacher_whiteboard: "whiteboard",
+      howto_demo: "whiteboard",
+      math_chalkboard: "chalkboard_color",
+      technical_reference: "technical_blueprint",
+      whiteboard_bw: "whiteboard",
+      whiteboard_color: "whiteboard",
+      sharpie_bw: "sharpie",
+      sharpie_color: "sharpie",
+      editorial_blue: "editorial",
+      editorial_paper: "editorial",
+      chalkboard_black_white: "chalkboard_bw",
+      technical: "technical_blueprint",
+    },
+  };
+  try {
+    const configPath = resolve(__dirname, "../../services/api/src/core/golpo_styles.json");
+    return JSON.parse(readFileSync(configPath, "utf8"));
+  } catch (err) {
+    console.warn("[style] Failed to load shared Golpo style config:", err.message);
+    return fallback;
+  }
+}
 
 function loadJobs() {
   try {
@@ -217,6 +269,17 @@ function localizeChineseTerms(text) {
   return String(text ?? "").replace(/相互依赖/g, "互相依赖").replace(/互赖/g, "互相依赖");
 }
 
+function canonicalVideoStyle(value, fallback = "whiteboard") {
+  const raw = String(value ?? fallback ?? "whiteboard").trim().toLowerCase();
+  const style = VIDEO_STYLE_ALIASES.get(raw) ?? raw;
+  return GOLPO_VIDEO_STYLES.has(style) ? style : fallback;
+}
+
+function normalizePenStyle(value, fallback = "marker") {
+  const style = String(value ?? fallback ?? "marker").trim().toLowerCase();
+  return ["marker", "pen", "fountain_pen", "no_hand"].includes(style) ? style : fallback;
+}
+
 function cleanUserText(value, fallback = "") {
   return localizeChineseTerms(tryRepairMojibake(value))
     .replace(/\x1b\[[0-9;]*m/g, "")
@@ -227,39 +290,53 @@ function cleanUserText(value, fallback = "") {
 
 function sanitizeStoryboardText(storyboard) {
   const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  const storyboardVideoStyle = canonicalVideoStyle(storyboard?.video_style ?? storyboard?.videoStyle, "whiteboard");
+  const storyboardPenStyle = normalizePenStyle(storyboard?.pen_style ?? storyboard?.penStyle, "marker");
   return {
     ...storyboard,
     topic: cleanUserText(storyboard?.topic, "Untitled"),
-    scenes: scenes.map((scene) => ({
-      ...scene,
-      title: cleanUserText(scene?.title, "场景"),
-      narration: cleanUserText(scene?.narration, ""),
-      learning_goal: cleanUserText(scene?.learning_goal ?? scene?.learningGoal, ""),
-      learningGoal: cleanUserText(scene?.learningGoal ?? scene?.learning_goal, ""),
-      image_description: cleanUserText(scene?.image_description ?? scene?.imageDescription, ""),
-      imageDescription: cleanUserText(scene?.imageDescription ?? scene?.image_description, ""),
-      subtitleText: scene?.subtitleText == null ? scene?.subtitleText : cleanUserText(scene.subtitleText, ""),
-      visual_beats: Array.isArray(scene?.visual_beats)
-        ? scene.visual_beats.map((beat) => ({
-            ...beat,
-            draw_intent: cleanUserText(beat?.draw_intent ?? beat?.drawIntent, ""),
-            narration: cleanUserText(beat?.narration, ""),
-            required_labels: Array.isArray(beat?.required_labels)
-              ? beat.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
-              : beat?.required_labels,
-          }))
-        : scene?.visual_beats,
-      diagram_plan: scene?.diagram_plan
-        ? {
-            ...scene.diagram_plan,
-            kind: cleanUserText(scene.diagram_plan.kind, "process"),
-            layout: cleanUserText(scene.diagram_plan.layout, ""),
-            required_labels: Array.isArray(scene.diagram_plan.required_labels)
-              ? scene.diagram_plan.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
-              : scene.diagram_plan.required_labels,
-          }
-        : scene?.diagram_plan,
-    })),
+    video_style: storyboardVideoStyle,
+    videoStyle: storyboardVideoStyle,
+    pen_style: storyboardPenStyle,
+    penStyle: storyboardPenStyle,
+    scenes: scenes.map((scene) => {
+      const sceneVideoStyle = canonicalVideoStyle(scene?.video_style ?? scene?.videoStyle, storyboardVideoStyle);
+      const scenePenStyle = normalizePenStyle(scene?.pen_style ?? scene?.penStyle, storyboardPenStyle);
+      return {
+        ...scene,
+        title: cleanUserText(scene?.title, "场景"),
+        narration: cleanUserText(scene?.narration, ""),
+        learning_goal: cleanUserText(scene?.learning_goal ?? scene?.learningGoal, ""),
+        learningGoal: cleanUserText(scene?.learningGoal ?? scene?.learning_goal, ""),
+        image_description: cleanUserText(scene?.image_description ?? scene?.imageDescription, ""),
+        imageDescription: cleanUserText(scene?.imageDescription ?? scene?.image_description, ""),
+        video_style: sceneVideoStyle,
+        videoStyle: sceneVideoStyle,
+        pen_style: scenePenStyle,
+        penStyle: scenePenStyle,
+        subtitleText: scene?.subtitleText == null ? scene?.subtitleText : cleanUserText(scene.subtitleText, ""),
+        visual_beats: Array.isArray(scene?.visual_beats)
+          ? scene.visual_beats.map((beat) => ({
+              ...beat,
+              draw_intent: cleanUserText(beat?.draw_intent ?? beat?.drawIntent, ""),
+              narration: cleanUserText(beat?.narration, ""),
+              required_labels: Array.isArray(beat?.required_labels)
+                ? beat.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
+                : beat?.required_labels,
+            }))
+          : scene?.visual_beats,
+        diagram_plan: scene?.diagram_plan
+          ? {
+              ...scene.diagram_plan,
+              kind: cleanUserText(scene.diagram_plan.kind, "process"),
+              layout: cleanUserText(scene.diagram_plan.layout, ""),
+              required_labels: Array.isArray(scene.diagram_plan.required_labels)
+                ? scene.diagram_plan.required_labels.map((label) => cleanUserText(label, "")).filter(Boolean)
+                : scene.diagram_plan.required_labels,
+            }
+          : scene?.diagram_plan,
+      };
+    }),
   };
 }
 
@@ -519,7 +596,7 @@ function normalizeTextForTts(text) {
 }
 
 function cleanNarrationText(text) {
-  let value = localizeChineseTerms(text).replace(/\s+/g, " ").trim();
+  let value = cleanUserText(text, "").replace(/\s+/g, " ").trim();
   if (!value) return "";
   const replacements = [
     [/^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现|看|看到)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*/i, ""],
@@ -710,6 +787,31 @@ async function probePlayableAudio(filePath) {
   }
 }
 
+async function probeMediaInfo(filePath) {
+  const { stdout } = await execFileAsync(
+    FFPROBE_BINARY,
+    [
+      "-v",
+      "error",
+      "-show_entries",
+      "format=duration:stream=codec_type,codec_name,width,height",
+      "-of",
+      "json",
+      filePath,
+    ],
+    { windowsHide: true, timeout: 30000 },
+  );
+  const parsed = JSON.parse(stdout || "{}");
+  const duration = Number.parseFloat(String(parsed.format?.duration ?? "0"));
+  const streams = Array.isArray(parsed.streams) ? parsed.streams : [];
+  return {
+    durationSeconds: Number.isFinite(duration) && duration > 0 ? duration : 0,
+    hasAudio: streams.some((stream) => stream.codec_type === "audio"),
+    hasVideo: streams.some((stream) => stream.codec_type === "video"),
+    streams,
+  };
+}
+
 async function normalizeMusicTrackForRemotion(track) {
   if (!track) return null;
   const ext = extname(track.filePath).toLowerCase();
@@ -736,11 +838,20 @@ async function synthesizeScene(sceneId, text, voice) {
   if (existsSync(outPath) && statSync(outPath).size > 0) {
     console.log(`[tts] cache hit: ${sceneId}`);
     const durationSeconds = await probeAudioDurationSeconds(outPath);
+    if (!durationSeconds) {
+      try {
+        unlinkSync(outPath);
+      } catch {}
+      throw new Error(`Cached TTS audio is empty or unreadable for ${sceneId}`);
+    }
     return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   }
   if (ttsInFlight.has(filename)) {
     await ttsInFlight.get(filename);
     const durationSeconds = await probeAudioDurationSeconds(outPath);
+    if (!durationSeconds) {
+      throw new Error(`Shared TTS audio is empty or unreadable for ${sceneId}`);
+    }
     return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   }
 
@@ -751,6 +862,9 @@ async function synthesizeScene(sceneId, text, voice) {
   try {
     await pending;
     const durationSeconds = await probeAudioDurationSeconds(outPath);
+    if (!durationSeconds || !existsSync(outPath) || statSync(outPath).size <= 0) {
+      throw new Error(`TTS audio is empty or unreadable for ${sceneId}`);
+    }
     return { audioUrl, filePath: outPath, durationSeconds, text: narration };
   } finally {
     ttsInFlight.delete(filename);
@@ -803,6 +917,40 @@ async function injectAudio(storyboard, voice) {
   const voiceKey = normalizeVoiceKey(voice ?? "xiaoxiao");
   const sceneResults = await Promise.allSettled(
     storyboard.scenes.map(async (scene, sceneIndex) => {
+      const suppliedAudio = await persistSceneAudioDataUrl(scene, sceneIndex);
+      if (suppliedAudio) {
+        const audioDurationFrames = Math.max(1, Math.ceil(suppliedAudio.durationSeconds * FPS));
+        const durationFrames = Math.max(audioDurationFrames + Math.round(FPS * 0.65), FPS * 5);
+        const segment = {
+          id: "scene_audio",
+          index: 0,
+          startFrame: 0,
+          endFrame: durationFrames,
+          duration: durationFrames,
+          audioStartFrame: 0,
+          audioEndFrame: audioDurationFrames,
+          audioSequenceDuration: durationFrames,
+          audioUrl: suppliedAudio.audioUrl,
+          audioDurationFrames,
+          drawBudgetFrames: Math.max(1, durationFrames - 4),
+          subtitleText: suppliedAudio.text,
+          narration: suppliedAudio.text,
+          drawIntent: scene.image_description || scene.title || "",
+        };
+        return {
+          ...scene,
+          audioUrl: suppliedAudio.audioUrl,
+          audioSegments: [segment],
+          timingPlan: {
+            fps: FPS,
+            durationFrames,
+            transitionFrames: 0,
+            allowOverTarget: true,
+            segments: [segment],
+          },
+          duration_estimate: durationFrames / FPS,
+        };
+      }
       const beatSpecs = sceneBeatSpecs(scene);
       const segmentResults = await Promise.allSettled(
         beatSpecs.map((beat) =>
@@ -814,6 +962,10 @@ async function injectAudio(storyboard, voice) {
       const audioSegments = segmentResults.map((result, index) => {
         const beat = beatSpecs[index];
         const audio = result.status === "fulfilled" ? result.value : null;
+        if (!audio?.audioUrl || !audio?.filePath || !audio?.durationSeconds) {
+          const reason = result.status === "rejected" ? result.reason?.message : "empty audio";
+          throw new Error(`缺少音频片段：${scene.id || `scene_${sceneIndex}`}/${beat.id} (${reason || "TTS failed"})`);
+        }
         const durationSeconds = audio?.durationSeconds || estimateNarrationSeconds(beat.text);
         const audioDurationFrames = Math.max(1, Math.ceil(durationSeconds * FPS));
         const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
@@ -849,6 +1001,9 @@ async function injectAudio(storyboard, voice) {
       );
       const durationFrames = Math.max(cursor + transitionFrames, lastAudioEndFrame + Math.round(FPS * 0.65), FPS * 8);
       const fallbackAudio = audioSegments.find((segment) => segment.audioUrl)?.audioUrl ?? null;
+      if (!fallbackAudio) {
+        throw new Error(`缺少场景音频：${scene.id || `scene_${sceneIndex}`}`);
+      }
       const failedSegments = segmentResults.filter((result) => result.status === "rejected");
       if (failedSegments.length > 0) {
         console.warn(
@@ -874,13 +1029,7 @@ async function injectAudio(storyboard, voice) {
 
   const scenes = storyboard.scenes.map((scene, index) => {
     const result = sceneResults[index];
-    return result.status === "fulfilled"
-      ? result.value
-      : {
-          ...scene,
-          audioUrl: null,
-          audioSegments: [],
-        };
+    return result.status === "fulfilled" ? result.value : scene;
   });
 
   const failed = sceneResults.filter((result) => result.status === "rejected");
@@ -889,6 +1038,7 @@ async function injectAudio(storyboard, voice) {
       `[tts] ${failed.length} scene(s) failed:`,
       failed.map((result) => result.reason?.message),
     );
+    throw new Error(`缺少音频，已停止渲染：${failed.map((result) => result.reason?.message).join("; ")}`);
   }
 
   const totalFrames = scenes.reduce(
@@ -905,6 +1055,365 @@ async function injectAudio(storyboard, voice) {
       allowOverTarget: true,
     },
   };
+}
+
+function audioFilenameFromUrl(url) {
+  try {
+    const parsed = new URL(String(url));
+    if (parsed.pathname.startsWith("/audio/")) return decodeURIComponent(basename(parsed.pathname));
+  } catch {}
+  return null;
+}
+
+function normalizeBase64DataUrl(value, expectedPrefix) {
+  const text = String(value ?? "").trim();
+  if (!text.startsWith(expectedPrefix)) return null;
+  const comma = text.indexOf(",");
+  if (comma < 0) return null;
+  const meta = text.slice(0, comma).toLowerCase();
+  if (!meta.includes(";base64")) return null;
+  return text.slice(comma + 1);
+}
+
+async function persistSceneAudioDataUrl(scene, sceneIndex) {
+  const audioUrl = String(scene?.audioUrl ?? scene?.audio_url ?? "").trim();
+  const base64 = normalizeBase64DataUrl(audioUrl, "data:audio/");
+  if (!base64) return null;
+  const sceneId = safeAssetSegment(scene?.id || `scene_${sceneIndex}`, "scene");
+  const hash = createHash("sha1").update(base64).digest("hex").slice(0, 16);
+  const outPath = join(AUDIO_DIR, `scene_${sceneId}_${hash}.mp3`);
+  if (!existsSync(outPath) || statSync(outPath).size <= 0) {
+    writeFileSync(outPath, Buffer.from(base64, "base64"));
+  }
+  const durationSeconds = await probeAudioDurationSeconds(outPath);
+  if (!durationSeconds) {
+    try {
+      unlinkSync(outPath);
+    } catch {}
+    throw new Error(`User supplied scene audio is empty or unreadable for ${scene?.id || `scene_${sceneIndex}`}`);
+  }
+  return {
+    audioUrl: `http://localhost:${PORT}/audio/${basename(outPath)}`,
+    filePath: outPath,
+    durationSeconds,
+    text: cleanNarrationText(scene?.narration || scene?.title || ""),
+  };
+}
+
+async function assertStoryboardAudioComplete(storyboard) {
+  const missing = [];
+  for (const [sceneIndex, scene] of (storyboard?.scenes ?? []).entries()) {
+    const sceneId = scene?.id || `scene_${sceneIndex}`;
+    const segments = scene?.audioSegments ?? scene?.audio_segments ?? [];
+    if (!Array.isArray(segments) || segments.length === 0) {
+      missing.push(`${sceneId}: no audioSegments`);
+      continue;
+    }
+    for (const [segmentIndex, segment] of segments.entries()) {
+      const src = segment?.audioUrl ?? segment?.audio_url;
+      if (!src) {
+        missing.push(`${sceneId}/segment_${segmentIndex}: missing audioUrl`);
+        continue;
+      }
+      const filename = audioFilenameFromUrl(src);
+      const localPath = filename ? join(AUDIO_DIR, filename) : null;
+      if (!localPath || !existsSync(localPath) || statSync(localPath).size <= 0) {
+        missing.push(`${sceneId}/segment_${segmentIndex}: audio file missing`);
+        continue;
+      }
+      const duration = await probeAudioDurationSeconds(localPath);
+      if (!duration) {
+        missing.push(`${sceneId}/segment_${segmentIndex}: duration is 0`);
+      }
+    }
+  }
+  if (missing.length > 0) {
+    throw new Error(`缺少音频，已停止渲染：${missing.slice(0, 8).join("; ")}`);
+  }
+}
+
+function qaCheck(id, ok, severity, message, details = null, suggestion = null) {
+  return {
+    id,
+    ok: Boolean(ok),
+    severity,
+    message,
+    ...(details ? { details } : {}),
+    ...(suggestion ? { suggestion } : {}),
+  };
+}
+
+function storyboardExpectedDuration(storyboard) {
+  const fromStoryboard = Number(storyboard?.total_duration_estimate ?? storyboard?.totalDurationEstimate ?? 0);
+  if (Number.isFinite(fromStoryboard) && fromStoryboard > 0) return fromStoryboard;
+  return (storyboard?.scenes ?? []).reduce((sum, scene) => {
+    const duration = Number(scene?.duration_estimate ?? scene?.durationEstimate ?? 0);
+    return sum + (Number.isFinite(duration) && duration > 0 ? duration : 0);
+  }, 0);
+}
+
+function collectStoryboardQaChecks(storyboard) {
+  const checks = [];
+  const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
+  const storyboardText = JSON.stringify(storyboard ?? {});
+  const hardTranslationTerms = ["互赖", "相互依赖赖", "interdependence 的"];
+  const badTerm = hardTranslationTerms.find((term) => storyboardText.includes(term));
+  checks.push(
+    qaCheck(
+      "natural_chinese",
+      !badTerm,
+      badTerm ? "error" : "info",
+      badTerm ? `Storyboard contains hard translation term: ${badTerm}` : "No known hard-translation blacklist terms found",
+      badTerm ? { term: badTerm } : null,
+      badTerm ? "Regenerate or edit narration/labels with natural Chinese phrasing before rendering." : null,
+    ),
+  );
+
+  const missingTextFree = scenes
+    .filter((scene) => {
+      const desc = String(scene?.image_description ?? scene?.imageDescription ?? "").toLowerCase();
+      if (!desc) return false;
+      return !desc.includes("text-free") && !desc.includes("no readable");
+    })
+    .map((scene) => scene?.id ?? scene?.title ?? "scene");
+  checks.push(
+    qaCheck(
+      "text_free_image_prompts",
+      missingTextFree.length === 0,
+      missingTextFree.length ? "warning" : "info",
+      missingTextFree.length
+        ? `${missingTextFree.length} scene image prompt(s) do not explicitly request text-free artwork`
+        : "Scene image prompts request text-free artwork",
+      missingTextFree.length ? { scenes: missingTextFree.slice(0, 8) } : null,
+      missingTextFree.length ? "Add text-free/no-readable-text wording so labels stay renderer-controlled." : null,
+    ),
+  );
+
+  const missingReferences = scenes
+    .filter(
+      (scene) =>
+        shouldGenerateReferenceImage(scene) &&
+        !scene?.referenceImageAsset &&
+        !scene?.reference_image_asset &&
+        !scene?.rasterReveal &&
+        !scene?.raster_reveal &&
+        !sceneLocalImageBuffer(scene),
+    )
+    .map((scene) => scene?.id ?? scene?.title ?? "scene");
+  checks.push(
+    qaCheck(
+      "reference_images",
+      missingReferences.length === 0,
+      missingReferences.length ? "warning" : "info",
+      missingReferences.length
+        ? `${missingReferences.length} direct/hybrid scene(s) have no reference image asset`
+        : "Direct/hybrid scenes have reference image assets or local images",
+      missingReferences.length ? { scenes: missingReferences.slice(0, 8) } : null,
+      missingReferences.length ? "Regenerate scene images or check Seedream credentials and /imagegen/scenes logs." : null,
+    ),
+  );
+
+  const topicBlob = String(storyboard?.topic ?? "").toLowerCase();
+  const isMapo = /mapo|麻婆|豆腐|tofu/.test(topicBlob);
+  if (isMapo) {
+    const promptBlob = scenes
+      .map((scene) => `${scene?.title ?? ""} ${scene?.image_description ?? scene?.imageDescription ?? ""}`)
+      .join(" ")
+      .toLowerCase();
+    const cookingNeedles = ["wok", "red", "tofu", "minced", "scallion"];
+    const missing = cookingNeedles.filter((needle) => !promptBlob.includes(needle));
+    checks.push(
+      qaCheck(
+        "mapo_visual_terms",
+        missing.length === 0,
+        missing.length ? "warning" : "info",
+        missing.length
+          ? `Mapo tofu storyboard is missing cooking visual terms: ${missing.join(", ")}`
+          : "Mapo tofu storyboard contains key cooking visual terms",
+        missing.length ? { missing } : null,
+        missing.length ? "Regenerate/repair images with red chili oil, tofu cubes, minced meat, scallions, steam, and a wide wok." : null,
+      ),
+    );
+  }
+
+  return checks;
+}
+
+async function extractQaFrame(videoPath, durationSeconds, jobId) {
+  const framePath = join(OUTPUT_DIR, `${jobId}_qa_frame.png`);
+  const seekAt = Math.max(0.2, Math.min(Math.max(0.2, durationSeconds * 0.5), 3));
+  await execFileAsync(
+    FFMPEG_BINARY,
+    ["-y", "-ss", String(seekAt), "-i", videoPath, "-frames:v", "1", "-vf", "scale=320:-1", framePath],
+    { windowsHide: true, timeout: 60000 },
+  );
+  return framePath;
+}
+
+async function analyzeFrameNonBlank(framePath) {
+  const image = sharp(framePath).ensureAlpha().raw();
+  const { data, info } = await image.toBuffer({ resolveWithObject: true });
+  const pixels = Math.max(1, info.width * info.height);
+  let sum = 0;
+  let sumSquares = 0;
+  let opaque = 0;
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const alpha = data[offset + 3] / 255;
+    const brightness = (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
+    sum += brightness;
+    sumSquares += brightness * brightness;
+    if (alpha > 0.05) opaque += 1;
+  }
+  const mean = sum / pixels;
+  const variance = Math.max(0, sumSquares / pixels - mean * mean);
+  return {
+    width: info.width,
+    height: info.height,
+    meanBrightness: Math.round(mean * 10) / 10,
+    brightnessStdDev: Math.round(Math.sqrt(variance) * 10) / 10,
+    opaqueRatio: Math.round((opaque / pixels) * 1000) / 1000,
+  };
+}
+
+async function runRenderQa(jobId, outputPath, storyboard) {
+  updateJob(jobId, { phase: "qa", progress: 100 });
+  const checks = [];
+  const suggestions = [];
+  const addCheck = (check) => {
+    checks.push(check);
+    if (!check.ok && check.suggestion) suggestions.push(check.suggestion);
+  };
+
+  const exists = existsSync(outputPath);
+  const fileSize = exists ? statSync(outputPath).size : 0;
+  addCheck(
+    qaCheck(
+      "output_file",
+      exists && fileSize >= MIN_RENDER_OUTPUT_BYTES,
+      "error",
+      exists ? `Output file size is ${fileSize} bytes` : "Output video file is missing",
+      { fileSizeBytes: fileSize, minBytes: MIN_RENDER_OUTPUT_BYTES },
+      "Render again and inspect Remotion/ffmpeg logs; the output file was missing or too small.",
+    ),
+  );
+  if (!exists) {
+    const result = {
+      ok: false,
+      checkedAt: new Date().toISOString(),
+      checks,
+      suggestions: [...new Set(suggestions)],
+    };
+    updateJob(jobId, { qa: result });
+    throw new Error("Render QA failed: Output video file is missing");
+  }
+
+  let mediaInfo = null;
+  try {
+    mediaInfo = await probeMediaInfo(outputPath);
+    addCheck(
+      qaCheck(
+        "video_stream",
+        mediaInfo.hasVideo && mediaInfo.durationSeconds > 0,
+        "error",
+        `Video duration is ${Math.round(mediaInfo.durationSeconds * 10) / 10}s`,
+        { durationSeconds: mediaInfo.durationSeconds, hasVideo: mediaInfo.hasVideo },
+        "Regenerate Remotion output; ffprobe could not find a playable video stream.",
+      ),
+    );
+    addCheck(
+      qaCheck(
+        "audio_stream",
+        mediaInfo.hasAudio,
+        "error",
+        mediaInfo.hasAudio ? "Audio stream exists" : "Rendered MP4 has no audio stream",
+        null,
+        "Retry TTS and render; audio is required and silent videos are blocked.",
+      ),
+    );
+
+    const expectedDuration = storyboardExpectedDuration(storyboard);
+    if (expectedDuration > 0 && mediaInfo.durationSeconds > 0) {
+      const delta = Math.abs(mediaInfo.durationSeconds - expectedDuration);
+      const tolerance = Math.max(4, expectedDuration * 0.25);
+      addCheck(
+        qaCheck(
+          "duration_match",
+          delta <= tolerance,
+          delta <= tolerance ? "info" : "warning",
+          `Rendered duration ${Math.round(mediaInfo.durationSeconds)}s vs storyboard ${Math.round(expectedDuration)}s`,
+          { renderedSeconds: mediaInfo.durationSeconds, storyboardSeconds: expectedDuration, deltaSeconds: delta },
+          delta > tolerance ? "Review audio segment timings and scene duration estimates before publishing." : null,
+        ),
+      );
+    }
+  } catch (err) {
+    addCheck(
+      qaCheck(
+        "ffprobe",
+        false,
+        "error",
+        `ffprobe failed: ${err.message}`,
+        null,
+        "Check ffprobe installation and regenerate the MP4.",
+      ),
+    );
+  }
+
+  if (mediaInfo?.durationSeconds) {
+    let framePath = null;
+    try {
+      framePath = await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId);
+      const frame = await analyzeFrameNonBlank(framePath);
+      const isNonBlank = frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV;
+      addCheck(
+        qaCheck(
+          "nonblank_frame",
+          isNonBlank,
+          "error",
+          isNonBlank
+            ? `Frame has brightness stddev ${frame.brightnessStdDev}`
+            : `Frame looks blank or flat; brightness stddev ${frame.brightnessStdDev}`,
+          { ...frame, minStdDev: MIN_RENDER_FRAME_STDDEV },
+          "Regenerate scene images/code; verify the composition renders visible board content and reference assets.",
+        ),
+      );
+    } catch (err) {
+      addCheck(
+        qaCheck(
+          "frame_extract",
+          false,
+          "error",
+          `Could not extract QA frame: ${err.message}`,
+          null,
+          "Check ffmpeg installation and render again.",
+        ),
+      );
+    } finally {
+      if (framePath) {
+        try {
+          unlinkSync(framePath);
+        } catch {}
+      }
+    }
+  }
+
+  for (const check of collectStoryboardQaChecks(storyboard)) addCheck(check);
+
+  const blockingFailures = checks.filter((check) => !check.ok && check.severity === "error");
+  const result = {
+    ok: blockingFailures.length === 0,
+    checkedAt: new Date().toISOString(),
+    durationSeconds: mediaInfo?.durationSeconds ?? null,
+    hasAudio: mediaInfo?.hasAudio ?? null,
+    fileSizeBytes: fileSize,
+    checks,
+    suggestions: [...new Set(suggestions)],
+  };
+  updateJob(jobId, { qa: result });
+  if (!result.ok) {
+    throw new Error(`Render QA failed: ${blockingFailures.map((check) => check.message).slice(0, 3).join("; ")}`);
+  }
+  return result;
 }
 
 function normalizeBase64Image(value) {
@@ -1157,11 +1666,13 @@ function sceneHandUsage(scene) {
 }
 
 function sceneVideoStyle(scene, storyboard = null) {
-  return String(
+  const raw = String(
     scene?.video_style ?? scene?.videoStyle ?? storyboard?.video_style ?? storyboard?.videoStyle ?? "",
   )
     .trim()
     .toLowerCase();
+  const style = VIDEO_STYLE_ALIASES.get(raw) ?? raw;
+  return GOLPO_VIDEO_STYLES.has(style) ? style : "whiteboard";
 }
 
 function sceneVisualStyle(scene) {
@@ -1174,7 +1685,8 @@ function sceneShouldDirectRender(scene, trace) {
   if (sceneHandUsage(scene) === "annotate") return true;
   if (sceneBoardMode(scene) === "reference" || sceneVisualStyle(scene) === "technical_reference") return true;
   if (sceneBoardMode(scene) === "clean_canvas" || sceneVisualStyle(scene) === "marketing_doodle") return true;
-  if (["modern_minimal", "editorial", "whiteboard", "playful"].includes(videoStyle)) return true;
+  if (["technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) return true;
+  if (videoStyle === "modern_minimal" && sceneHandUsage(scene) !== "trace") return true;
   if (sceneBoardMode(scene) === "chalkboard" || sceneVisualStyle(scene) === "math_chalkboard") return false;
   const explicit = explicitRasterStrategy(scene);
   if (explicit === "direct") return true;
@@ -1792,8 +2304,8 @@ async function injectImageTraces(storyboard, jobId) {
         (strategy === "hybrid" ? 5 : strategy === "direct" ? 4 : strategy === "trace" ? 1 : 0) +
         (handUsage === "annotate" ? 6 : 0) +
         (boardMode === "reference" ? 6 : 0) +
-        (["technical_blueprint", "editorial", "whiteboard", "playful"].includes(videoStyle) ? 5 : 0) +
-        (["modern_minimal", "sharpie"].includes(videoStyle) ? 3 : 0) +
+        (["technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle) ? 5 : 0) +
+        (videoStyle === "modern_minimal" ? 3 : 0) +
         (visualStyle === "technical_reference" ? 6 : visualStyle === "marketing_doodle" ? 4 : 0) +
         (visualComplexity === "dense" || visualComplexity === "reference" ? 5 : visualComplexity === "medium" ? 2 : 0) +
         Math.min(6, visualRelationScore * 2) +
@@ -1826,7 +2338,7 @@ async function injectImageTraces(storyboard, jobId) {
             image_description: scene.image_description,
             board_mode: scene.board_mode ?? scene.boardMode ?? "whiteboard",
             hand_usage: scene.hand_usage ?? scene.handUsage ?? "trace",
-            video_style: scene.video_style ?? scene.videoStyle ?? storyboard.video_style ?? storyboard.videoStyle ?? "whiteboard",
+            video_style: sceneVideoStyle(scene, storyboard),
             visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
             pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
           })),
@@ -3066,6 +3578,7 @@ async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   updateJob(jobId, {
     actualDurationSeconds: Math.round((storyboardWithAudio.total_duration_estimate ?? 0) * 10) / 10,
   });
+  await assertStoryboardAudioComplete(storyboardWithAudio);
   console.log("[tts] Done");
 
   updateJob(jobId, { phase: "imagegen", progress: 0 });
@@ -3083,6 +3596,7 @@ async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
   console.log("[codegen] Generated project:", projectDir);
 
   await bundleAndRender(jobId, entryPath, outputPath);
+  await runRenderQa(jobId, outputPath, storyboardWithTraces);
 }
 
 function makeSlug(value) {
@@ -3317,7 +3831,7 @@ const server = http.createServer(async (req, res) => {
       })
         .then(() => updateJob(jobId, { status: "done", progress: 100, phase: "done" }))
         .catch((err) => {
-          updateJob(jobId, { status: "failed", error: err.message });
+          updateJob(jobId, { status: "failed", phase: "failed", error: err.message });
           console.error(`\n[render] Failed: ${err.stack || err.message}`);
         });
     } catch (err) {
@@ -3336,6 +3850,7 @@ const server = http.createServer(async (req, res) => {
         topic: job.topic ?? null,
         createdAt: job.createdAt ?? null,
         actualDurationSeconds: job.actualDurationSeconds ?? null,
+        qa: job.qa ?? null,
         error: job.error ?? null,
       }))
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
@@ -3375,6 +3890,7 @@ const server = http.createServer(async (req, res) => {
       phase: job.phase ?? null,
       createdAt: job.createdAt ?? null,
       actualDurationSeconds: job.actualDurationSeconds ?? null,
+      qa: job.qa ?? null,
       error: job.error ?? null,
     });
     return;

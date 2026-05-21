@@ -1,0 +1,146 @@
+{
+  "video_style_order": [
+    "chalkboard_bw",
+    "chalkboard_color",
+    "modern_minimal",
+    "technical_blueprint",
+    "editorial",
+    "whiteboard",
+    "playful",
+    "sharpie"
+  ],
+  "aliases": {
+    "colorful_story": "whiteboard",
+    "teacher_whiteboard": "whiteboard",
+    "howto_demo": "whiteboard",
+    "math_chalkboard": "chalkboard_color",
+    "technical_reference": "technical_blueprint",
+    "whiteboard_bw": "whiteboard",
+    "whiteboard_color": "whiteboard",
+    "sharpie_bw": "sharpie",
+    "sharpie_color": "sharpie",
+    "editorial_blue": "editorial",
+    "editorial_paper": "editorial",
+    "chalkboard_black_white": "chalkboard_bw",
+    "technical": "technical_blueprint"
+  },
+  "video_styles": {
+    "auto": {
+      "name": "Auto",
+      "board_mode": "",
+      "hand_usage": "",
+      "visual_style": "",
+      "render_strategy": "",
+      "planning_rule": "Choose the best Golpo-style canvas grammar per scene from the content and complexity.",
+      "image_rule": "Use the most appropriate Golpo Canvas style while keeping artwork text-free for renderer-added handwriting.",
+      "image_prompt": "Use the most appropriate Golpo Canvas style while keeping artwork text-free for renderer-added handwriting.",
+      "negative_prompt": "readable text, words, letters, labels, captions, title, logo, watermark, dense infographic"
+    },
+    "chalkboard_bw": {
+      "name": "Chalkboard Black & White",
+      "board_mode": "chalkboard",
+      "hand_usage": "none",
+      "visual_style": "math_chalkboard",
+      "render_strategy": "trace",
+      "planning_rule": "Classic dark chalkboard: black background, white chalk text and diagrams, very sparse composition, one top-left handwritten title, then small icon groups appear step by step. Use for explainers, tutorials, onboarding and complex concepts that benefit from high contrast simplicity.",
+      "image_rule": "dark black chalkboard canvas, white chalk-only hand-drawn line art, rough chalk texture, no fills, no full-color objects, sparse icon groups, large empty black space, text-free artwork except tiny unreadable chalk marks.",
+      "image_prompt": "Golpo Chalkboard Black & White style frame: pure black chalkboard canvas, white chalk-only hand-drawn line art, rough chalk dust texture, sparse high-contrast composition, one small icon group or simple diagram, large empty black space, no color accents, no fills, no hand, no paper texture, no poster layout, text-free artwork.",
+      "negative_prompt": "color accents, cyan, yellow, red, green, pink, whiteboard, hand, marker, poster, dense infographic, photo, glossy 3d, colored panel, long paragraph, slide frame, card layout"
+    },
+    "chalkboard_color": {
+      "name": "Chalkboard Color",
+      "board_mode": "chalkboard",
+      "hand_usage": "none",
+      "visual_style": "math_chalkboard",
+      "render_strategy": "trace",
+      "planning_rule": "Dark chalkboard with neon chalk accents: white/cyan line art plus yellow or teal highlights for key arrows, underlines and final results. Keep the same sparse blackboard organization as Chalkboard B/W, but use color to make important concepts pop.",
+      "image_rule": "dark black chalkboard canvas, chalk-like white and cyan outlines, limited yellow/teal highlight strokes, glowing chalk texture, sparse hand-drawn icons, large empty black space, no poster layout.",
+      "image_prompt": "Golpo Chalkboard Color style frame: black chalkboard canvas, chalk-like white and cyan outlines, limited yellow or teal highlights for arrows, underlines, and final output, rough fluorescent chalk texture, sparse high-contrast icon groups, large empty black space, no hand, no paper texture, no poster layout, text-free artwork.",
+      "negative_prompt": "whiteboard, hand, marker, poster, dense infographic, photo, glossy 3d, colored panel, long paragraph, slide frame, card layout"
+    },
+    "modern_minimal": {
+      "name": "Modern Minimal",
+      "board_mode": "clean_canvas",
+      "hand_usage": "annotate",
+      "visual_style": "modern_minimal",
+      "render_strategy": "hybrid",
+      "planning_rule": "Modern minimal: warm light grey canvas, thin black sketch lines, lots of white space, only one cool accent color such as blue or violet. Use small grouped icons and clean alignment. Best for SaaS demos, corporate training, investor updates and polished summaries.",
+      "image_rule": "warm light grey canvas, thin clean black hand-drawn lines, one restrained blue/violet accent, lots of white space, simple aligned icon cluster, no messy doodles, no dense labels, text-free artwork.",
+      "image_prompt": "Golpo Modern Minimal style frame: warm light grey canvas, thin clean black hand-drawn lines, one restrained blue or violet accent, lots of white space, simple aligned icon cluster, polished SaaS/corporate feel, no messy doodles, no dense text blocks, no poster layout, text-free artwork.",
+      "negative_prompt": "dark chalkboard, childish cartoon, thick sharpie mess, dense infographic, long text, logo, watermark"
+    },
+    "technical_blueprint": {
+      "name": "Technical",
+      "board_mode": "reference",
+      "hand_usage": "annotate",
+      "visual_style": "technical_reference",
+      "render_strategy": "hybrid",
+      "planning_rule": "Technical blueprint: deep blue engineering notebook, precise pale-blue linework, structured diagrams, UI panels, screens, wires, components and tiny measurement ticks. Use for engineering walkthroughs, architecture diagrams, developer documentation, devices and systems.",
+      "image_rule": "deep navy blueprint canvas, precise pale blue technical line art, structured overlapping panels, subtle grid or drafting feel, small cyan/red semantic accents only, accurate parts, no playful cartoons, text-free artwork.",
+      "image_prompt": "Golpo Technical blueprint style frame: deep navy engineering notebook canvas, precise pale-blue technical line art, structured overlapping panels, subtle grid or drafting feel, measured system/component diagrams, small cyan/red semantic accents only, accurate parts, generous callout margins, no playful cartoons, no dense legend text, text-free artwork.",
+      "negative_prompt": "photo, realistic, poster, 3d render, painting, complex background, decorative template, topic heading, dense infographic, long paragraph, slide frame, card layout, legend box"
+    },
+    "editorial": {
+      "name": "Editorial",
+      "board_mode": "clean_canvas",
+      "hand_usage": "annotate",
+      "visual_style": "editorial",
+      "render_strategy": "hybrid",
+      "planning_rule": "Editorial explainer: polished off-white canvas, bold black ink, refined accent underlines, magazine-like object collage, paper sheets, product cards, media icons and tasteful red/orange accents. Use for client/investor stories, thought leadership, product narratives and professional marketing.",
+      "image_rule": "polished editorial hand-drawn collage on warm off-white canvas, bold clean black ink, restrained red/orange accents, stacked paper cards and media objects, clear hierarchy, premium presentation, text-free artwork.",
+      "image_prompt": "Golpo Editorial style frame: polished warm off-white canvas, bold clean black ink, restrained red or orange underline accents, stacked paper cards, product/media objects, refined hierarchy, premium magazine explainer composition, no dense infographic, no long readable text, text-free artwork.",
+      "negative_prompt": "dark chalkboard, messy classroom board, childish cartoon, glossy 3d, dense poster, logo, watermark"
+    },
+    "whiteboard": {
+      "name": "Whiteboard",
+      "board_mode": "clean_canvas",
+      "hand_usage": "annotate",
+      "visual_style": "marketing_doodle",
+      "render_strategy": "hybrid",
+      "planning_rule": "Whiteboard explainer: light off-white board, hand-drawn black outlines, blue/green/yellow accents, visible sketch energy, diagram plus short labels, often with a real hand or marker annotations. Use for education, how-to videos, recipes, processes and any topic that needs clear friendly visuals.",
+      "image_rule": "off-white whiteboard canvas, friendly hand-drawn black marker outlines, blue/green/yellow teaching accents, large clear illustrated objects, generous margins for marker callouts, text-free artwork.",
+      "image_prompt": "Golpo Whiteboard style frame: off-white whiteboard canvas, black marker outlines, blue handwritten-style accents, small green/yellow/orange fills where useful, clear educational icon grid or one large tutorial object, clear spacing, friendly hand-drawn teaching energy, generous margins for renderer-added labels, text-free artwork.",
+      "negative_prompt": "dark chalkboard, corporate flat vector, dense infographic, long paragraph, slide frame, card layout, logo, watermark, monochrome-only line art, empty object, colorless food"
+    },
+    "playful": {
+      "name": "Playful",
+      "board_mode": "clean_canvas",
+      "hand_usage": "annotate",
+      "visual_style": "playful",
+      "render_strategy": "hybrid",
+      "planning_rule": "Playful: creamy warm background, colorful crayon-like lettering and icons, smiley marks, music notes, bouncing shapes, soft pastel palette and lighthearted composition. Use for students, social posts, community updates and approachable topics.",
+      "image_rule": "warm cream canvas, playful crayon-like hand-drawn objects, pastel red yellow teal purple accents, expressive simple icons, rounded friendly shapes, cheerful energy, text-free artwork.",
+      "image_prompt": "Golpo Playful style frame: warm cream canvas, colorful crayon-like hand-drawn objects, cheerful pastel red/yellow/teal/purple accents, rounded friendly shapes, smiley marks or small decorative motion marks when useful, approachable student-facing energy, clear big objects and generous blank space, text-free artwork.",
+      "negative_prompt": "corporate flat vector, dark chalkboard, technical blueprint, stern business diagram, dense text, logo, watermark"
+    },
+    "sharpie": {
+      "name": "Sharpie",
+      "board_mode": "clean_canvas",
+      "hand_usage": "trace",
+      "visual_style": "sharpie",
+      "render_strategy": "trace",
+      "planning_rule": "Sharpie: bright white canvas, thick black marker strokes, bold uppercase handwritten titles, raw quick-drawn feel, occasional blue/yellow/red highlighter accents and a visible hand drawing. Use for founder updates, quick explainers, behind-the-scenes and content where real and direct beats polished.",
+      "image_rule": "bright white canvas, thick black Sharpie marker outlines, bold rough hand-drawn icons, sparse strong composition, small blue/yellow/red highlighter accents, raw human sketch feel, text-free artwork.",
+      "image_prompt": "Golpo Sharpie style frame: bright white canvas with thick black Sharpie marker outlines, bold raw quick-drawn icons, strong sparse composition, small blue/yellow/red highlighter accents, authentic human sketch feel, visible marker-callout space, no polished corporate template, no dense infographic, text-free artwork.",
+      "negative_prompt": "thin technical lines, pastel-only soft doodle, glossy 3d, dense poster, long text, logo, watermark"
+    }
+  },
+  "pen_styles": {
+    "no_hand": {
+      "name": "No Hand",
+      "rule": "Do not show a hand. Reveal content through chalk/line drawing animation or direct staged appearances."
+    },
+    "pen": {
+      "name": "Pen Style",
+      "rule": "Use a fine-tipped pen-in-hand feeling: precise elegant thin lines, small details and professional sketch movement."
+    },
+    "fountain_pen": {
+      "name": "Stylus Style",
+      "rule": "Use a modern digital stylus/tablet feeling: smooth controlled strokes, tech-forward clean motion."
+    },
+    "marker": {
+      "name": "Marker Style",
+      "rule": "Use a bold marker-in-hand feeling: thick confident strokes, whiteboard-session energy and strong callouts."
+    }
+  }
+}

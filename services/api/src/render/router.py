@@ -85,6 +85,7 @@ async def get_render_job(job_id: str) -> RenderJobStatus:
                 error=data.get("error"),
                 createdAt=data.get("createdAt"),
                 actualDurationSeconds=data.get("actualDurationSeconds"),
+                qa=data.get("qa"),
             )
     except httpx.ConnectError:
         raise HTTPException(status_code=503, detail="Render server not running")

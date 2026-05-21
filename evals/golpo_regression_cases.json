@@ -1,0 +1,84 @@
+{
+  "cases": [
+    {
+      "topic": "如何制作好吃的麻婆豆腐，要求图文并茂",
+      "style": "whiteboard"
+    },
+    {
+      "topic": "如何制作好吃的麻婆豆腐，要求图文并茂",
+      "style": "editorial"
+    },
+    {
+      "topic": "如何制作好吃的麻婆豆腐，要求图文并茂",
+      "style": "technical_blueprint"
+    },
+    {
+      "topic": "如何制作好吃的麻婆豆腐，要求图文并茂",
+      "style": "sharpie"
+    },
+    {
+      "topic": "高效能人士的七个习惯",
+      "style": "whiteboard"
+    },
+    {
+      "topic": "高效能人士的七个习惯",
+      "style": "editorial"
+    },
+    {
+      "topic": "高效能人士的七个习惯",
+      "style": "technical_blueprint"
+    },
+    {
+      "topic": "高效能人士的七个习惯",
+      "style": "sharpie"
+    },
+    {
+      "topic": "梯度下降原理",
+      "style": "whiteboard"
+    },
+    {
+      "topic": "梯度下降原理",
+      "style": "editorial"
+    },
+    {
+      "topic": "梯度下降原理",
+      "style": "technical_blueprint"
+    },
+    {
+      "topic": "梯度下降原理",
+      "style": "sharpie"
+    },
+    {
+      "topic": "MOSFET 工作原理",
+      "style": "whiteboard"
+    },
+    {
+      "topic": "MOSFET 工作原理",
+      "style": "editorial"
+    },
+    {
+      "topic": "MOSFET 工作原理",
+      "style": "technical_blueprint"
+    },
+    {
+      "topic": "MOSFET 工作原理",
+      "style": "sharpie"
+    },
+    {
+      "topic": "给投资人讲一个 SaaS 产品如何增长",
+      "style": "whiteboard"
+    },
+    {
+      "topic": "给投资人讲一个 SaaS 产品如何增长",
+      "style": "editorial"
+    },
+    {
+      "topic": "给投资人讲一个 SaaS 产品如何增长",
+      "style": "technical_blueprint"
+    },
+    {
+      "topic": "给投资人讲一个 SaaS 产品如何增长",
+      "style": "sharpie"
+    }
+  ]
+}

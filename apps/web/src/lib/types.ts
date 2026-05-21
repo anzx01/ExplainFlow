@@ -120,6 +120,8 @@ export interface Scene {
   image_description?: string | null;
   image_url?: string | null;
   imageUrl?: string | null;
+  imageDescription?: string | null;
+  reference_image_base64?: string | null;
   audioUrl?: string | null;
   learning_goal?: string | null;
   visual_beats?: VisualBeat[];
@@ -133,6 +135,7 @@ export interface Scene {
   visual_style?: string | null;
   pen_style?: PenStyleId | string | null;
   penStyle?: PenStyleId | string | null;
+  qa_fix_hint?: string | null;
 }
 
 export interface Storyboard {
@@ -144,14 +147,34 @@ export interface Storyboard {
 }
 
 // ── Render Jobs ─────────────────────────────────────────────────
+export interface RenderQaCheck {
+  id: string;
+  ok: boolean;
+  severity: "info" | "warning" | "error" | string;
+  message: string;
+  details?: Record<string, unknown> | null;
+  suggestion?: string | null;
+}
+
+export interface RenderQaResult {
+  ok: boolean;
+  checkedAt?: string | null;
+  durationSeconds?: number | null;
+  hasAudio?: boolean | null;
+  fileSizeBytes?: number | null;
+  checks: RenderQaCheck[];
+  suggestions?: string[];
+}
+
 export interface RenderJobSummary {
   id: string;
   status: "processing" | "done" | "failed";
   progress: number;
-  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
+  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "qa" | "done" | "failed" | null;
   topic: string | null;
   createdAt: string | null;
   actualDurationSeconds?: number | null;
+  qa?: RenderQaResult | null;
   error: string | null;
 }
 
@@ -159,11 +182,12 @@ export interface RenderJobStatus {
   job_id: string;
   status: "processing" | "done" | "failed";
   progress: number;
-  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "done" | null;
+  phase?: "queued" | "tts" | "imagegen" | "codegen" | "bundling" | "rendering" | "qa" | "done" | "failed" | null;
   video_url?: string | null;
   error?: string | null;
   createdAt?: string | null;
   actualDurationSeconds?: number | null;
+  qa?: RenderQaResult | null;
 }
 
 export interface BackgroundMusicTrack {

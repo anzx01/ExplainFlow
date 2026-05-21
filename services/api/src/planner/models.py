@@ -90,7 +90,7 @@ class Storyboard(BaseModel):
 class GenerateStoryboardRequest(BaseModel):
     graph: ExplainGraph
     target_duration: int = Field(default=120, ge=60, le=180)
-    video_style: str = "auto"
+    video_style: str = "whiteboard"
     pen_style: str = "marker"
 
 
