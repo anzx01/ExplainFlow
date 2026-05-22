@@ -92,10 +92,16 @@ Python Pydantic 模型在各模块 `models.py`，与上述类型对应。`Scene`
 **`apps/web/.env.local`（从 `.env.local.example` 复制）：**
 - `NEXT_PUBLIC_API_URL` — 默认 `http://localhost:8000`
 
+**`apps/render/.env`（从 `.env.example` 复制，可选）：**
+- `REMOTION_BROWSER_EXECUTABLE` / `REMOTION_CHROME_HEADLESS_SHELL` — 可选，手动指定 Chrome/Chromium；留空时自动探测 Playwright、Chrome、Chromium 或 Edge
+- `EXPLAINFLOW_OUTPUT_DIR` / `EXPLAINFLOW_MUSIC_DIR` — 可选，覆盖输出和音乐目录，相对路径按仓库根目录解析
+- `EXPLAINFLOW_GLYPH_FONT` / `EXPLAINFLOW_GLYPH_FONTS` — 可选，覆盖字体；默认自动探测常见 Windows/macOS/Linux 字体
+- `FFMPEG_PATH` / `FFPROBE_PATH` — 可选，手动指定 ffmpeg/ffprobe
+
 ## 渲染服务器关键细节
 
 - Remotion bundle 的静态文件服务默认从端口 **3100** 开始寻找可用端口（通过 `REMOTION_STATIC_PORT` 环境变量配置），避免与 Next.js 3000 和主服务 3001 冲突，通过 `RenderInternals.serveStatic()` 显式指定
-- Playwright Chrome 路径硬编码在 `server.mjs` 和 `scripts/dev-render.sh` 中（`C:/Users/DELL/AppData/...`），换机器需修改
+- 浏览器路径不硬编码：渲染服务会按环境变量、Playwright 缓存、系统 Chrome/Chromium/Edge 和 PATH 自动探测；若失败，可在 `apps/render/.env` 设置 `REMOTION_BROWSER_EXECUTABLE`
 - 作业状态持久化到 `outputs/jobs.json`，服务器重启时 `processing` 状态的作业自动置为 `failed`
 - 视频输出到 `outputs/{topic}_{jobId8}.mp4`，TTS 音频临时文件在 `outputs/audio/`
 

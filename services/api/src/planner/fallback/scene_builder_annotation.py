@@ -31,6 +31,7 @@ def annotation_items(self, limit: int = 5) -> list[tuple[str, str, str | None]]:
     return items
 
 def draw_check_mark(
+    self,
     cx: float,
     cy: float,
     color: str,
@@ -55,6 +56,7 @@ def draw_check_mark(
     return start + frames + 3
 
 def draw_cross_mark(
+    self,
     cx: float,
     cy: float,
     color: str,
@@ -84,6 +86,7 @@ def draw_cross_mark(
     return start + frames + 3
 
 def draw_wavy_underline(
+    self,
     x: float,
     y: float,
     w: float,
@@ -104,6 +107,7 @@ def draw_wavy_underline(
     return start + frames + 3
 
 def draw_risk_rays(
+    self,
     x: float,
     y: float,
     color: str,
@@ -149,6 +153,7 @@ def semantic_annotation_color(self, annotation_type: str, label: str, default: s
     return default
 
 def add_step_badge(
+    self,
     label: str,
     cx: float,
     cy: float,
@@ -161,6 +166,7 @@ def add_step_badge(
     return start + 17
 
 def add_teacher_takeaway(
+    self,
     label: str,
     x: float,
     y: float,

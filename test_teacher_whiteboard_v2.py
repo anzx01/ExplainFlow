@@ -1,4 +1,5 @@
 import urllib.request, json, time
+from pathlib import Path
 API_BASE = 'http://localhost:8000'
 RENDER_BASE = 'http://localhost:8000'
 
@@ -57,7 +58,8 @@ for i in range(120):
             req5 = urllib.request.Request(video_url)
             with urllib.request.urlopen(req5, timeout=60) as r:
                 video_data = r.read()
-            output_path = r'D:\aiapp\ExplainFlow\outputs\teacher_whiteboard_v2.mp4'
+            output_path = Path(__file__).resolve().parent / 'outputs' / 'teacher_whiteboard_v2.mp4'
+            output_path.parent.mkdir(parents=True, exist_ok=True)
             with open(output_path, 'wb') as f:
                 f.write(video_data)
             import os

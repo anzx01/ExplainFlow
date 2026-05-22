@@ -1,6 +1,6 @@
 import math
 from .scene_builder_base import FallbackSceneBuilder
-from .geometry import _point, _line_points, _curve_points, _rect_points, _circle_points
+from .geometry import _point, _line_points, _curve_points, _rect_points, _circle_points, _arc_points
 from ..coverage.corpus import _scene_corpus
 from .scene_info import _contains_any
 from .scene_diagram import _visual_relation_kind_for_scene

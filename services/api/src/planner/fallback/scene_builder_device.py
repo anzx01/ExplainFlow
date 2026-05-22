@@ -13,9 +13,9 @@ def build_chalkboard_derivation(self, start: int) -> int:
     line_gap = self.height * 0.087
     chalk_size = max(30, int(self.body_size * 1.05))
     lines: list[str] = []
-    if scene.diagram_plan and scene.diagram_plan.required_labels:
-        lines.extend(scene.diagram_plan.required_labels[:5])
-    for animation in scene.animations:
+    if self.scene.diagram_plan and self.scene.diagram_plan.required_labels:
+        lines.extend(self.scene.diagram_plan.required_labels[:5])
+    for animation in self.scene.animations:
         raw_type = getattr(animation.type, "value", str(animation.type))
         if raw_type in {"write_formula", "formula_reveal"} and (animation.latex or animation.content):
             lines.append(animation.latex or animation.content)
@@ -30,10 +30,10 @@ def build_chalkboard_derivation(self, start: int) -> int:
             pieces = re.split(r"[。；;,.，、]", beat.draw_intent)
             lines.extend(piece for piece in pieces[:2] if piece.strip())
     if not lines:
-        lines = re.split(r"[。；;]", scene.narration)[:6]
+        lines = re.split(r"[。；;]", self.scene.narration)[:6]
     lines = [_short_text(line, 34) for line in lines if _short_text(line, 34)]
     if not lines:
-        lines = [_short_text(scene.title, 24), "Known", "Derive", "Conclusion"]
+        lines = [_short_text(self.scene.title, 24), "Known", "Derive", "Conclusion"]
     color_cycle = [self.ink, self.blue, self.green, self.yellow, self.red]
     cursor = max(cursor, 12)
     for index, line in enumerate(lines[:7]):

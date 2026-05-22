@@ -1,30 +1,39 @@
 #!/usr/bin/env bash
-# 初始化项目依赖（首次运行）
+# First-time project setup.
 set -euo pipefail
 
-ROOT="$(dirname "$0")/.."
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-echo "[1/4] 配置环境变量..."
+echo "[1/5] Creating local env files..."
 if [ ! -f "$ROOT/services/api/.env" ]; then
   cp "$ROOT/services/api/.env.example" "$ROOT/services/api/.env"
-  echo "  已创建 services/api/.env，请填写 OPENAI_API_KEY"
+  echo "  created services/api/.env; fill OPENAI_API_KEY before using LLM features"
 fi
 if [ ! -f "$ROOT/apps/web/.env.local" ]; then
   cp "$ROOT/apps/web/.env.local.example" "$ROOT/apps/web/.env.local"
-  echo "  已创建 apps/web/.env.local"
+  echo "  created apps/web/.env.local"
+fi
+if [ ! -f "$ROOT/apps/render/.env" ]; then
+  cp "$ROOT/apps/render/.env.example" "$ROOT/apps/render/.env"
+  echo "  created apps/render/.env; browser path can stay empty for auto discovery"
 fi
 
-echo "[2/4] 安装 Python 依赖..."
+echo "[2/5] Installing Python dependencies..."
 cd "$ROOT/services/api"
 uv sync
 
-echo "[3/4] 安装 Web 前端依赖..."
+echo "[3/5] Installing web dependencies..."
 cd "$ROOT/apps/web"
 npm install
 
-echo "[4/4] 创建日志目录..."
-mkdir -p "$ROOT/logs"
+echo "[4/5] Installing render dependencies..."
+cd "$ROOT/apps/render"
+npm install
+
+echo "[5/5] Creating runtime directories..."
+mkdir -p "$ROOT/logs" "$ROOT/outputs"
 
 echo ""
-echo "✓ 初始化完成！请编辑 services/api/.env，填写你的 DeepSeek API Key"
-echo "  然后运行 bash scripts/dev-api.sh 和 bash scripts/dev-web.sh"
+echo "Setup complete."
+echo "Next: edit services/api/.env, then run scripts/dev-api.sh, scripts/dev-web.sh, and scripts/dev-render.sh."

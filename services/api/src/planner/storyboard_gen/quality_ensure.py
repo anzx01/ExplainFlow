@@ -12,13 +12,20 @@ from .normalizer import (
     ACTIVE_VIDEO_STYLE,
     ACTIVE_PEN_STYLE,
 )
-from ..coverage.corpus import _scene_corpus, _storyboard_scene_corpus, _graph_source_corpus, _storyboard_corpus, _contains_terms
+from ..coverage.corpus import _scene_corpus, _storyboard_scene_corpus, _graph_source_corpus, _storyboard_corpus, _contains_terms, _graph_enhanced_brief
 from ..coverage.appender import _append_missing_coverage_scenes, _sanitize_storyboard_narration
 from ..coverage.generic_specs import _generic_relation_story_specs
 from ..coverage.appender import _replace_with_specs
+from ..fallback.scene_info import _cooking_prompt_suffix
 from .timing import _estimate_scene_duration, _narration_from_beats
 from .style_apply import _apply_video_style_to_scene, _apply_pen_style_to_scene
-from .quality import _ensure_core_teaching_fields
+from .quality import (
+    _append_image_description_rule,
+    _ensure_core_teaching_fields,
+    _is_direct_reference_scene,
+    _is_simple_trace_scene,
+    _scene_required_label_count,
+)
 
 def _best_scene_for_direct_reference(scenes: list[Scene]) -> Scene | None:
     candidates = [

@@ -4,13 +4,14 @@ from .scene_builder_base import FallbackSceneBuilder
 from .geometry import _point, _line_points, _curve_points, _rect_points, _circle_points, _arc_points, _short_text
 from .scene_info import _contains_any
 from ..coverage.corpus import _scene_corpus
+from ..storyboard_gen.normalizer import _looks_like_mojibake
 
 
 def build_teaching_board(self, start: int) -> int:
     cursor = start
     labels = self.core_lines[:]
-    if scene.diagram_plan and scene.diagram_plan.required_labels:
-        labels = [_short_text(label, 18) for label in scene.diagram_plan.required_labels if _short_text(label, 18)]
+    if self.scene.diagram_plan and self.scene.diagram_plan.required_labels:
+        labels = [_short_text(label, 18) for label in self.scene.diagram_plan.required_labels if _short_text(label, 18)]
     for beat in getattr(self.scene, "visual_beats", []) or []:
         for label in beat.required_labels or []:
             short = _short_text(label, 18)
@@ -19,7 +20,7 @@ def build_teaching_board(self, start: int) -> int:
         if len(labels) >= 6:
             break
     if not labels:
-        labels = [_short_text(scene.title, 18), "原因", "过程", "结果"]
+        labels = [_short_text(self.scene.title, 18), "原因", "过程", "结果"]
     labels = labels[:6]
     corpus = _scene_corpus(self.scene)
 

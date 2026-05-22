@@ -3,6 +3,7 @@ import re
 from ..models import Scene
 from ..storyboard_gen.normalizer import _clean_text
 from .scene_info import _scene_corpus, _contains_any, _animation_type_values
+from .geometry import _short_text
 
 
 def _visual_relation_kind_for_scene(scene: Scene) -> str | None:

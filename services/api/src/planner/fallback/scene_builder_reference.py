@@ -31,7 +31,22 @@ def build_reference_trace(self, start: int) -> int:
         if cursor > self.duration * 0.66:
             break
     if drawn == 0:
-        return builders.get(self.diagram_kind, self.build_process_flow)(start)
+        fallback_builders = {
+            "comparison_transform": self.build_comparison_transform,
+            "formula_derivation": self.build_formula_derivation,
+            "chalkboard_derivation": self.build_chalkboard_derivation,
+            "optimization_curve": self.build_optimization_curve,
+            "attention_network": self.build_attention_network,
+            "matrix_transform": self.build_matrix_transform,
+            "priority_matrix": self.build_priority_matrix,
+            "feedback_loop": self.build_feedback_loop,
+            "interaction_scenario": self.build_interaction_scenario,
+            "goal_path": self.build_goal_path,
+            "overview_map": self.build_overview_map,
+            "teaching_board": self.build_teaching_board,
+            "semiconductor_device": self.build_semiconductor_device,
+        }
+        return fallback_builders.get(self.diagram_kind, self.build_process_flow)(start)
 
     label = self.fallback_label(0, "Reference sketch")
     arrow_start = min(cursor, self.duration - 64)

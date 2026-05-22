@@ -9,7 +9,7 @@ from ..models import (
     AnimationType,
     DiagramPlan,
 )
-from .analyzer import _diagram_kind_for_coverage_unit
+from .analyzer import _coverage_unit_label, _diagram_kind_for_coverage_unit
 from ..storyboard_gen.normalizer import (
     _clean_text,
     _clean_narration_text,

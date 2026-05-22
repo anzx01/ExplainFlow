@@ -2,7 +2,7 @@
  * tts.mjs — TTS 合成、场景节拍规划、音频注入
  * 依赖: config.mjs, utils.mjs, tts-core.mjs
  */
-import { existsSync, statSync, unlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, statSync, unlinkSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { createHash } from "crypto";
 import {
@@ -39,9 +39,14 @@ export {
 // TTS 合成（场景级，带缓存与去重）
 // ---------------------------------------------------------------------------
 
+function ensureAudioDir() {
+  mkdirSync(AUDIO_DIR, { recursive: true });
+}
+
 export async function synthesizeScene(sceneId, text, voice) {
   const narration = String(text ?? "").trim();
   if (!narration) return null;
+  ensureAudioDir();
   const filename = ttsCacheFilename(narration, voice);
   const outPath = join(AUDIO_DIR, filename);
   const audioUrl = `http://localhost:${PORT}/audio/${filename}`;
@@ -122,6 +127,7 @@ export async function persistSceneAudioDataUrl(scene, sceneIndex) {
   const audioUrl = String(scene?.audioUrl ?? scene?.audio_url ?? "").trim();
   const base64 = normalizeBase64DataUrl(audioUrl, "data:audio/");
   if (!base64) return null;
+  ensureAudioDir();
   const sceneId = safeAssetSegment(scene?.id || `scene_${sceneIndex}`, "scene");
   const hash = createHash("sha1").update(base64).digest("hex").slice(0, 16);
   const outPath = join(AUDIO_DIR, `scene_${sceneId}_${hash}.mp3`);

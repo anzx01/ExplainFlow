@@ -3,7 +3,7 @@
  * 依赖: config.mjs, jobs.mjs
  */
 import http from "http";
-import { resolve } from "path";
+import { isAbsolute, relative, resolve, sep } from "path";
 import {
   ACTIVE_PEN_STYLE,
   ACTIVE_VIDEO_STYLE,
@@ -262,7 +262,6 @@ export function safeAssetSegment(value, fallback) {
 }
 
 export function isInside(child, parent) {
-  const resolvedChild = resolve(child);
-  const resolvedParent = resolve(parent);
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(resolvedParent + "\\");
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!!rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }

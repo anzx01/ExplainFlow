@@ -4,7 +4,7 @@
  */
 import { createServer as createNetServer } from "net";
 import { existsSync, rmSync, unlinkSync } from "fs";
-import { join, resolve } from "path";
+import { isAbsolute, join, relative, resolve, sep } from "path";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition, RenderInternals } from "@remotion/renderer";
 import {
@@ -33,9 +33,8 @@ export { runRenderQa } from "./render-qa.mjs";
 // ---------------------------------------------------------------------------
 
 export function isInside(child, parent) {
-  const resolvedChild = resolve(child);
-  const resolvedParent = resolve(parent);
-  return resolvedChild === resolvedParent || resolvedChild.startsWith(resolvedParent + "\\");
+  const rel = relative(resolve(parent), resolve(child));
+  return rel === "" || (!!rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
 export function removeGeneratedDir(dir) {

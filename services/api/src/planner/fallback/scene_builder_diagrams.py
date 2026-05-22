@@ -38,7 +38,7 @@ def build_comparison_transform(self, start: int) -> int:
 
 def build_formula_derivation(self, start: int) -> int:
     formulas = []
-    for animation in scene.animations:
+    for animation in self.scene.animations:
         raw_type = getattr(animation.type, "value", str(animation.type))
         if raw_type in {"write_formula", "formula_reveal"} and (animation.latex or animation.content):
             formulas.append(animation.latex or animation.content)
@@ -268,7 +268,7 @@ def build_goal_path(self, start: int) -> int:
 
 def build_overview_map(self, start: int) -> int:
     cursor = start
-    labels = self.steps or self.core_lines or [_short_text(scene.title, 18), "现象", "机制", "结果", "总结"]
+    labels = self.steps or self.core_lines or [_short_text(self.scene.title, 18), "现象", "机制", "结果", "总结"]
     labels = labels[:5]
     cx = self.board_center_x
     cy = self.diagram_top + self.height * 0.24

@@ -3,7 +3,8 @@ import re
 
 from src.explain.models import ExplainGraph
 from ..models import Scene, Storyboard, DiagramPlan
-from .corpus import _storyboard_scene_corpus, _graph_source_corpus, _scene_corpus
+from .corpus import _storyboard_scene_corpus, _graph_source_corpus, _scene_corpus, _graph_enhanced_brief
+from ..storyboard_gen.normalizer import _clean_text, _planner_str_list
 
 def _brief_coverage_units(graph: ExplainGraph) -> list[dict]:
     brief = _graph_enhanced_brief(graph) or {}

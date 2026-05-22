@@ -3,6 +3,7 @@ from ..models import Scene, Storyboard
 from .analyzer import _missing_coverage_units, _brief_coverage_units
 from .specs import _coverage_scene_spec, _scene_from_spec
 from .corpus import _storyboard_scene_corpus
+from ..storyboard_gen.scene_mgmt import _protected_coverage_scenes, _replaceable_scene_index
 from ..storyboard_gen.normalizer import _clean_text, _normalize_image_description_text, _clean_narration_text
 from ..storyboard_gen.timing import _max_scene_count_for_target, _narration_from_beats
 
