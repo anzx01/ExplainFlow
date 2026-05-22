@@ -74,16 +74,12 @@ export async function generateSceneImage(storyboard: Storyboard, scene: Scene): 
         scene_id: sceneId,
         topic: storyboard.topic,
         title: scene.title,
-        image_description:
-          scene.image_description ||
-          scene.imageDescription ||
-          scene.learning_goal ||
-          scene.title,
+        image_description: scene.image_description || scene.learning_goal || scene.title,
         board_mode: scene.board_mode || "clean_canvas",
         hand_usage: scene.hand_usage || "annotate",
-        video_style: scene.video_style || scene.videoStyle || storyboard.video_style || "whiteboard",
+        video_style: scene.video_style || storyboard.video_style || "whiteboard",
         visual_style: scene.visual_style || "teacher_whiteboard",
-        pen_style: scene.pen_style || scene.penStyle || storyboard.pen_style || "marker",
+        pen_style: scene.pen_style || storyboard.pen_style || "marker",
       },
     ],
   });

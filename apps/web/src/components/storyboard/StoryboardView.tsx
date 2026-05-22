@@ -75,11 +75,11 @@ function SceneCard({
           <p className="text-sm font-medium text-[--fg-default] truncate">{scene.title}</p>
           <p className="text-xs text-[--fg-muted] mt-0.5 font-mono">
             {scene.duration_estimate}s
-            {scene.video_style || scene.videoStyle
-              ? ` · ${videoStyleLabel(scene.video_style ?? scene.videoStyle)}`
+            {scene.video_style
+              ? ` · ${videoStyleLabel(scene.video_style)}`
               : ""}
-            {scene.pen_style || scene.penStyle
-              ? ` · ${penStyleLabel(scene.pen_style ?? scene.penStyle)}`
+            {scene.pen_style
+              ? ` · ${penStyleLabel(scene.pen_style)}`
               : ""}
             {scene.visual_style ? ` · ${STYLE_LABELS[scene.visual_style] ?? scene.visual_style}` : ""}
           </p>
@@ -112,14 +112,14 @@ function SceneEditor({
           场景标题
         </h3>
         <p className="text-sm font-medium text-[--fg-default]">{scene.title}</p>
-        {(scene.board_mode || scene.hand_usage || scene.video_style || scene.videoStyle || scene.visual_style || scene.pen_style || scene.penStyle) && (
+        {(scene.board_mode || scene.hand_usage || scene.video_style || scene.visual_style || scene.pen_style) && (
           <p className="mt-2 text-xs text-[--fg-muted] font-mono">
             {[
               scene.board_mode,
               scene.hand_usage,
-              scene.video_style ?? scene.videoStyle,
+              scene.video_style,
               scene.visual_style,
-              scene.pen_style ?? scene.penStyle,
+              scene.pen_style,
             ]
               .filter(Boolean)
               .join(" · ")}
@@ -161,13 +161,13 @@ function SceneEditor({
         </div>
       </div>
 
-      {(scene.image_url || scene.imageUrl) && (
+      {scene.image_url && (
         <div>
           <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
             图片预览
           </h3>
           <img
-            src={scene.image_url ?? scene.imageUrl ?? ""}
+            src={scene.image_url}
             alt=""
             className="w-full aspect-video object-contain rounded-lg bg-[--bg-base] border border-[--border-default]"
           />

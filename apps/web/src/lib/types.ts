@@ -140,8 +140,6 @@ export interface Scene {
   node_ids: string[];
   image_description?: string | null;
   image_url?: string | null;
-  imageUrl?: string | null;
-  imageDescription?: string | null;
   reference_image_base64?: string | null;
   audioUrl?: string | null;
   learning_goal?: string | null;
@@ -156,10 +154,8 @@ export interface Scene {
   board_mode?: string | null;
   hand_usage?: string | null;
   video_style?: VideoStyleId | string | null;
-  videoStyle?: VideoStyleId | string | null;
   visual_style?: string | null;
   pen_style?: PenStyleId | string | null;
-  penStyle?: PenStyleId | string | null;
   qa_fix_hint?: string | null;
 }
 

@@ -7,7 +7,8 @@ from .models import (
     GenerateStoryboardRequest,
     GenerateStoryboardResponse,
 )
-from .service import generate_remotion_code, generate_storyboard
+from .storyboard_gen.builder import generate_storyboard
+from .remotion_codegen.compiler import generate_remotion_code
 
 router = APIRouter(prefix="/planner", tags=["planner"])
 

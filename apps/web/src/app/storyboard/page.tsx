@@ -321,7 +321,6 @@ export default function StoryboardPage() {
             ? {
                 ...item,
                 image_url: imageUrl,
-                imageUrl,
                 reference_image_base64: imageUrl,
                 render_strategy: item.render_strategy || "hybrid",
                 hand_usage: item.hand_usage || "annotate",
