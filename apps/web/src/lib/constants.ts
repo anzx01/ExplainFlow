@@ -8,7 +8,13 @@ export interface VideoStyleOption {
   fit: string;
   swatch: string;
   tone: string;
+  available: boolean;
+  unavailableReason?: string;
 }
+
+export const ACTIVE_VIDEO_STYLE_ID: VideoStyleId = "whiteboard";
+export const ACTIVE_PEN_STYLE_ID: PenStyleId = "marker";
+const DISABLED_STYLE_REASON = "暂不可用";
 
 export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
   {
@@ -17,6 +23,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "黑白粉笔、概念",
     swatch: "bg-zinc-200",
     tone: "黑板黑白",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "chalkboard_color",
@@ -24,6 +32,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "彩色粉笔、故事",
     swatch: "bg-yellow-300",
     tone: "黑板彩色",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "modern_minimal",
@@ -31,6 +41,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "商务、课程摘要",
     swatch: "bg-sky-400",
     tone: "现代极简",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "technical_blueprint",
@@ -38,6 +50,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "结构、工程、器件",
     swatch: "bg-blue-500",
     tone: "技术蓝图",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "editorial",
@@ -45,6 +59,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "商业、品牌、观点",
     swatch: "bg-orange-500",
     tone: "编辑叙事",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "whiteboard",
@@ -52,6 +68,7 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "图文并茂、教程",
     swatch: "bg-emerald-400",
     tone: "白板手绘",
+    available: true,
   },
   {
     id: "playful",
@@ -59,6 +76,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "儿童、轻松、类比",
     swatch: "bg-pink-400",
     tone: "彩色趣味",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "sharpie",
@@ -66,6 +85,8 @@ export const VIDEO_STYLE_OPTIONS: VideoStyleOption[] = [
     fit: "醒目标注、营销",
     swatch: "bg-cyan-400",
     tone: "Sharpie 手绘",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
 ];
 
@@ -73,6 +94,8 @@ export interface PenStyleOption {
   id: PenStyleId;
   label: string;
   fit: string;
+  available: boolean;
+  unavailableReason?: string;
 }
 
 export const PEN_STYLE_OPTIONS: PenStyleOption[] = [
@@ -80,21 +103,28 @@ export const PEN_STYLE_OPTIONS: PenStyleOption[] = [
     id: "marker",
     label: "Marker",
     fit: "粗线、强调、白板",
+    available: true,
   },
   {
     id: "pen",
     label: "Pen Style",
     fit: "细线、草图、说明",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "fountain_pen",
     label: "Stylus",
     fit: "书写、纸面、编辑",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
   {
     id: "no_hand",
     label: "No Hand",
     fit: "黑板/极简显现",
+    available: false,
+    unavailableReason: DISABLED_STYLE_REASON,
   },
 ];
 

@@ -53,6 +53,16 @@ class DiagramPlan(BaseModel):
     required_labels: list[str] = Field(default_factory=list)
 
 
+class AnnotationPlanItem(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    type: str
+    label: str
+    target: str
+    beat_id: str = "beat_0"
+    layer: str = "renderer"
+
+
 class Scene(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -68,6 +78,10 @@ class Scene(BaseModel):
     learning_goal: str | None = None
     visual_beats: list[VisualBeat] = Field(default_factory=list)
     diagram_plan: DiagramPlan | None = None
+    visual_mode: str | None = None
+    teaching_density: str | None = None
+    visual_anchor: str | None = None
+    annotation_plan: list[AnnotationPlanItem] = Field(default_factory=list)
     render_strategy: str | None = None
     visual_complexity: str | None = None
     board_mode: str | None = None

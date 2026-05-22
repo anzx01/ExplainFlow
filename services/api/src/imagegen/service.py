@@ -8,7 +8,12 @@ import httpx
 
 from src.core.config import settings
 from src.core.golpo_styles import golpo_video_style_aliases, golpo_video_style_presets
-from src.core.visual_prompts import BOLD_EDITORIAL_IMAGE_NEGATIVE, BOLD_EDITORIAL_IMAGE_STYLE
+from src.core.visual_prompts import (
+    BOLD_EDITORIAL_IMAGE_NEGATIVE,
+    BOLD_EDITORIAL_IMAGE_STYLE,
+    visual_teaching_rules,
+    visual_teaching_rules_prompt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +24,16 @@ _STYLE_SUFFIX = (
     "place the main illustration in the middle or slightly right of center, using about 55-75 percent of the frame width, "
     "leave broad clean margins around the drawing for a hand to write callouts later, "
     "hand-drawn marker and crayon doodle style with solid readable strokes, not just thin black line art, "
-    "include 3-6 meaningful illustrated parts such as people, signs, clocks, routes, scales, gears, cards, arrows, badges, containers, food, cookware, or maps when they clarify the concept, "
+    "include 3-6 meaningful illustrated subject parts such as people, signs, clocks, routes, scales, gears, cards, process paths, badges, containers, food, cookware, or maps when they clarify the concept, "
     "do not add a title, topic heading, scene name, readable labels, logo, watermark, paragraph text, legend box, slide frame, or poster layout inside the image, "
     "the scene title and topic are only context for the artist; never render them as words inside the image, "
-    "draw the specific mechanism described with broad process arrows, state comparison groups, local zoom-in details, and concrete metaphor objects when requested, "
+    "draw the specific mechanism described with integral process paths, state comparison groups, and concrete metaphor objects when requested; do not add annotation overlays inside the generated image, "
+    "never bake teacher annotation marks into the image: no titles, callout arrows, pointing arrows, warning marks, starbursts, underlines, circles, boxes, brackets, edge ticks, or later-addition marks unless they are real physical parts of the subject, "
     "for very complex objects, show the finished colorful doodle/reference illustration cleanly and leave room around it for hand-drawn callouts added later, "
+    "even when the subject is a direct complex reference image, keep it in the same hand-drawn marker/crayon whiteboard style as simple traced diagrams, never as a photo, screenshot, glossy render, or stock vector, "
+    "reserve clean margins for varied renderer-added annotations such as arrows, wavy underlines, brackets, edge ticks, starbursts, circles, and local zoom callouts, "
+    "do not draw empty callout boxes, empty circles, speech bubbles, label plaques, blank legend boxes, placeholder containers, or standalone annotation marks; leave open whitespace instead, "
+    "every visible box, circle, bracket, arrow, or badge in the generated image must be an actual subject component with obvious purpose, not a later-label placeholder, "
     "show the final board drawing as if it has just been sketched by a skilled visual teacher: slightly irregular marker lines, simple expressive objects, lively but readable composition, "
     "avoid generic placeholder shapes, decorative templates, glossy 3D, photorealism, monochrome-only diagrams, and dense infographic layouts"
 )
@@ -31,7 +41,7 @@ _STYLE_SUFFIX = (
 _NEGATIVE = (
     "photo, realistic, poster, 3d render, painting, complex background, decorative template, "
     f"{BOLD_EDITORIAL_IMAGE_NEGATIVE}, "
-    "topic heading, dense infographic, long paragraph, slide frame, card layout, legend box"
+    "topic heading, dense infographic, long paragraph, slide frame, card layout, legend box, empty label boxes, empty circles, placeholder callouts, baked callout arrows, pointing arrows, standalone warning marks"
 )
 
 _COOKING_TERMS = (
@@ -96,6 +106,8 @@ _OVERVIEW_TERMS = ("overview", "map", "流程图", "步骤流程", "风味地图
 
 _VIDEO_STYLE_ALIASES = golpo_video_style_aliases()
 _VIDEO_STYLE_PRESETS = golpo_video_style_presets(include_aliases=False)
+_TEACHING_RULES = visual_teaching_rules()
+_ACTIVE_VIDEO_STYLE = str(_TEACHING_RULES.get("active_style") or "whiteboard")
 
 
 @dataclass
@@ -114,23 +126,34 @@ class SceneImageRequest:
 def _canonical_video_style(value: str | None) -> str:
     style = str(value or "").strip().lower()
     style = _VIDEO_STYLE_ALIASES.get(style, style)
+    if style != _ACTIVE_VIDEO_STYLE:
+        return _ACTIVE_VIDEO_STYLE if _ACTIVE_VIDEO_STYLE in _VIDEO_STYLE_PRESETS else "whiteboard"
     return style if style in _VIDEO_STYLE_PRESETS else "whiteboard"
 
 
 def _normalize_image_description(value: str | None) -> str:
     text = str(value or "").strip()
     replacements = [
-        (r"\b(left|right|top|bottom|center)\s+panel\s+labeled\s+[^,.;。]+", r"\1 panel with a blank label space"),
+        (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title\s+['\"][^.;]*['\"]?[^.;]*", "open top margin for renderer-added title"),
+        (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title[^.;]*", "open top margin for renderer-added title"),
+        (r"\blater additions?\s*[:：-]?\s*[^.;]*(?:arrow|circle|callout|highlight|label|title|star|warning|underline|tick)[^.;]*", "open whitespace for renderer-drawn annotations"),
+        (r"\b(?:thick|large|bold|curved|straight|wavy|short|long)\s+(?:red|blue|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?arrows?\s+(?:from|to|pointing|points|highlight|callout|toward|towards)[^.;]*", "open whitespace for renderer-drawn arrows"),
+        (r"\b(?:red|blue|green|yellow|pink|coral[-\s]?pink)\s+(?:hand[-\s]?drawn\s+)?arrows?\s+(?:from|to|pointing|points|highlight|callout|toward|towards)[^.;]*", "open whitespace for renderer-drawn arrows"),
+        (r"\b(?:red|blue|green|yellow|pink|coral[-\s]?pink)\s+(?:hand[-\s]?drawn\s+)?(?:arrow|arrows|underline|underlines|tick|ticks|starburst|starbursts|star|stars|warning mark|warning marks)[^.;]*", "open whitespace for renderer-drawn annotations"),
+        (r"\b(left|right|top|bottom|center)\s+panel\s+labeled\s+[^,.;。]+", r"\1 panel with open whitespace nearby"),
+        (r"\b(?:\w+\s+)?(?:red|blue|green|yellow|pink)\s+(?:hand[-\s]?drawn\s+)?circles?\s+and\s+arrows?\s+highlight[^.;。]*", "open whitespace for renderer-drawn risk callouts"),
+        (r"\b(?:red|blue|green|yellow|pink)\s+(?:hand[-\s]?drawn\s+)?circles?\s+(?:circle|around|near|highlight|mark)[^.;。]*", "open whitespace for renderer-drawn circle callouts"),
+        (r"\b(?:draw|show|add)\s+(?:a\s+)?(?:red|blue|green|yellow|pink)\s+(?:lightning bolt|exclamation mark|warning icon|walkie-talkie icon|train icon|broken line|cross mark)[^.;。]*", "leave that risk marker for the renderer to draw later"),
         (r"\blabeled\s+", ""),
-        (r"\blabel(?:s|ed)?\s+[^.;。]*", "blank callout spaces"),
-        (r"\bwith\s+(?:exact\s+)?labels?\s+(?:for|showing|on|such as|including)\b", "with blank callout spaces for"),
-        (r"\blabels?\s*[:：][^.;。]*", "blank callout spaces"),
+        (r"\blabel(?:s|ed)?\s+[^.;。]*", "open whitespace for later callouts"),
+        (r"\bwith\s+(?:exact\s+)?labels?\s+(?:for|showing|on|such as|including)\b", "with open whitespace for"),
+        (r"\blabels?\s*[:：][^.;。]*", "open whitespace for later callouts"),
         (r"\blabeled\b", "unlabeled"),
-        (r"\bshort\s+(?:nearby\s+|handwritten\s+|blue\s+)?labels?\b", "blank nearby callout spaces"),
-        (r"\breadable\s+(?:title|text|label|labels|words?)\b", "blank callout space"),
-        (r"\bshort\s+(?:blue\s+)?handwritten\s+title\b", "blank title area"),
-        (r"\btopic heading\b", "blank heading area"),
-        (r"\bcaption(?:s)?\b", "blank callout area"),
+        (r"\bshort\s+(?:nearby\s+|handwritten\s+|blue\s+)?labels?\b", "open nearby whitespace"),
+        (r"(?<!no )\breadable\s+(?:title|text|label|labels|words?)\b", "open whitespace"),
+        (r"\bshort\s+(?:blue\s+)?handwritten\s+title\b", "open top margin"),
+        (r"\btopic heading\b", "open top margin"),
+        (r"\bcaption(?:s)?\b", "open margin area"),
         (r"\bformula\s+[^,.;。]+", "formula-shaped blank math area"),
         (r"\b(?:tokens?|speech marks)\s+saying\s+[^,.;。]+", "blank speech marks"),
     ]
@@ -140,6 +163,7 @@ def _normalize_image_description(value: str | None) -> str:
         text = f"{text}. text-free artwork; no readable words, no letters, no labels, no title, no watermark"
     elif "no readable" not in text.lower():
         text = f"{text}; no readable words, letters, labels, title, or watermark"
+    text = re.sub(r"\bno open whitespace\b", "no readable words", text, flags=re.IGNORECASE)
     return " ".join(text.split()).strip(" .") + "."
 
 
@@ -178,6 +202,7 @@ def _build_prompt(req: SceneImageRequest) -> str:
     canvas_style = _canonical_video_style(req.video_style)
     style = (req.visual_style or "teacher_whiteboard").strip().lower()
     style_preset = _VIDEO_STYLE_PRESETS.get(canvas_style, _VIDEO_STYLE_PRESETS["whiteboard"])
+    core_rules = visual_teaching_rules_prompt("imagegen")
     if canvas_style in {"chalkboard_bw", "chalkboard_black_white"}:
         suffix = style_preset["image_prompt"]
         negative = (
@@ -200,7 +225,7 @@ def _build_prompt(req: SceneImageRequest) -> str:
         suffix = style_preset["image_prompt"]
         negative = f"dark chalkboard, messy classroom board, childish cartoon, glossy 3d, dense poster, logo, watermark, {BOLD_EDITORIAL_IMAGE_NEGATIVE}"
     elif canvas_style == "whiteboard":
-        suffix = style_preset["image_prompt"]
+        suffix = f"{style_preset['image_prompt']}. {core_rules}"
         negative = (
             f"dark chalkboard, corporate flat vector, dense infographic, long paragraph, slide frame, card layout, logo, watermark, "
             f"monochrome-only line art, empty object, colorless food, {BOLD_EDITORIAL_IMAGE_NEGATIVE}"
@@ -232,8 +257,8 @@ def _build_prompt(req: SceneImageRequest) -> str:
     return (
         f"{image_description}. Topic context only, do not draw as text: {req.topic}. "
         f"Scene context only, do not draw as text: {req.title}. "
-        f"{domain_suffix} {suffix}. Strict text-free policy: do not render any readable Chinese, English, letters, numbers, labels, captions, title, logo, watermark, UI text, or gibberish pseudo-text; leave clean blank callout spaces for renderer-added handwriting. "
-        f"Negative prompt: {negative}, readable text, words, letters, numbers, labels, captions, title, logo, watermark, gibberish pseudo-text, {domain_negative}"
+        f"{domain_suffix} {suffix}. Strict text-free policy: do not render any readable Chinese, English, letters, numbers, labels, captions, title, logo, watermark, UI text, or gibberish pseudo-text; leave open whitespace in the margins for renderer-added handwriting, not empty callout boxes or placeholder bubbles. "
+        f"Negative prompt: {negative}, readable text, words, letters, numbers, labels, captions, title, logo, watermark, gibberish pseudo-text, empty label boxes, blank callout boxes, empty circles, unlabeled geometric shapes, placeholder bubbles, blank legend boxes, standalone annotation arrows, pointing arrows, baked callout arrows, standalone warning marks, standalone brackets, {domain_negative}"
     )
 
 
@@ -245,7 +270,7 @@ def _domain_prompt_constraints(req: SceneImageRequest) -> tuple[str, str]:
     constraints = [
         "Food and cooking accuracy requirements: make the dish look appetizing and semantically correct, not a generic diagram.",
         "Use real food colors and visible texture: glossy red/orange sauce or chili oil where appropriate, white tofu cubes, brown minced meat, green scallions or garlic sprouts, steam, highlights, and small oil droplets.",
-        "Keep it in the bold editorial hand-drawn explainer style: thick black crayon/marker outlines, coral pink arrows or emphasis marks, warm yellow highlight blobs, generous blank margins, no readable text in the image.",
+        "Keep it in the bold editorial hand-drawn explainer style: thick black crayon/marker outlines, subject-integral color accents only, warm yellow highlight blobs behind the food, generous blank margins, no readable text or teacher annotation marks in the image.",
         "The cookware, ingredients, and finished food must be immediately recognizable.",
         "Use one large food or cookware state as the primary visual anchor; avoid dense rows of tiny pots, mini process boxes, and small unreadable recipe captions.",
     ]

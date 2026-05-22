@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LeftPanel } from "@/components/studio/LeftPanel";
 import { generateGraph, generateStoryboard } from "@/lib/api";
-import { penStyleLabel, videoStyleLabel } from "@/lib/constants";
+import { ACTIVE_PEN_STYLE_ID, ACTIVE_VIDEO_STYLE_ID, penStyleLabel, videoStyleLabel } from "@/lib/constants";
 import type { PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
 
 type GenerationStage = "idle" | "graph" | "storyboard";
@@ -17,8 +17,8 @@ export default function StudioPage() {
   const [error, setError] = useState<string | null>(null);
   const [projectName, setProjectName] = useState("未命名项目");
   const [targetDuration, setTargetDuration] = useState(120);
-  const [videoStyle, setVideoStyle] = useState<VideoStyleId>("whiteboard");
-  const [penStyle, setPenStyle] = useState<PenStyleId>("marker");
+  const [videoStyle, setVideoStyle] = useState<VideoStyleId>(ACTIVE_VIDEO_STYLE_ID);
+  const [penStyle, setPenStyle] = useState<PenStyleId>(ACTIVE_PEN_STYLE_ID);
 
   const handleDurationChange = (duration: number) => {
     setTargetDuration(duration);
@@ -29,6 +29,7 @@ export default function StudioPage() {
   };
 
   const handleStyleChange = (style: VideoStyleId) => {
+    if (style !== ACTIVE_VIDEO_STYLE_ID) return;
     setVideoStyle(style);
     if (storyboard) {
       setStoryboard(null);
@@ -37,6 +38,7 @@ export default function StudioPage() {
   };
 
   const handlePenStyleChange = (style: PenStyleId) => {
+    if (style !== ACTIVE_PEN_STYLE_ID) return;
     setPenStyle(style);
     if (storyboard) {
       setStoryboard(null);
@@ -59,7 +61,9 @@ export default function StudioPage() {
       const g = await generateGraph(prompt, markdown);
       setProjectName(g.topic);
       setGenerationStage("storyboard");
-      const sb = await generateStoryboard(g, targetDuration, style, pen);
+      const requestedStyle = style === ACTIVE_VIDEO_STYLE_ID ? style : ACTIVE_VIDEO_STYLE_ID;
+      const requestedPen = pen === ACTIVE_PEN_STYLE_ID ? pen : ACTIVE_PEN_STYLE_ID;
+      const sb = await generateStoryboard(g, targetDuration, requestedStyle, requestedPen);
       setStoryboard(sb);
       sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
       router.push("/storyboard");

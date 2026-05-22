@@ -10,7 +10,11 @@ from src.core.golpo_styles import (
     golpo_video_style_presets,
     golpo_video_styles,
 )
-from src.core.visual_prompts import BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT
+from src.core.visual_prompts import (
+    BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT,
+    visual_teaching_rules,
+    visual_teaching_rules_prompt,
+)
 from src.core.llm import chat_json, check_llm_connection
 from src.core.config import settings
 from src.core.text_utils import localize_chinese_terms, clean_text as utils_clean_text
@@ -18,6 +22,7 @@ from src.explain.models import ExplainGraph
 from .models import (
     AnimationInstruction,
     AnimationType,
+    AnnotationPlanItem,
     DiagramPlan,
     GenerateRemotionCodeRequest,
     GenerateRemotionCodeResponse,
@@ -271,6 +276,9 @@ GOLPO_CANVAS_VIDEO_STYLES = golpo_video_styles()
 ALLOWED_VIDEO_STYLES = set(VIDEO_STYLE_PRESETS) | set(VIDEO_STYLE_ALIASES)
 PEN_STYLE_PRESETS: dict[str, dict[str, str]] = golpo_pen_style_presets()
 ALLOWED_PEN_STYLES = set(PEN_STYLE_PRESETS)
+TEACHING_RULES = visual_teaching_rules()
+ACTIVE_VIDEO_STYLE = str(TEACHING_RULES.get("active_style") or "whiteboard")
+ACTIVE_PEN_STYLE = str(TEACHING_RULES.get("active_pen_style") or "marker")
 COOKING_TOPIC_TERMS = (
     "cook",
     "cooking",
@@ -801,10 +809,11 @@ image_description 设计要点：
 - 必须是英文
 - 描述一张白板手绘风格插图的内容（黑色线条，白色背景）
 - 必须是 text-free artwork，不要要求图像模型生成可读标题、段落、标签、按钮或水印；可读文字由渲染端叠加
+- 预留的是开放空白区域，不是空白标签框、空圆圈、气泡框、图例框或占位容器；图像里任何框/圈/箭头都必须是主体结构的一部分
 - 聚焦该场景的核心视觉概念，例如：
   "a simple diagram showing a neural network with input, hidden, and output layers connected by arrows"
   "a whiteboard sketch of gradient descent showing a ball rolling down a curved loss surface"
-  "an unlabeled anatomy-style diagram of a transformer attention mechanism with three clean box groups and blank callout space"
+  "an unlabeled anatomy-style diagram of a transformer attention mechanism with three clean box groups and open margin whitespace for later callouts"
 
 输出 JSON 格式（严格遵守）：
 {
@@ -881,8 +890,9 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - `summary`：收束时用少量清单、闭环或框架图，不把正文段落塞到画面上。
 
 参考白板样片的通用板书规则：
-- 默认采用 bold editorial hand-drawn explainer 风格：米白纸感/白板面、粗黑蜡笔/马克笔轮廓、珊瑚粉箭头/勾选/爆炸星/下划线、暖黄色大色块或光晕、大人物/大物体/大食物做主视觉。
+- 默认采用 bold editorial hand-drawn explainer 风格：米白纸感/白板面、粗黑蜡笔/马克笔轮廓、只使用主体内在需要的颜色强调、暖黄色大色块或光晕放在主体背后、大人物/大物体/大食物做主视觉；箭头、勾选、爆炸星、下划线等教学标注由渲染层后加。
 - 图形由文生图模型生成时，image_description 必须要求 text-free artwork：不要让图像模型生成标题、段落、中文/英文标签、按钮或水印；所有可读文字和动态标注由渲染端手写叠加。
+- 复杂直显图可以给后续标注留白，但不要让图像模型画空白 callout 框、空圆圈、气泡框、图例框、标签牌、占位容器或孤立箭头；留开放空白即可。
 - 图文并茂不是信息图堆字：一场只保留一个大图形或最多三个大步骤，文字只做短标题、短标签和少量结论。
 - 一屏只讲一个核心想法；不要把完整报告页、海报页或密集信息图塞进一场。
 - 标题使用短蓝色手写字，位于顶部左侧或顶部居中，可加一条手绘下划线。
@@ -892,7 +902,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 色彩克制且有含义：黑色主体线，蓝色标题/控制箭头，红色风险/电流/错误，绿色有效路径/正确结果，黄色只做短下划线/局部强调。
 - 复杂主体不要强行拆成几百笔；直接呈现清晰主体，再用 2-4 个老师式 callout 解释。简单主体才逐笔 trace。
 - 场景之间像连续板书推进：上一场讲画完整后立刻进入下一场，不留空白停顿。
-- image_description 必须要求 bold editorial hand-drawn explainer illustration: thick imperfect black marker/crayon outlines, warm off-white surface, hot pink accent arrows/checks/starbursts, sunny yellow highlight blobs, one large visual anchor or at most three big step groups, generous white space, text-free artwork, no poster/card/legend/panel/background wash.
+- image_description 必须要求 bold editorial hand-drawn explainer illustration: thick imperfect black marker/crayon outlines, warm off-white surface, subject-integral color accents only, sunny yellow highlight blobs behind the subject, one large visual anchor or at most three big step groups, generous white space, text-free artwork, no baked callout arrows/checks/starbursts/underlines, no poster/card/legend/panel/background wash.
 
 烹饪/食物教程的额外规则：
 - image_description 必须把食材、器具、颜色和状态写具体，不能只写 generic food / pot / ingredients。
@@ -926,6 +936,9 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
       "learning_goal": "这一场要让观众理解什么",
       "render_strategy": "trace|direct|hybrid",
       "visual_complexity": "simple|medium|dense|reference",
+      "visual_mode": "trace|direct_reference|hybrid",
+      "teaching_density": "rich",
+      "visual_anchor": "本场主视觉，例如站场俯视图、防护用品穿戴图、一分钟复核流程",
       "board_mode": "whiteboard|chalkboard|clean_canvas|reference",
       "hand_usage": "trace|annotate|none",
       "video_style": "auto|chalkboard_bw|chalkboard_color|modern_minimal|technical_blueprint|editorial|whiteboard|playful|sharpie",
@@ -945,10 +958,19 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
           "duration_estimate": 6
         }
       ],
+      "annotation_plan": [
+        {
+          "type": "side_label|short_arrow|wavy_underline|edge_tick|risk_ray|checkmark|crossout|route_trace|labeled_zoom",
+          "label": "短中文标签",
+          "target": "被讲解对象",
+          "beat_id": "beat_0",
+          "layer": "renderer"
+        }
+      ],
       "narration": "完整中文旁白，由 visual_beats 串起来，口语化但技术准确",
       "duration_estimate": 28,
       "node_ids": ["node_0"],
-      "image_description": "English text-free image prompt with exact subject, layout, blank callout spaces, arrows, object states and process changes; no readable labels or words",
+      "image_description": "English text-free image prompt with exact subject, layout, open margin whitespace for later callouts, object states and process changes; no readable labels or words; no empty callout boxes, empty circles, placeholder bubbles, or standalone annotation arrows",
       "animations": [
         {
           "type": "whiteboard_draw",
@@ -979,17 +1001,26 @@ def _normalize_image_description_text(value: object) -> str:
     if not text:
         return ""
     replacements = [
-        (r"\b(left|right|top|bottom|center)\s+panel\s+labeled\s+[^,.;。]+", r"\1 panel with a blank label space"),
+        (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title\s+['\"][^.;]*['\"]?[^.;]*", "open top margin for renderer-added title"),
+        (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title[^.;]*", "open top margin for renderer-added title"),
+        (r"\blater additions?\s*[:：-]?\s*[^.;]*(?:arrow|circle|callout|highlight|label|title|star|warning|underline|tick)[^.;]*", "open whitespace for renderer-drawn annotations"),
+        (r"\b(?:thick|large|bold|curved|straight|wavy|short|long)\s+(?:red|blue|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?arrows?\s+(?:from|to|pointing|points|highlight|callout|toward|towards)[^.;]*", "open whitespace for renderer-drawn arrows"),
+        (r"\b(?:red|blue|green|yellow|pink|coral[-\s]?pink)\s+(?:hand[-\s]?drawn\s+)?arrows?\s+(?:from|to|pointing|points|highlight|callout|toward|towards)[^.;]*", "open whitespace for renderer-drawn arrows"),
+        (r"\b(?:red|blue|green|yellow|pink|coral[-\s]?pink)\s+(?:hand[-\s]?drawn\s+)?(?:arrow|arrows|underline|underlines|tick|ticks|starburst|starbursts|star|stars|warning mark|warning marks)[^.;]*", "open whitespace for renderer-drawn annotations"),
+        (r"\b(left|right|top|bottom|center)\s+panel\s+labeled\s+[^,.;。]+", r"\1 panel with open whitespace nearby"),
+        (r"\b(?:\w+\s+)?(?:red|blue|green|yellow|pink)\s+(?:hand[-\s]?drawn\s+)?circles?\s+and\s+arrows?\s+highlight[^.;。]*", "open whitespace for renderer-drawn risk callouts"),
+        (r"\b(?:red|blue|green|yellow|pink)\s+(?:hand[-\s]?drawn\s+)?circles?\s+(?:circle|around|near|highlight|mark)[^.;。]*", "open whitespace for renderer-drawn circle callouts"),
+        (r"\b(?:draw|show|add)\s+(?:a\s+)?(?:red|blue|green|yellow|pink)\s+(?:lightning bolt|exclamation mark|warning icon|walkie-talkie icon|train icon|broken line|cross mark)[^.;。]*", "leave that risk marker for the renderer to draw later"),
         (r"\blabeled\s+", ""),
-        (r"\blabel(?:s|ed)?\s+[^.;。]*", "blank callout spaces"),
-        (r"\bwith\s+(?:exact\s+)?labels?\s+(?:for|showing|on|such as|including)\b", "with blank callout spaces for"),
-        (r"\blabels?\s*[:：][^.;。]*", "blank callout spaces"),
+        (r"\blabel(?:s|ed)?\s+[^.;。]*", "open whitespace for later callouts"),
+        (r"\bwith\s+(?:exact\s+)?labels?\s+(?:for|showing|on|such as|including)\b", "with open whitespace for"),
+        (r"\blabels?\s*[:：][^.;。]*", "open whitespace for later callouts"),
         (r"\blabeled\b", "unlabeled"),
-        (r"\bshort\s+(?:nearby\s+|handwritten\s+|blue\s+)?labels?\b", "blank nearby callout spaces"),
-        (r"\breadable\s+(?:title|text|label|labels|words?)\b", "blank callout space"),
-        (r"\bshort\s+(?:blue\s+)?handwritten\s+title\b", "blank title area"),
-        (r"\btopic heading\b", "blank heading area"),
-        (r"\bcaption(?:s)?\b", "blank callout area"),
+        (r"\bshort\s+(?:nearby\s+|handwritten\s+|blue\s+)?labels?\b", "open nearby whitespace"),
+        (r"(?<!no )\breadable\s+(?:title|text|label|labels|words?)\b", "open whitespace"),
+        (r"\bshort\s+(?:blue\s+)?handwritten\s+title\b", "open top margin"),
+        (r"\btopic heading\b", "open top margin"),
+        (r"\bcaption(?:s)?\b", "open margin area"),
         (r"\bformula\s+[^,.;。]+", "formula-shaped blank math area"),
         (r"\b(?:tokens?|speech marks)\s+saying\s+[^,.;。]+", "blank speech marks"),
     ]
@@ -999,6 +1030,7 @@ def _normalize_image_description_text(value: object) -> str:
         text = f"{text}. text-free artwork; no readable words, no letters, no labels, no title, no watermark"
     elif "no readable" not in text.lower():
         text = f"{text}; no readable words, letters, labels, title, or watermark"
+    text = re.sub(r"\bno open whitespace\b", "no readable words", text, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", text).strip(" .") + "."
 
 
@@ -1023,6 +1055,8 @@ def _style_image_rule_in_description(scene: Scene, video_style: str) -> bool:
 def _normalize_video_style(value: str | None) -> str:
     style = _clean_text(value).lower()
     style = VIDEO_STYLE_ALIASES.get(style, style)
+    if style != ACTIVE_VIDEO_STYLE:
+        return ACTIVE_VIDEO_STYLE if ACTIVE_VIDEO_STYLE in VIDEO_STYLE_PRESETS else "whiteboard"
     return style if style in VIDEO_STYLE_PRESETS else "whiteboard"
 
 
@@ -1040,6 +1074,8 @@ def _canonical_video_style(value: str | None) -> str:
 
 def _normalize_pen_style(value: str | None) -> str:
     style = _clean_text(value).lower()
+    if style != ACTIVE_PEN_STYLE:
+        return ACTIVE_PEN_STYLE if ACTIVE_PEN_STYLE in ALLOWED_PEN_STYLES else "marker"
     return style if style in ALLOWED_PEN_STYLES else "marker"
 
 
@@ -1174,6 +1210,41 @@ def _parse_visual_beats(value: object) -> list[VisualBeat]:
     return beats
 
 
+def _annotation_template_types() -> list[str]:
+    templates = TEACHING_RULES.get("annotation_templates", [])
+    types = [_clean_text(item.get("type")) for item in templates if isinstance(item, dict)]
+    return [item for item in types if item]
+
+
+def _parse_annotation_plan(value: object) -> list[AnnotationPlanItem]:
+    if not isinstance(value, list):
+        return []
+    allowed = set(_annotation_template_types())
+    items: list[AnnotationPlanItem] = []
+    for raw in value:
+        if not isinstance(raw, dict):
+            continue
+        annotation_type = _clean_text(raw.get("type"))
+        label = _clean_text(raw.get("label"))
+        target = _clean_text(raw.get("target"))
+        beat_id = _clean_text(raw.get("beat_id") or raw.get("beatId")) or "beat_0"
+        layer = _clean_text(raw.get("layer")) or "renderer"
+        if not annotation_type or (allowed and annotation_type not in allowed):
+            continue
+        if not label or not target:
+            continue
+        items.append(
+            AnnotationPlanItem(
+                type=annotation_type,
+                label=label[:24],
+                target=target[:36],
+                beat_id=beat_id,
+                layer=layer if layer in {"renderer", "image"} else "renderer",
+            )
+        )
+    return items[:8]
+
+
 def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:
     beat_text = " ".join(beat.narration for beat in beats if beat.narration).strip()
     narration = _clean_narration_text(narration)
@@ -1206,7 +1277,11 @@ def _compress_storyboard_narration_to_target(storyboard: Storyboard, target_dura
         for beat in beats:
             beat.narration = _trim_text_to_chars(beat.narration, max_chars)
             beat.duration_estimate = round(max(4.0, min(10.0, per_beat_seconds + 1.0)), 1)
-        scene.narration = _narration_from_beats(scene.narration, beats)
+        beat_narration = _clean_narration_text(" ".join(beat.narration for beat in beats if beat.narration))
+        if beat_narration:
+            scene.narration = beat_narration
+        else:
+            scene.narration = _trim_text_to_chars(scene.narration, int(per_scene_budget * 3.0))
         scene.duration_estimate = _estimate_scene_duration(min(scene.duration_estimate, per_scene_budget + 4.0), scene.narration, beats, scene.animations)
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
@@ -1320,6 +1395,25 @@ def _reindex_storyboard_scenes(storyboard: Storyboard) -> Storyboard:
         scene.id = f"scene_{index}"
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return storyboard
+
+
+def _is_opening_scene(scene: Scene) -> bool:
+    title = (scene.title or "").lower()
+    corpus = " ".join([scene.title or "", scene.learning_goal or "", scene.narration or ""]).lower()
+    if _contains_terms(title, ["总结", "回顾", "复盘", "收尾", "summary", "conclusion"]):
+        return False
+    return _contains_terms(corpus, ["开场", "导入", "引入", "opening", "intro", "hook"])
+
+
+def _ensure_opening_scene_first(storyboard: Storyboard) -> Storyboard:
+    if len(storyboard.scenes) < 2:
+        return storyboard
+    opening_index = next((index for index, scene in enumerate(storyboard.scenes) if _is_opening_scene(scene)), None)
+    if opening_index is None or opening_index == 0:
+        return storyboard
+    opening_scene = storyboard.scenes.pop(opening_index)
+    storyboard.scenes.insert(0, opening_scene)
+    return _reindex_storyboard_scenes(storyboard)
 
 
 def _trim_storyboard_scene_count(storyboard: Storyboard, target_duration: int, graph: ExplainGraph | None = None) -> Storyboard:
@@ -1584,11 +1678,14 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "Avoid dictionary-like hard translations and awkward coined shorthand. Prefer clear Chinese phrases over literal word-by-word translations; e.g. dependence/independence/interdependence can become '依赖 → 独立 → 互相依赖/成熟协作/协作共赢' depending on context, rather than a stiff literal label.",
                 "Use the reference-whiteboard grammar: each scene needs one primary visual anchor, such as an object, metaphor, diagram, route, scale, funnel, matrix, clock, warning sign, tool, person/group, chart, or system stack.",
                 "Every scene must specify diagram_plan.layout as a staged board composition: title/anchor first, main object or diagram second, arrows/callouts third, and one short takeaway last.",
-                "Use the default visual preset for image_description: bold editorial hand-drawn explainer illustration with thick imperfect black crayon/marker outlines, warm off-white surface, coral-pink arrows/checks/starbursts/underlines, sunny yellow highlight blobs behind the main subject, one large visual anchor or at most three large step groups, generous blank space, and text-free artwork because readable text will be added by the renderer.",
+                "Use the default visual preset for image_description: bold editorial hand-drawn explainer illustration with thick imperfect black crayon/marker outlines, warm off-white surface, subject-integral color accents only, sunny yellow highlight blobs behind the main subject, one large visual anchor or at most three large step groups, generous blank space, and text-free artwork because readable text and teacher annotations will be added by the renderer.",
+                "For any direct/reference image_description, describe only the clean subject artwork. Do not request baked titles, labels, callout arrows, pointing arrows, warning marks, starbursts, underlines, circles, boxes, brackets, or 'later additions' inside the generated image; the renderer will add those annotations as semantic drawOps.",
                 "Do not create any scene that is only a title plus bullet list, checklist, checkmarks, or text boxes. A checklist may appear only as a tiny supporting note beside a larger visual object.",
                 "For abstract topics, translate the idea into a concrete visual metaphor before choosing labels: balance scale for tradeoffs, route map for goals, funnel for filtering, loop for feedback, gear/tool for mechanism, clock for timing, warning triangle for risk, clipboard for procedure, people for responsibility, chart for evidence.",
                 "Each diagram_plan.required_labels list should name the short labels attached near the visual anchor, not paragraph fragments. Prefer 3-5 labels that map to visible parts of the drawing.",
                 "Each scene must include learning_goal, diagram_plan, visual_beats, narration, image_description and animations.",
+                "Each scene must also include visual_mode (trace|direct_reference|hybrid), teaching_density=rich, visual_anchor, and annotation_plan. annotation_plan must contain at least 3 renderer annotations with different type values; every item needs type, label, target, beat_id, and layer='renderer'.",
+                "Use only the active product style for now: video_style must be whiteboard and pen_style must be marker. Other Golpo styles are visible in the UI but currently unavailable.",
                 "Every visual_beat must pair draw_intent with narration so voiceover follows drawing.",
                 "Cover every high-priority teaching_coverage_units item from enhanced_teaching_brief in the actual scene text, labels, beats or narration. Do not merely leave it in the brief.",
                 "Respect desired_scene_count. If coverage units are more numerous than scenes, group related units into one scene with multiple visual_beats instead of adding duplicate scenes.",
@@ -1599,6 +1696,10 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 "Make narration lively and a little witty: every scene needs one concrete everyday metaphor, tiny reversal, or teacher-like aside that clarifies the idea. Avoid dry textbook wording and avoid internet memes.",
                 "Make visuals feel active: prefer route maps, seesaws, sorting counters, warning marks, loop arrows, sticky-note-sized callouts and small teacher doodles over plain boxes and long labels.",
                 "Use progressive focus: first show the whole object, then zoom/call out one region, then add colored arrows and labels only when the narration reaches them.",
+                "Generalize the complex/simple visual split across every future topic: simple diagrams should be hand-drawn stroke by stroke; especially complex, dense, realistic, multi-layer, or reference-like graphics should be shown directly as a finished hand-drawn reference image and then annotated by the hand.",
+                "Unless the topic is pure chalkboard math or has only one scene, plan a mix of both visual modes in the same video: at least one simple trace scene and at least one direct/hybrid reference scene. The two modes must share the same hand-drawn marker/crayon style, canvas color, and teaching palette.",
+                "Do not let direct images look like photos, screenshots, stock vectors, or a different art style. Direct complex graphics must still be text-free hand-drawn explainer art, with the renderer adding all readable Chinese labels and callouts.",
+                "Use varied annotations in every scene, not only plain labels and straight arrows: combine short handwritten labels, wavy underlines, circles, brackets, edge ticks, warning/starburst marks, local zoom boxes, and connector arrows according to what the teaching point needs.",
                 "Treat target_duration_seconds as a pacing hint, not a hard cap. Never drop required concepts or compress narration so much that drawing and voiceover become incomplete.",
                 "Use red for current, blue for voltage/control signals, green for conductive channels, purple for gates/attention, and yellow underlines/callouts for key terms.",
                 "Underline, circle, or box important concepts like V_G > V_th, electron channel, short-channel effect, FinFET, W_eff, learning rate, and gradient.",
@@ -1618,7 +1719,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
 
     raw = await chat_json(
         messages=[
-            {"role": "system", "content": STORYBOARD_SYSTEM_PROMPT},
+            {"role": "system", "content": f"{STORYBOARD_SYSTEM_PROMPT}\n\n{visual_teaching_rules_prompt('planner')}"},
             {"role": "user", "content": user_content},
         ]
     )
@@ -1665,6 +1766,10 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 learning_goal=s.get("learning_goal") or None,
                 visual_beats=visual_beats,
                 diagram_plan=diagram_plan,
+                visual_mode=_clean_text(s.get("visual_mode") or s.get("visualMode") or ""),
+                teaching_density=_clean_text(s.get("teaching_density") or s.get("teachingDensity") or ""),
+                visual_anchor=_clean_text(s.get("visual_anchor") or s.get("visualAnchor") or ""),
+                annotation_plan=_parse_annotation_plan(s.get("annotation_plan") or s.get("annotationPlan")),
                 render_strategy=_clean_text(s.get("render_strategy") or s.get("raster_strategy") or ""),
                 visual_complexity=_clean_text(s.get("visual_complexity") or ""),
                 board_mode=_clean_text(s.get("board_mode") or ""),
@@ -1685,6 +1790,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
+    storyboard = _ensure_opening_scene_first(storyboard)
     storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
     storyboard = _sanitize_storyboard_narration(storyboard)
@@ -1851,6 +1957,342 @@ def _apply_pen_style_to_scene(scene: Scene, pen_style: str) -> None:
         scene.hand_usage = "trace"
     if style == "marker" and scene.hand_usage == "trace" and scene.video_style not in {"sharpie"} and scene.visual_style not in {"teacher_whiteboard"}:
         scene.hand_usage = "annotate"
+
+
+def _scene_required_label_count(scene: Scene) -> int:
+    labels: set[str] = set()
+    if scene.diagram_plan:
+        labels.update(label for label in scene.diagram_plan.required_labels if label)
+    for beat in scene.visual_beats:
+        labels.update(label for label in beat.required_labels if label)
+    return len(labels)
+
+
+def _is_simple_trace_scene(scene: Scene) -> bool:
+    if (getattr(scene, "visual_mode", "") or "").lower() == "trace":
+        return True
+    return (
+        (scene.render_strategy or "").lower() == "trace"
+        and (scene.hand_usage or "").lower() == "trace"
+        and (scene.board_mode or "").lower() == "whiteboard"
+        and (scene.visual_style or "").lower() in {"", "teacher_whiteboard", "sharpie"}
+        and (scene.visual_complexity or "").lower() in {"", "simple", "medium"}
+    )
+
+
+def _is_direct_reference_scene(scene: Scene) -> bool:
+    if (getattr(scene, "visual_mode", "") or "").lower() in {"direct_reference", "hybrid"}:
+        return True
+    return (
+        (scene.render_strategy or "").lower() in {"direct", "hybrid"}
+        or (scene.hand_usage or "").lower() == "annotate"
+        or (scene.board_mode or "").lower() in {"reference", "clean_canvas"}
+        or (scene.visual_style or "").lower() in {"technical_reference", "marketing_doodle", "editorial", "playful"}
+        or (scene.visual_complexity or "").lower() in {"dense", "reference"}
+    )
+
+
+def _append_image_description_rule(scene: Scene, rule: str) -> None:
+    existing = scene.image_description or ""
+    if rule.lower() not in existing.lower():
+        scene.image_description = _normalize_image_description_text(f"{existing}. {rule}".strip(". "))
+
+
+def _append_unique(existing: list[str], values: list[str], limit: int = 8) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in [*(existing or []), *(values or [])]:
+        text = _clean_text(value)
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        result.append(text)
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _scene_label_candidates(scene: Scene) -> list[str]:
+    labels: list[str] = []
+    if scene.diagram_plan:
+        labels.extend(scene.diagram_plan.required_labels or [])
+    for beat in scene.visual_beats:
+        labels.extend(beat.required_labels or [])
+    labels.extend([scene.title, scene.learning_goal or ""])
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for label in labels:
+        text = _short_text(_clean_text(label), 18)
+        if not text or text.lower() in seen:
+            continue
+        seen.add(text.lower())
+        cleaned.append(text)
+    return cleaned
+
+
+def _visual_mode_for_scene(scene: Scene) -> str:
+    explicit = _clean_text(getattr(scene, "visual_mode", "")).lower()
+    if explicit in {"trace", "direct_reference", "hybrid"}:
+        return explicit
+    strategy = (scene.render_strategy or "").lower()
+    board_mode = (scene.board_mode or "").lower()
+    hand_usage = (scene.hand_usage or "").lower()
+    visual_style = (scene.visual_style or "").lower()
+    complexity = (scene.visual_complexity or "").lower()
+    if strategy == "direct":
+        return "direct_reference"
+    if strategy == "hybrid" and (complexity in {"dense", "reference"} or board_mode == "reference" or visual_style == "technical_reference"):
+        return "direct_reference"
+    if strategy == "hybrid":
+        return "hybrid"
+    if board_mode == "reference" or visual_style == "technical_reference" or hand_usage == "annotate":
+        return "direct_reference" if complexity in {"dense", "reference"} else "hybrid"
+    return "trace"
+
+
+def _default_annotation_types(scene: Scene, visual_mode: str) -> list[str]:
+    if visual_mode in {"direct_reference", "hybrid"}:
+        return ["side_label", "short_arrow", "edge_tick", "risk_ray", "wavy_underline"]
+    kind = (scene.diagram_plan.kind if scene.diagram_plan else "").lower()
+    if kind in {"process", "goal_path", "cycle", "simulation"}:
+        return ["side_label", "route_trace", "short_arrow", "wavy_underline", "checkmark"]
+    if kind in {"comparison", "tradeoff_matrix"}:
+        return ["side_label", "short_arrow", "checkmark", "crossout", "wavy_underline"]
+    return ["side_label", "short_arrow", "wavy_underline", "checkmark", "labeled_zoom"]
+
+
+def _ensure_scene_annotation_plan(scene: Scene) -> None:
+    allowed = _annotation_template_types()
+    allowed_set = set(allowed)
+    visual_mode = _visual_mode_for_scene(scene)
+    existing = [
+        item
+        for item in (scene.annotation_plan or [])
+        if item.type in allowed_set and item.label and item.target
+    ]
+    labels = _scene_label_candidates(scene)
+    if not labels:
+        labels = [_short_text(scene.title, 18) or "重点", "风险点", "正确做法"]
+    beat_ids = [beat.id or f"beat_{index}" for index, beat in enumerate(scene.visual_beats)] or ["beat_0"]
+    used_types = {item.type for item in existing}
+    defaults = [item for item in _default_annotation_types(scene, visual_mode) if item in allowed_set]
+    target_count = 4 if visual_mode in {"direct_reference", "hybrid"} else 3
+    for index, annotation_type in enumerate(defaults):
+        if len(existing) >= target_count and len({item.type for item in existing}) >= 3:
+            break
+        if annotation_type in used_types and len(existing) >= 3:
+            continue
+        label = labels[index % len(labels)]
+        existing.append(
+            AnnotationPlanItem(
+                type=annotation_type,
+                label=label,
+                target=label,
+                beat_id=beat_ids[index % len(beat_ids)],
+                layer="renderer",
+            )
+        )
+        used_types.add(annotation_type)
+    scene.annotation_plan = existing[:6]
+
+
+def _ensure_core_teaching_fields(storyboard: Storyboard) -> Storyboard:
+    for scene in storyboard.scenes:
+        scene.video_style = ACTIVE_VIDEO_STYLE
+        scene.pen_style = ACTIVE_PEN_STYLE
+        scene.teaching_density = scene.teaching_density or str(TEACHING_RULES.get("mode_policy", {}).get("default_density") or "rich")
+        scene.visual_mode = _visual_mode_for_scene(scene)
+        if scene.visual_mode == "trace":
+            scene.board_mode = "whiteboard"
+            scene.hand_usage = "trace"
+            scene.visual_style = "teacher_whiteboard"
+            scene.render_strategy = "trace"
+            scene.visual_mode = "trace"
+        elif scene.visual_mode == "direct_reference":
+            scene.board_mode = "reference"
+            scene.hand_usage = "annotate"
+            scene.visual_style = "technical_reference"
+            scene.render_strategy = "hybrid"
+        else:
+            scene.board_mode = scene.board_mode or "reference"
+            scene.hand_usage = "annotate"
+            scene.visual_style = scene.visual_style or "technical_reference"
+            scene.render_strategy = "hybrid"
+        if not scene.visual_anchor:
+            if scene.diagram_plan and scene.diagram_plan.layout:
+                scene.visual_anchor = _short_text(scene.diagram_plan.layout, 36)
+            else:
+                scene.visual_anchor = _short_text(scene.title, 36)
+        _ensure_scene_annotation_plan(scene)
+        plan_labels = [item.label for item in scene.annotation_plan if item.label]
+        if scene.visual_beats and plan_labels:
+            for index, beat in enumerate(scene.visual_beats):
+                needed = [
+                    item.label
+                    for item in scene.annotation_plan
+                    if item.beat_id == (beat.id or f"beat_{index}") and item.label
+                ]
+                if not needed and index == 0:
+                    needed = plan_labels[:3]
+                beat.required_labels = _append_unique(beat.required_labels, needed, limit=8)
+        scene.image_description = _normalize_image_description_text(scene.image_description)
+    storyboard.video_style = ACTIVE_VIDEO_STYLE
+    storyboard.pen_style = ACTIVE_PEN_STYLE
+    return storyboard
+
+
+def _best_scene_for_direct_reference(scenes: list[Scene]) -> Scene | None:
+    candidates = [
+        scene
+        for scene in scenes
+        if (scene.board_mode or "").lower() != "chalkboard"
+        and (scene.hand_usage or "").lower() != "none"
+        and (scene.visual_style or "").lower() != "math_chalkboard"
+    ]
+    if not candidates:
+        return None
+
+    priority_kinds = {
+        "overview_map",
+        "structure",
+        "interaction",
+        "comparison",
+        "reference_callout",
+        "cross_section",
+        "process",
+    }
+
+    def score(scene: Scene) -> tuple[int, int]:
+        kind = (scene.diagram_plan.kind if scene.diagram_plan else "").lower()
+        labels = _scene_required_label_count(scene)
+        complexity = (scene.visual_complexity or "").lower()
+        strategy = (scene.render_strategy or "").lower()
+        return (
+            (8 if kind in priority_kinds else 0)
+            + min(8, labels)
+            + (5 if complexity in {"dense", "reference"} else 2 if complexity == "medium" else 0)
+            + (3 if strategy in {"direct", "hybrid"} else 0),
+            -scene.order,
+        )
+
+    return max(candidates, key=score)
+
+
+def _best_scene_for_simple_trace(scenes: list[Scene]) -> Scene | None:
+    candidates = [
+        scene
+        for scene in scenes
+        if (scene.board_mode or "").lower() != "chalkboard"
+        and (scene.hand_usage or "").lower() != "none"
+        and (scene.visual_style or "").lower() != "math_chalkboard"
+    ]
+    if not candidates:
+        return None
+
+    simple_kinds = {"process", "comparison", "goal_path", "cycle", "formula", "simulation", "summary"}
+
+    def score(scene: Scene) -> tuple[int, int]:
+        kind = (scene.diagram_plan.kind if scene.diagram_plan else "").lower()
+        labels = _scene_required_label_count(scene)
+        complexity = (scene.visual_complexity or "").lower()
+        return (
+            (8 if kind in simple_kinds else 0)
+            + (4 if labels <= 5 else 0)
+            + (4 if complexity in {"", "simple", "medium"} else 0),
+            scene.order,
+        )
+
+    return max(candidates, key=score)
+
+
+def _has_complex_reference_subject(storyboard: Storyboard) -> bool:
+    corpus = _storyboard_scene_corpus(storyboard).lower()
+    complex_terms = [
+        "railway",
+        "rail yard",
+        "trackside",
+        "signal",
+        "circuit",
+        "mechanical",
+        "equipment",
+        "map",
+        "anatomy",
+        "cross-section",
+        "3d",
+        "dense",
+        "reference",
+        "multi-layer",
+        "铁路",
+        "站场",
+        "轨道",
+        "信号",
+        "接触网",
+        "设备",
+        "电路",
+        "机械",
+        "地图",
+        "人体",
+        "剖面",
+        "三维",
+        "多层",
+        "复杂",
+        "密集",
+    ]
+    if any(term in corpus for term in complex_terms):
+        return True
+    return any((scene.visual_complexity or "").lower() in {"dense", "reference"} for scene in storyboard.scenes)
+
+
+def _ensure_mixed_visual_modes(storyboard: Storyboard, video_style: str, pen_style: str) -> Storyboard:
+    if len(storyboard.scenes) < 2:
+        return storyboard
+    if _canonical_video_style(video_style) in {"chalkboard_bw", "chalkboard_color"}:
+        return storyboard
+
+    active_scenes = [
+        scene
+        for scene in storyboard.scenes
+        if (scene.board_mode or "").lower() != "chalkboard"
+        and (scene.hand_usage or "").lower() != "none"
+        and (scene.visual_style or "").lower() != "math_chalkboard"
+    ]
+    if len(active_scenes) < 2:
+        return storyboard
+
+    has_simple_trace = any(_is_simple_trace_scene(scene) for scene in active_scenes)
+    has_direct_reference = any(_is_direct_reference_scene(scene) for scene in active_scenes)
+
+    if not has_simple_trace:
+        scene = _best_scene_for_simple_trace(active_scenes)
+        if scene:
+            scene.board_mode = "whiteboard"
+            scene.hand_usage = "trace"
+            scene.visual_style = "teacher_whiteboard"
+            scene.render_strategy = "trace"
+            if (scene.visual_complexity or "").lower() not in {"simple", "medium"}:
+                scene.visual_complexity = "simple"
+            _append_image_description_rule(
+                scene,
+                "Simple teacher-whiteboard line diagram to be drawn by hand stroke by stroke; no finished reference image is needed for this scene.",
+            )
+
+    if not has_direct_reference and _has_complex_reference_subject(storyboard):
+        scene = _best_scene_for_direct_reference(active_scenes)
+        if scene:
+            scene.board_mode = "reference"
+            scene.hand_usage = "annotate"
+            scene.visual_style = "technical_reference" if (scene.video_style or video_style) == "technical_blueprint" else "marketing_doodle"
+            scene.render_strategy = "hybrid"
+            scene.visual_complexity = "dense"
+            scene.visual_mode = "direct_reference"
+            _append_image_description_rule(
+                scene,
+                "Finished complex hand-drawn reference illustration shown directly, in the same marker/crayon whiteboard style as the rest of the video, with generous blank margins for varied renderer-added callouts.",
+            )
+
+    for scene in storyboard.scenes:
+        _apply_pen_style_to_scene(scene, pen_style)
+    return storyboard
 
 
 def _contains_semiconductor_topic(corpus: str) -> bool:
@@ -2380,6 +2822,10 @@ def _scene_from_spec(index: int, spec: dict) -> Scene:
         animations=animations,
         node_ids=spec.get("node_ids", []),
         image_description=_normalize_image_description_text(spec["image_description"]),
+        visual_mode=spec.get("visual_mode"),
+        teaching_density=spec.get("teaching_density"),
+        visual_anchor=spec.get("visual_anchor"),
+        annotation_plan=_parse_annotation_plan(spec.get("annotation_plan")),
         render_strategy=spec.get("render_strategy", ""),
         visual_complexity=spec.get("visual_complexity", ""),
         board_mode=spec.get("board_mode", ""),
@@ -2825,6 +3271,8 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
                 beat.duration_estimate = min(beat.duration_estimate, 6.0)
             for animation in scene.animations:
                 animation.duration = min(animation.duration, 6.0)
+    storyboard = _ensure_mixed_visual_modes(storyboard, video_style, pen_style)
+    storyboard = _ensure_core_teaching_fields(storyboard)
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return _sanitize_storyboard_narration(storyboard)
 
@@ -4262,9 +4710,6 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         image_h = float(raster_reveal.get("imageHeight") or raster_reveal.get("image_height") or 1)
         image_aspect = max(0.1, image_w / max(1.0, image_h))
         render_mode = _clean_text(raster_reveal.get("renderMode") or raster_reveal.get("render_mode")).lower()
-        # For teacher_whiteboard, force trace mode so the hand draws the diagram stroke by stroke
-        if visual_style == "teacher_whiteboard" and render_mode == "direct":
-            render_mode = "trace"
 
         if render_mode == "direct":
             region_x = width * 0.245
@@ -4415,6 +4860,51 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                     min(10, max(6, segment_span // 12)),
                     beat_id=beat_id,
                 )
+                accent_start = local_cursor + note_frames + min(26, max(12, segment_span // 7))
+                accent_x = label_x - width * 0.018 if side == "left" else label_x + note_text_width + width * 0.018
+                accent_y = label_y + note_size * 0.50
+                if index == 0:
+                    for ray_index in range(2):
+                        offset = ray_index * height * 0.018
+                        add_stroke(
+                            "label_risk_ray",
+                            _line_points(
+                                accent_x,
+                                accent_y - height * 0.028 + offset,
+                                accent_x - tick_dir * width * 0.026,
+                                accent_y - height * 0.042 + offset,
+                                count=3,
+                            ),
+                            color,
+                            4,
+                            accent_start + ray_index * 4,
+                            6,
+                            beat_id=beat_id,
+                        )
+                elif index == 1:
+                    draw_star(
+                        accent_x,
+                        accent_y - height * 0.018,
+                        width * 0.016,
+                        yellow,
+                        accent_start,
+                        min(12, max(8, segment_span // 11)),
+                        beat_id=beat_id,
+                    )
+                else:
+                    add_stroke(
+                        "label_check",
+                        [
+                            _point(accent_x - tick_dir * width * 0.022, accent_y),
+                            _point(accent_x - tick_dir * width * 0.008, accent_y + height * 0.018),
+                            _point(accent_x + tick_dir * width * 0.028, accent_y - height * 0.026),
+                        ],
+                        green,
+                        5,
+                        accent_start,
+                        min(12, max(8, segment_span // 11)),
+                        beat_id=beat_id,
+                    )
                 cursor = max(local_cursor + note_frames + 32, segment_end - 4)
             return min(duration - 8, cursor)
 
@@ -5909,11 +6399,13 @@ Generate ONE self-contained TSX module for a complete educational whiteboard vid
 
 Target visual reference:
 - A clean light grey-white whiteboard canvas with rich colorful educational doodle/reference visuals where a real visible hand holds a marker and writes/draws concise board annotations live.
-- Default generated reference art should match a bold editorial hand-drawn explainer: thick imperfect black crayon/marker outlines, warm off-white surface, coral-pink arrows/checks/starbursts/underlines, sunny yellow highlight blobs, one large subject or at most three large step groups, and generous blank space.
-- Treat generated reference images as text-free artwork. Add all readable Chinese titles, labels, ticks, underlines and callouts in TSX with large handwritten glyph text, not as text baked into the image.
+- Default generated reference art should match a bold editorial hand-drawn explainer: thick imperfect black crayon/marker outlines, warm off-white surface, subject-integral color accents only, sunny yellow highlight blobs behind the subject, one large subject or at most three large step groups, and generous blank space. Do not bake callout arrows, pointing arrows, warning marks, starbursts, underlines, labels, or title marks into reference art.
+- Treat generated reference images as text-free artwork with open whitespace only. Add all readable Chinese titles, labels, ticks, underlines and callouts in TSX with large handwritten glyph text, not as text baked into the image. Do not preserve empty callout boxes, empty circles, placeholder bubbles, blank legend panels, baked label containers, or other ambiguous annotation placeholders from reference art.
+- Generalize this split to every topic: simple diagrams are drawn by hand stroke-by-stroke; especially complex/dense/reference-like graphics are presented directly as finished hand-drawn reference art, then annotated. Both modes must share the same marker/crayon whiteboard style, palette and canvas.
+- Direct complex graphics still need varied teacher annotations, not just plain label lines: mix large handwritten side labels, wavy underlines, short arrows, edge ticks, and label-adjacent warning marks. Do not draw standalone boxes, circles, brackets, or local zoom marks unless they sit next to readable text that names the concept.
 - Also support explicit scene-level modes from the storyboard:
   - `board_mode="whiteboard"` with `hand_usage="trace"`: teacher whiteboard with meaningful colorful marker visuals; the hand writes/draws the active strokes when the subject is simple enough.
-  - `board_mode="reference"` or `hand_usage="annotate"`: present the complex/finished subject clearly, then use the hand only for short callouts, circles, arrows and underlines.
+  - `board_mode="reference"` or `hand_usage="annotate"`: present the complex/finished subject clearly, then use the hand only for short labeled callouts, arrows, underlines and label-adjacent emphasis marks.
   - `board_mode="clean_canvas"` with `visual_style="marketing_doodle"`: colorful finished doodle groups may appear directly; the hand writes titles, ticks, arrows and emphasis marks.
   - `board_mode="chalkboard"` or `visual_style="math_chalkboard"`: use a dark chalkboard background, no visible hand, and reveal equations/steps line by line with chalk-like colors.
 - Respect scene.videoStyle as the Golpo Canvas style layer:
@@ -5931,13 +6423,14 @@ Target visual reference:
 - Text must look like solid marker handwriting after it is written, not hollow font outlines.
 - For Chinese text, fontFamily must start with a handwriting-style Chinese font stack like "KaiTi, STKaiti, Kaiti SC, cursive". Do not rely on default bold sans-serif Chinese.
 - Graphics should feel like a teacher's hand-sketched board work: arrows, boxes, curves, charts, objects, callouts, underlines, and concept diagrams are revealed by strokes being drawn.
+- Every circle, box, bracket, arrow, tick, and emphasis mark must be semantic: it should contain a short Chinese label, sit directly next to one, or point to a clearly named concept in the same beat. Never draw unlabeled decorative geometry.
 - Layout should match a real sparse whiteboard lesson: short blue handwritten title near the top-left or top-center, one central diagram occupying about 45-65% of the canvas width, large empty margins, and short labels placed near the parts they describe.
 - Do not use a fixed left text column. Avoid explanatory paragraphs on the board; use only short labels, one-line conclusions, arrows, circles, brackets, and underlines.
 - Every scene MUST have at least 5-8 distinct visual elements drawn, including:
   * The scene title as a short blue handwritten header
   * 1-3 large central diagram/icon/object illustrations (like a funnel, scale, gear, person, chart, map, matrix, cross-section, etc.)
   * 2-4 labeled arrows connecting elements or pointing to key parts
-  * 1-2 colored callout boxes or circles highlighting important points
+  * 1-2 labeled callout boxes/circles or label-adjacent emphasis marks highlighting important points
   * 1-2 underlines or brackets for emphasis
   * Short conclusion text or key takeaway label
 - A scene that only has title text + bullet list or checkmarks is NOT acceptable. The diagram must be the hero of each scene.
@@ -5954,17 +6447,17 @@ Target visual reference:
 - Prefer one meaningful illustrated explanation per scene over dense bullet lists.
 - Make the timeline feel continuous: do not leave long static holds between scenes, and stretch drawing operations so the hand keeps writing/drawing until shortly before the next scene starts.
 - New scenes should begin writing immediately or within the first few frames; avoid one-second blank boards after a cut.
-- Emphasize key concepts like a strong teacher's board work: underline terms, circle important regions, draw colored callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
+- Emphasize key concepts like a strong teacher's board work: underline terms, circle named regions, draw labeled callout boxes, and use red/blue/green arrows to distinguish current, voltage, and channel formation.
 - CRITICAL - Diverse annotations required: Board annotations must use at least 3 different types. NEVER use only underlines. Required variety includes:
   - Squiggly/curly underlines for wavy emphasis (NOT straight lines)
-  - Circled highlights around key terms
+  - Circled highlights around key terms or explicitly named regions
   - Hand-drawn arrows pointing to important elements
   - Starburst/exclamation marks for warnings or key points
   - Colored highlight blobs behind important text
   - Hand-drawn connector arrows between related elements
   - Question mark annotations for thought-provoking moments
   - Dashed underlines for secondary emphasis
-  - Bracket callouts around regions
+  - Bracket callouts around named regions only
   - Small tick marks for list items
   Mix these naturally throughout each scene, not all at once.
 - If subtitles_enabled is true, render scene.narration as readable bottom subtitles. Subtitles are a caption overlay, not board handwriting, so the hand should not write them and they should not consume drawOps time. If subtitles_enabled is false, omit subtitle overlays entirely.
@@ -5991,7 +6484,7 @@ Hard requirements:
 - Never define `const tipX = interpolate(frame, [...])` or `const tipY = interpolate(frame, [...])` at scene level. Pen coordinates must be sampled from active `drawOps.points`.
 - Every animated SVG path/arrow/box/diagram stroke must have a matching drawOp with similar points. The hand tip should be near the visible end of the stroke as strokeDashoffset reveals it.
 - Handwritten text must use a real Chinese handwriting stack like `"STXingkai, 华文行楷, KaiTi, STKaiti, Kaiti SC, cursive"`. Do not use bold sans-serif text.
-- The visual language must be classic teacher whiteboard: add small hand-drawn emphasis marks only when useful, such as ticks, brackets, circles, arrows, local zoom boxes, or callout rays. Use playful teaching metaphors when they clarify the idea; do not force mascots or decorative cartoon characters.
+- The visual language must be classic teacher whiteboard: add small hand-drawn emphasis marks only when useful and semantic, such as ticks, label-adjacent brackets/circles, arrows, local zoom boxes with readable labels, or callout rays. Use playful teaching metaphors when they clarify the idea; do not force mascots or decorative cartoon characters.
 - Import Img and staticFile from "remotion" and render the visible hand using <Img src={staticFile("hand-real-pen.png")} />.
 - Define a HandPen component in the same TSX module. It must receive `tipX`, `tipY` coordinates and position the hand image so the actual marker tip follows the currently drawn element.
 - In explicit chalkboard/no-hand scenes, keep the HandPen component defined for other scenes but hide it for that scene; do not force a decorative hand onto math derivations.
@@ -6001,7 +6494,7 @@ Hard requirements:
 - Create a deterministic drawing timeline array or helper function that maps frame ranges to pen tip coordinates. Use interpolate() to move the hand between points; never jump instantly.
 - The hand should be large enough to resemble the reference video, roughly 240-300 px wide on a 1920x1080 canvas, not a tiny cursor.
 - SVG line drawings must use strokeDasharray and strokeDashoffset driven by useCurrentFrame()/interpolate().
-- If a scene includes rasterReveal and referenceImageAsset, use rasterReveal.renderMode. For renderMode "trace", reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. For renderMode "direct", directly present the complex reference image with a short frame-driven opacity reveal, centered with generous empty space, then use HandPen only for large readable side callouts, short underlines, and small edge ticks near the image. Do not pretend to know exact internal object locations unless the storyboard provides explicit anchors; avoid long sweeping arrows and large circles covering the diagram. After trace raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
+- If a scene includes rasterReveal and referenceImageAsset, use rasterReveal.renderMode. For renderMode "trace", reveal the original line-art image through an SVG mask whose white paths use strokeDasharray/strokeDashoffset; drive HandPen from the same raster drawOps centerline points. For renderMode "direct", directly present the complex reference image with a short frame-driven opacity reveal, centered with generous empty space, then use HandPen only for large readable side callouts, short underlines, small edge ticks, and label-adjacent warning marks near the image. Do not draw standalone boxes/circles/brackets, do not pretend to know exact internal object locations unless the storyboard provides explicit anchors, avoid long sweeping arrows, and avoid large circles covering the diagram. After trace raster drawOps finish, crossfade the masked SVG image out while adding a short final HTML <Img> overlay of the same transparent image outside the SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes.
 - Animated dashed paths must have `fill="none"`. Do not use background washes or colored panels; use color only on teaching strokes, arrows, underlines, callouts, and small emphasis marks.
 - Text must be progressively revealed with slice(), substring(), or a frame-driven clipPath. Do not show full paragraphs instantly.
 - For Chinese text, define a `glyphPaths` array and render it with inline `GlyphText` / `DrawGlyphPath` helpers using SVG `<path>` plus strokeDasharray/strokeDashoffset. The render server will preprocess these glyph paths from a local Chinese font with opentype.js, so include text specs and matching text drawOps instead of static SVG `<text>`.
@@ -6044,6 +6537,7 @@ async def generate_remotion_code(
     )
     style_prompt = req.style_prompt or (
         "Chinese educational whiteboard animation with a real visible hand holding a marker. "
+        f"{visual_teaching_rules_prompt('render')} "
         "The hand must write every text label and draw every SVG line by following drawOps stroke points, "
         "moving up/down/left/right inside glyphs like real handwriting, "
         "using glyphPaths/GlyphText/DrawGlyphPath so the renderer can replace Chinese text with opentype.js font outlines, "
@@ -6055,6 +6549,8 @@ async def generate_remotion_code(
         "If subtitles_enabled is true, show scene.narration as bottom subtitles; if false, do not show captions. "
         "If background_music_url is provided, add it as one low-volume looping background Audio track behind narration. "
         "Respect scene board_mode/hand_usage/visual_style: hide the hand for chalkboard or hand_usage=none scenes, use direct/hybrid presentation for reference or annotate scenes, and use colorful finished doodles plus hand annotations for marketing_doodle scenes. "
+        "Generalize the mixed visual policy: simple graphics are handwritten stroke by stroke, especially complex graphics are shown directly as finished hand-drawn reference art, and both remain visually unified with varied teacher annotations. "
+        "Every non-reference shape must be hand-drawn by drawOps and semantically tied to a label or beat; never add unlabeled boxes, circles, brackets, or arrows. "
         "Respect scene.video_style as the Golpo Canvas layer: black/white chalkboard stays white-only, color chalkboard uses limited cyan/yellow accents, modern_minimal stays sparse, technical_blueprint stays navy/pale-blue, editorial stays bold off-white/red-orange, whiteboard stays marker-board, playful stays crayon-pastel, and sharpie stays thick black marker. "
         "Use Chinese handwritten fonts and teacher-style whiteboard callouts. "
         "No stock images, no templates, no decorative component frames."

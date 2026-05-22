@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "active_style": "whiteboard",
+  "active_pen_style": "marker",
+  "teaching_feel": "illustrated_tutorial_handdrawn",
+  "ui_policy": {
+    "rule": "Only the illustrated tutorial hand-drawn Whiteboard style is currently available. Other style entries may stay visible in the UI, but they must be disabled/greyed out and must not be selectable.",
+    "enabled_video_styles": ["whiteboard"],
+    "enabled_pen_styles": ["marker"]
+  },
+  "mode_policy": {
+    "default_density": "rich",
+    "simple_trace": {
+      "visual_mode": "trace",
+      "render_strategy": "trace",
+      "board_mode": "whiteboard",
+      "hand_usage": "trace",
+      "visual_style": "teacher_whiteboard",
+      "use_for": [
+        "process flow",
+        "checklist",
+        "PPE / protective equipment",
+        "cause-effect chain",
+        "few-node structure",
+        "simple comparison",
+        "one-minute review procedure"
+      ],
+      "rule": "Draw simple tutorial diagrams stroke by stroke with the visible marker hand. Use concrete objects, process arrows, comparison states, PPE items, checklists beside a larger visual anchor, and teacher-board labels. Do not use finished reference images for these scenes."
+    },
+    "direct_reference": {
+      "visual_mode": "direct_reference",
+      "render_strategy": "hybrid",
+      "board_mode": "reference",
+      "hand_usage": "annotate",
+      "visual_style": "technical_reference",
+      "use_for": [
+        "railway yard",
+        "trackside environment",
+        "equipment layout",
+        "circuit",
+        "mechanical structure",
+        "map",
+        "human anatomy",
+        "dense realistic scene",
+        "multi-layer technical diagram"
+      ],
+      "rule": "Show complex graphics directly as a finished hand-drawn reference image in the same whiteboard marker style, then add live teacher annotations in the renderer."
+    },
+    "mixed_video_rule": "When a topic contains a complex physical scene or dense reference subject, include at least one direct_reference scene and at least one trace scene. Pure math or pure abstract concept videos may stay trace-only. This rule belongs only to the active illustrated tutorial hand-drawn style."
+  },
+  "style_tokens": {
+    "canvas": "warm off-white classroom whiteboard, clean and roomy",
+    "main_line": "thick imperfect black marker lines",
+    "title": "blue handwritten title",
+    "risk": "red risk marks and warning labels",
+    "safe": "green checks and safe-path marks",
+    "emphasis": "sunny yellow wavy underlines or small highlight blobs",
+    "relationship": "purple relation notes",
+    "hand": "visible marker hand, pen tip touching the active stroke",
+    "subject_art": "same marker/crayon texture for direct reference art and traced diagrams",
+    "teaching_layout": "one large visual anchor first, then labels and annotations in the rhythm of the narration",
+    "lesson_feel": "a teacher explaining at the board with diagrams, examples, risk marks, checks, and short takeaways"
+  },
+  "visual_density": {
+    "rich": {
+      "primary_visual_anchors_per_scene": 1,
+      "subject_elements_min": 4,
+      "subject_elements_max": 7,
+      "short_labels_min": 3,
+      "short_labels_max": 5,
+      "annotation_types_min": 3,
+      "rule": "Every scene needs one clear visual anchor with 4-7 meaningful subject elements and 3-5 short labels. Rich means teacher-board substance, not a dense poster."
+    }
+  },
+  "annotation_templates": [
+    {
+      "type": "side_label",
+      "use": "Name a visible subject part from the margin.",
+      "renderer_rule": "Write a short Chinese label near the subject edge; optional small underline."
+    },
+    {
+      "type": "short_arrow",
+      "use": "Point from a short label to a named part.",
+      "renderer_rule": "Arrow must start or end near a readable label and must not sweep across the whole board."
+    },
+    {
+      "type": "wavy_underline",
+      "use": "Emphasize a title or key term already written on the board.",
+      "renderer_rule": "Underline only readable text or a named concept."
+    },
+    {
+      "type": "edge_tick",
+      "use": "Mark a boundary, hazard edge, or equipment edge on direct reference art.",
+      "renderer_rule": "Tick must sit beside a label or beat target."
+    },
+    {
+      "type": "risk_ray",
+      "use": "Show a hazard near a risk label.",
+      "renderer_rule": "Small red rays or warning marks only next to a risk label."
+    },
+    {
+      "type": "checkmark",
+      "use": "Confirm a correct PPE item or completed step.",
+      "renderer_rule": "Green check must sit beside the checked item label."
+    },
+    {
+      "type": "crossout",
+      "use": "Reject a wrong route, unsafe action, or failed communication.",
+      "renderer_rule": "Crossout must include or sit beside the reason label."
+    },
+    {
+      "type": "route_trace",
+      "use": "Trace a safe route or process route.",
+      "renderer_rule": "Route line must connect named start/end labels."
+    },
+    {
+      "type": "labeled_zoom",
+      "use": "Explain a local detail only when the label names the zoomed detail.",
+      "renderer_rule": "Zoom box/circle is allowed only with a readable label and connector."
+    }
+  ],
+  "baked_image_policy": {
+    "image_model_role": "Generate clean subject artwork only. The renderer adds all readable handwriting and teacher annotations.",
+    "allowed_subject_symbols": [
+      "train icon",
+      "lightning bolt as hazard symbol",
+      "obstacle block",
+      "broken communication line",
+      "equipment parts",
+      "track / switch / signal / catenary structures",
+      "PPE objects",
+      "tools"
+    ],
+    "forbidden_baked_annotations": [
+      "readable title",
+      "readable label",
+      "callout arrow",
+      "pointing arrow",
+      "circle highlight",
+      "empty box",
+      "empty circle",
+      "speech bubble",
+      "label plaque",
+      "legend box",
+      "teaching underline",
+      "bracket callout",
+      "edge tick",
+      "later-addition mark"
+    ],
+    "prompt_rule": "Keep generated images text-free with open whitespace. Any box, circle, arrow, bracket, tick, underline, or badge baked into the image must be a real physical or symbolic part of the subject, never a teacher annotation placeholder."
+  },
+  "scene_order_policy": {
+    "opening_terms": ["开场", "导入", "引入", "opening", "intro", "hook"],
+    "closing_terms": ["总结", "回顾", "复盘", "收尾", "summary", "conclusion"],
+    "rule": "Opening scenes appear first; summary/review scenes appear last unless the user explicitly requests another order."
+  },
+  "qa_policy": {
+    "require_annotation_plan": true,
+    "min_annotation_types_per_scene": 3,
+    "require_visual_anchor": true,
+    "forbid_text_only_scene": true,
+    "require_reference_asset_rendering": true,
+    "forbid_unlabeled_geometry": true
+  }
+}

@@ -48,9 +48,42 @@ const PUBLIC_GENERATED_DIR = join(PUBLIC_DIR, "generated");
 const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
 const DEFAULT_CHROME =
   "C:\\Users\\DELL\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1223\\chrome-headless-shell-win64\\chrome-headless-shell.exe";
-const BROWSER_EXECUTABLE = process.env.REMOTION_CHROME_HEADLESS_SHELL || DEFAULT_CHROME;
-const FFPROBE_BINARY = process.env.FFPROBE_PATH || "ffprobe";
-const FFMPEG_BINARY = process.env.FFMPEG_PATH || "ffmpeg";
+const ADMIN_PLAYWRIGHT_CHROME =
+  "C:\\Users\\admin\\AppData\\Local\\ms-playwright\\chromium_headless_shell-1223\\chrome-headless-shell-win64\\chrome-headless-shell.exe";
+const SYSTEM_CHROME = "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe";
+const SYSTEM_CHROME_X86 = "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe";
+
+function firstExistingPath(paths) {
+  return paths.find((candidate) => candidate && existsSync(candidate)) || "";
+}
+
+function findWingetFfmpegBinary(binaryName) {
+  const packagesDir = join(process.env.LOCALAPPDATA || "", "Microsoft", "WinGet", "Packages");
+  if (!packagesDir || !existsSync(packagesDir)) return null;
+  try {
+    for (const entry of readdirSync(packagesDir)) {
+      if (!entry.startsWith("Gyan.FFmpeg_")) continue;
+      const packageDir = join(packagesDir, entry);
+      for (const child of readdirSync(packageDir)) {
+        const candidate = join(packageDir, child, "bin", `${binaryName}.exe`);
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+const BROWSER_EXECUTABLE = firstExistingPath([
+  process.env.REMOTION_CHROME_HEADLESS_SHELL,
+  DEFAULT_CHROME,
+  ADMIN_PLAYWRIGHT_CHROME,
+  SYSTEM_CHROME,
+  SYSTEM_CHROME_X86,
+]);
+const FFPROBE_BINARY = process.env.FFPROBE_PATH || findWingetFfmpegBinary("ffprobe") || "ffprobe";
+const FFMPEG_BINARY = process.env.FFMPEG_PATH || findWingetFfmpegBinary("ffmpeg") || "ffmpeg";
 const COMPOSITION_ID = "GeneratedVideo";
 const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
 const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism() - 2));
@@ -66,7 +99,7 @@ const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
 const SKIP_IMAGE_TRACE = process.env.SKIP_IMAGE_TRACE === "1";
 const ENABLE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_SEEDREAM_REFERENCES !== "0";
 const REQUIRE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_REQUIRE_SEEDREAM_REFERENCES !== "0";
-const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDREAM_REFERENCE_MODE ?? "direct")
+const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDREAM_REFERENCE_MODE ?? "auto")
   .trim()
   .toLowerCase();
 const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 16));
@@ -95,6 +128,10 @@ const HAND_ASSET = "hand-real-pen.png";
 const MIN_RENDER_OUTPUT_BYTES = Math.max(1024, Number(process.env.RENDER_QA_MIN_BYTES ?? 50000) || 50000);
 const MIN_RENDER_FRAME_STDDEV = Math.max(0.5, Number(process.env.RENDER_QA_MIN_FRAME_STDDEV ?? 2.5) || 2.5);
 const GOLPO_STYLE_CONFIG = loadGolpoStyleConfig();
+const VISUAL_TEACHING_RULES = loadVisualTeachingRules();
+const ACTIVE_VIDEO_STYLE = String(VISUAL_TEACHING_RULES.active_style || "whiteboard");
+const ACTIVE_PEN_STYLE = String(VISUAL_TEACHING_RULES.active_pen_style || "marker");
+const ENABLE_ALL_STYLE_OPTIONS = process.env.EXPLAINFLOW_ENABLE_ALL_STYLES === "1";
 const VIDEO_STYLE_ALIASES = new Map(Object.entries(GOLPO_STYLE_CONFIG.aliases ?? {}));
 const GOLPO_VIDEO_STYLES = new Set(GOLPO_STYLE_CONFIG.video_style_order ?? [
   "chalkboard_bw",
@@ -179,6 +216,67 @@ function loadGolpoStyleConfig() {
   }
 }
 
+function loadVisualTeachingRules() {
+  const fallback = {
+    version: 1,
+    active_style: "whiteboard",
+    active_pen_style: "marker",
+    teaching_feel: "illustrated_tutorial_handdrawn",
+    mode_policy: { default_density: "rich" },
+    annotation_templates: [
+      { type: "side_label" },
+      { type: "short_arrow" },
+      { type: "wavy_underline" },
+      { type: "edge_tick" },
+      { type: "risk_ray" },
+      { type: "checkmark" },
+      { type: "crossout" },
+      { type: "route_trace" },
+      { type: "labeled_zoom" },
+    ],
+  };
+  try {
+    const rulesPath = resolve(__dirname, "../../services/api/src/core/visual_teaching_rules.json");
+    return JSON.parse(readFileSync(rulesPath, "utf8"));
+  } catch (err) {
+    console.warn("[style] Failed to load visual teaching rules:", err.message);
+    return fallback;
+  }
+}
+
+function ruleList(values) {
+  return Array.isArray(values)
+    ? values.map((value) => String(value || "").trim()).filter(Boolean).join("; ")
+    : "";
+}
+
+function visualTeachingRulesPrompt(context = "render") {
+  const rules = VISUAL_TEACHING_RULES || {};
+  const mode = rules.mode_policy || {};
+  const density =
+    (rules.visual_density || {})[mode.default_density || "rich"] ||
+    {};
+  const style = rules.style_tokens || {};
+  const baked = rules.baked_image_policy || {};
+  const annotationTypes = (rules.annotation_templates || [])
+    .map((item) => item?.type)
+    .filter(Boolean)
+    .join(", ");
+  const lines = [
+    `Project visual teaching rules v${rules.version || 1} (${rules.teaching_feel || "illustrated_tutorial_handdrawn"}).`,
+    `Active style only: video_style=${rules.active_style || "whiteboard"}; pen_style=${rules.active_pen_style || "marker"}. Other style entries are visible but unavailable.`,
+    `Default density: ${mode.default_density || "rich"}; ${density.rule || ""}`,
+    `Style tokens: canvas=${style.canvas || "warm off-white classroom whiteboard"}; line=${style.main_line || "thick imperfect black marker"}; title=${style.title || "blue handwritten title"}; risk=${style.risk || "red risk marks"}; safe=${style.safe || "green checks"}; emphasis=${style.emphasis || "yellow wavy underlines"}; hand=${style.hand || "visible marker hand"}.`,
+    `Mode split: trace for ${ruleList(mode.simple_trace?.use_for)}; direct_reference for ${ruleList(mode.direct_reference?.use_for)}.`,
+    `Annotation plan: follow scene.annotation_plan with at least 3 different types from ${annotationTypes}. Bind every circle, box, arrow, bracket, tick, underline, ray, check, or crossout to a readable label or beat target.`,
+    `Baked image policy: ${baked.image_model_role || ""} ${baked.prompt_rule || ""}`,
+  ];
+  if (context === "render") {
+    lines.push("If a scene has referenceImageAsset, preserve and render it with RasterRevealImage/RasterFinalOverlay or staticFile(scene.referenceImageAsset); never redraw the complex reference as SVG-only.");
+  }
+  return lines.filter((line) => line.trim()).join(" ");
+}
+
 function loadJobs() {
   try {
     if (existsSync(JOBS_FILE)) {
@@ -194,21 +292,25 @@ const jobs = loadJobs();
 
 // Track pending save operations to avoid concurrent writes
 let saveOperation = null;
+let saveJobsDirty = false;
 
 /**
  * Asynchronously save jobs to disk without blocking the event loop.
  * Debounces concurrent calls to avoid excessive disk I/O.
  */
 async function saveJobsAsync() {
-  // If a save is already in progress, wait for it instead of starting another
   if (saveOperation) {
+    saveJobsDirty = true;
     return saveOperation;
   }
 
   saveOperation = (async () => {
     try {
-      const data = JSON.stringify(jobs, null, 2);
-      await promisify(writeFileAsync)(JOBS_FILE, data, "utf8");
+      do {
+        saveJobsDirty = false;
+        const data = JSON.stringify(jobs, null, 2);
+        await promisify(writeFileAsync)(JOBS_FILE, data, "utf8");
+      } while (saveJobsDirty);
     } catch (err) {
       console.warn("[jobs] Failed to save jobs.json:", err.message);
     } finally {
@@ -273,20 +375,22 @@ function localizeChineseTerms(text) {
 function canonicalVideoStyle(value, fallback = "whiteboard") {
   const raw = String(value ?? fallback ?? "whiteboard").trim().toLowerCase();
   const style = VIDEO_STYLE_ALIASES.get(raw) ?? raw;
+  if (!ENABLE_ALL_STYLE_OPTIONS && style !== ACTIVE_VIDEO_STYLE) return ACTIVE_VIDEO_STYLE;
   return GOLPO_VIDEO_STYLES.has(style) ? style : fallback;
 }
 
 function normalizePenStyle(value, fallback = "marker") {
   const style = String(value ?? fallback ?? "marker").trim().toLowerCase();
+  if (!ENABLE_ALL_STYLE_OPTIONS && style !== ACTIVE_PEN_STYLE) return ACTIVE_PEN_STYLE;
   return ["marker", "pen", "fountain_pen", "no_hand"].includes(style) ? style : fallback;
 }
 
-function cleanUserText(value, fallback = "") {
+function cleanUserText(value, fallback = "", maxLength = 500) {
   return localizeChineseTerms(tryRepairMojibake(value))
     .replace(/\x1b\[[0-9;]*m/g, "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 500) || fallback;
+    .slice(0, maxLength) || fallback;
 }
 
 function sanitizeStoryboardText(storyboard) {
@@ -309,12 +413,40 @@ function sanitizeStoryboardText(storyboard) {
         narration: cleanUserText(scene?.narration, ""),
         learning_goal: cleanUserText(scene?.learning_goal ?? scene?.learningGoal, ""),
         learningGoal: cleanUserText(scene?.learningGoal ?? scene?.learning_goal, ""),
-        image_description: cleanUserText(scene?.image_description ?? scene?.imageDescription, ""),
-        imageDescription: cleanUserText(scene?.imageDescription ?? scene?.image_description, ""),
+        image_description: cleanUserText(scene?.image_description ?? scene?.imageDescription, "", 1800),
+        imageDescription: cleanUserText(scene?.imageDescription ?? scene?.image_description, "", 1800),
         video_style: sceneVideoStyle,
         videoStyle: sceneVideoStyle,
         pen_style: scenePenStyle,
         penStyle: scenePenStyle,
+        visual_mode: cleanUserText(scene?.visual_mode ?? scene?.visualMode, "trace"),
+        visualMode: cleanUserText(scene?.visualMode ?? scene?.visual_mode, "trace"),
+        teaching_density: cleanUserText(scene?.teaching_density ?? scene?.teachingDensity, "rich"),
+        teachingDensity: cleanUserText(scene?.teachingDensity ?? scene?.teaching_density, "rich"),
+        visual_anchor: cleanUserText(scene?.visual_anchor ?? scene?.visualAnchor, ""),
+        visualAnchor: cleanUserText(scene?.visualAnchor ?? scene?.visual_anchor, ""),
+        annotation_plan: Array.isArray(scene?.annotation_plan ?? scene?.annotationPlan)
+          ? (scene.annotation_plan ?? scene.annotationPlan).map((item) => ({
+              ...item,
+              type: cleanUserText(item?.type, ""),
+              label: cleanUserText(item?.label, ""),
+              target: cleanUserText(item?.target, ""),
+              beat_id: cleanUserText(item?.beat_id ?? item?.beatId, "beat_0"),
+              beatId: cleanUserText(item?.beatId ?? item?.beat_id, "beat_0"),
+              layer: cleanUserText(item?.layer, "renderer"),
+            })).filter((item) => item.type && item.label && item.target)
+          : [],
+        annotationPlan: Array.isArray(scene?.annotationPlan ?? scene?.annotation_plan)
+          ? (scene.annotationPlan ?? scene.annotation_plan).map((item) => ({
+              ...item,
+              type: cleanUserText(item?.type, ""),
+              label: cleanUserText(item?.label, ""),
+              target: cleanUserText(item?.target, ""),
+              beat_id: cleanUserText(item?.beat_id ?? item?.beatId, "beat_0"),
+              beatId: cleanUserText(item?.beatId ?? item?.beat_id, "beat_0"),
+              layer: cleanUserText(item?.layer, "renderer"),
+            })).filter((item) => item.type && item.label && item.target)
+          : [],
         subtitleText: scene?.subtitleText == null ? scene?.subtitleText : cleanUserText(scene.subtitleText, ""),
         visual_beats: Array.isArray(scene?.visual_beats)
           ? scene.visual_beats.map((beat) => ({
@@ -889,9 +1021,10 @@ function sceneBeatSpecs(scene) {
   const sceneNarration = cleanNarrationText(scene.narration || scene.title || "");
   const distributedSceneNarration = distributeNarrationAcrossBeats(sceneNarration, beats.length);
   return beats.map((beat, index) => {
+    const beatNarration = cleanNarrationText(beat?.narration || "");
     const rawText = cleanNarrationText(
-      distributedSceneNarration[index] ||
-        beat?.narration ||
+      beatNarration ||
+        distributedSceneNarration[index] ||
         sceneNarration ||
         scene.title ||
         beat?.draw_intent ||
@@ -1221,6 +1354,44 @@ function collectStoryboardQaChecks(storyboard) {
         : "Direct/hybrid scenes have reference image assets or local images",
       missingReferences.length ? { scenes: missingReferences.slice(0, 8) } : null,
       missingReferences.length ? "Regenerate scene images or check Seedream credentials and /imagegen/scenes logs." : null,
+    ),
+  );
+
+  const whiteboardScenes = scenes.filter((scene) => sceneVideoStyle(scene, storyboard) === ACTIVE_VIDEO_STYLE);
+  const missingVisualAnchors = whiteboardScenes
+    .filter((scene) => !cleanUserText(scene?.visual_anchor ?? scene?.visualAnchor, ""))
+    .map((scene) => scene?.id ?? scene?.title ?? "scene");
+  checks.push(
+    qaCheck(
+      "visual_teaching_anchor",
+      missingVisualAnchors.length === 0,
+      missingVisualAnchors.length ? "warning" : "info",
+      missingVisualAnchors.length
+        ? `${missingVisualAnchors.length} scene(s) are missing visual_anchor`
+        : "Whiteboard scenes include visual anchors",
+      missingVisualAnchors.length ? { scenes: missingVisualAnchors.slice(0, 8) } : null,
+      missingVisualAnchors.length ? "Regenerate/repair storyboard so each scene has one concrete visual anchor." : null,
+    ),
+  );
+
+  const weakAnnotationPlans = whiteboardScenes
+    .filter((scene) => {
+      const plan = scene?.annotation_plan ?? scene?.annotationPlan ?? [];
+      if (!Array.isArray(plan) || plan.length < 3) return true;
+      const types = new Set(plan.map((item) => item?.type).filter(Boolean));
+      return types.size < 3 || plan.some((item) => !item?.label || !item?.target);
+    })
+    .map((scene) => scene?.id ?? scene?.title ?? "scene");
+  checks.push(
+    qaCheck(
+      "annotation_plan",
+      weakAnnotationPlans.length === 0,
+      weakAnnotationPlans.length ? "warning" : "info",
+      weakAnnotationPlans.length
+        ? `${weakAnnotationPlans.length} scene(s) have weak annotation_plan`
+        : "Whiteboard scenes include varied semantic annotation plans",
+      weakAnnotationPlans.length ? { scenes: weakAnnotationPlans.slice(0, 8) } : null,
+      weakAnnotationPlans.length ? "Add at least 3 labeled renderer annotations with different types per scene." : null,
     ),
   );
 
@@ -1595,6 +1766,12 @@ function sceneTextForStrategy(scene) {
     scene?.learningGoal,
     scene?.render_strategy,
     scene?.renderStrategy,
+    scene?.visual_mode,
+    scene?.visualMode,
+    scene?.teaching_density,
+    scene?.teachingDensity,
+    scene?.visual_anchor,
+    scene?.visualAnchor,
     scene?.visual_complexity,
     scene?.visualComplexity,
     scene?.board_mode,
@@ -1613,6 +1790,18 @@ function sceneTextForStrategy(scene) {
     scene?.diagramPlan?.layout,
     ...(Array.isArray(scene?.diagram_plan?.required_labels) ? scene.diagram_plan.required_labels : []),
     ...(Array.isArray(scene?.diagramPlan?.requiredLabels) ? scene.diagramPlan.requiredLabels : []),
+    ...(Array.isArray(scene?.annotation_plan) ? scene.annotation_plan : []).flatMap((item) => [
+      item?.type,
+      item?.label,
+      item?.target,
+      item?.beat_id,
+    ]),
+    ...(Array.isArray(scene?.annotationPlan) ? scene.annotationPlan : []).flatMap((item) => [
+      item?.type,
+      item?.label,
+      item?.target,
+      item?.beatId,
+    ]),
     ...(Array.isArray(scene?.visual_beats) ? scene.visual_beats : []).flatMap((beat) => [
       beat?.draw_intent,
       beat?.drawIntent,
@@ -1651,6 +1840,8 @@ function explicitRasterStrategy(scene) {
   const value = String(
     scene?.render_strategy ??
       scene?.renderStrategy ??
+      scene?.visual_mode ??
+      scene?.visualMode ??
       scene?.raster_render_strategy ??
       scene?.rasterRenderStrategy ??
       scene?.teacher_board_strategy ??
@@ -1691,6 +1882,10 @@ function sceneVisualStyle(scene) {
 }
 
 function sceneShouldDirectRender(scene, trace) {
+  const explicit = explicitRasterStrategy(scene);
+  if (explicit === "direct") return true;
+  if (explicit === "trace") return false;
+  if (SEEDREAM_REFERENCE_RENDER_MODE === "trace") return false;
   if (SEEDREAM_REFERENCE_RENDER_MODE === "direct") return true;
   const videoStyle = sceneVideoStyle(scene);
   if (sceneHandUsage(scene) === "annotate") return true;
@@ -1699,9 +1894,6 @@ function sceneShouldDirectRender(scene, trace) {
   if (["technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) return true;
   if (videoStyle === "modern_minimal" && sceneHandUsage(scene) !== "trace") return true;
   if (sceneBoardMode(scene) === "chalkboard" || sceneVisualStyle(scene) === "math_chalkboard") return false;
-  const explicit = explicitRasterStrategy(scene);
-  if (explicit === "direct") return true;
-  if (explicit === "trace") return false;
 
   const text = sceneTextForStrategy(scene);
   const strokeCount = Number(trace?.strokes?.length ?? 0);
@@ -1750,6 +1942,15 @@ function shouldGenerateReferenceImage(scene) {
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
   if (explicit === "direct") return true;
+  if (
+    explicit === "trace" ||
+    (boardMode === "whiteboard" &&
+      handUsage === "trace" &&
+      ["", "teacher_whiteboard", "sharpie"].includes(visualStyle) &&
+      ["", "simple", "medium"].includes(String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase()))
+  ) {
+    return false;
+  }
   if (["modern_minimal", "technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) {
     return true;
   }
@@ -2876,7 +3077,7 @@ function validateHandwrittenWhiteboardStyle(code) {
   }
 }
 
-function validateNoPaperSurface(code) {
+function validateNoPaperSurface(code, allowReferenceAssets = false) {
   const forbidden = [
     ["washD", "paper-like wash layers are not allowed behind drawings"],
     ["boxShadow", "shadowed paper/card surfaces are not allowed"],
@@ -2915,7 +3116,7 @@ function validateNoPaperSurface(code) {
     throw new Error("Generated TSX must not use CSS filter effects");
   }
 
-  if (/\brasterReveal\s*:\s*\{|\breferenceImageAsset\s*:\s*["']generated\//i.test(code)) {
+  if (!allowReferenceAssets && /\brasterReveal\s*:\s*\{|\breferenceImageAsset\s*:\s*["']generated\//i.test(code)) {
     throw new Error("Generated TSX must not bake rasterReveal/referenceImageAsset into normal generated whiteboard scenes");
   }
 
@@ -2927,6 +3128,39 @@ function validateNoPaperSurface(code) {
 
   if (/\b(?:linear-gradient|radial-gradient)\s*\(/i.test(code)) {
     throw new Error("Generated TSX must not use gradient washes or panel backgrounds");
+  }
+}
+
+function storyboardReferenceAssets(storyboard) {
+  return (Array.isArray(storyboard?.scenes) ? storyboard.scenes : [])
+    .map((scene) => scene?.referenceImageAsset ?? scene?.reference_image_asset)
+    .filter((asset) => typeof asset === "string" && asset.trim())
+    .map((asset) => asset.trim());
+}
+
+function validateRequiredReferenceRendering(code, storyboard) {
+  const assets = storyboardReferenceAssets(storyboard);
+  if (assets.length === 0) return;
+  for (const asset of assets) {
+    if (!code.includes(asset)) {
+      throw new Error(
+        `Generated TSX must preserve and render storyboard referenceImageAsset: ${asset}`,
+      );
+    }
+  }
+  const rendersReference =
+    /\bstaticFile\s*\(\s*(?:scene\.)?referenceImageAsset\s*\)/.test(code) ||
+    /\bstaticFile\s*\(\s*["']generated\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp)["']\s*\)/.test(
+      code,
+    ) ||
+    /\b(RasterRevealImage|RasterFinalOverlay)\b/.test(code);
+  if (!rendersReference) {
+    throw new Error("Generated TSX must render referenceImageAsset with staticFile(); do not redraw it manually");
+  }
+  const allReferenceScenesNulled =
+    /referenceImageAsset\s*:\s*null/.test(code) && !/referenceImageAsset\s*:\s*["']generated\//.test(code);
+  if (allReferenceScenesNulled) {
+    throw new Error("Generated TSX must not set all referenceImageAsset values to null");
   }
 }
 
@@ -2951,8 +3185,9 @@ function validateStaticFileUsage(code) {
   }
 }
 
-function validateGeneratedTsx(tsx) {
+function validateGeneratedTsx(tsx, storyboard = null) {
   let code = String(tsx ?? "").trim().replace(/^```(?:tsx|ts)?\s*/, "").replace(/\s*```$/, "");
+  const hasReferenceAssets = storyboardReferenceAssets(storyboard).length > 0;
   const hasNamedExport = () =>
     /export\s+const\s+GeneratedVideo\b/.test(code) ||
     /export\s+function\s+GeneratedVideo\b/.test(code) ||
@@ -3011,7 +3246,8 @@ function validateGeneratedTsx(tsx) {
   validateStrokeFollowingTimeline(code);
   validateGlyphOutlineText(code);
   validateHandwrittenWhiteboardStyle(code);
-  validateNoPaperSurface(code);
+  validateNoPaperSurface(code, hasReferenceAssets);
+  validateRequiredReferenceRendering(code, storyboard);
   if (!/\b(KaiTi|STKaiti|Kaiti|楷体)\b/i.test(code)) {
     throw new Error("Generated TSX must use a Chinese handwriting-style font family such as KaiTi/STKaiti");
   }
@@ -3124,13 +3360,13 @@ function validateGeneratedTsx(tsx) {
 
 // Get style-specific visual instructions based on user selection
 function getStyleInstructions(videoStyle, penStyle) {
-  const style = String(videoStyle || "auto").toLowerCase();
-  const pen = String(penStyle || "marker").toLowerCase();
+  const style = canonicalVideoStyle(videoStyle || ACTIVE_VIDEO_STYLE, ACTIVE_VIDEO_STYLE);
+  const pen = normalizePenStyle(penStyle || ACTIVE_PEN_STYLE, ACTIVE_PEN_STYLE);
 
   const visualStyles = {
     whiteboard: {
-      base: "WHITEBOARD STYLE: Use warm off-white (#F7F7F2 or similar) canvas background. Draw with black marker outlines (2-3px stroke), blue titles/labels, and small colored accents (coral-pink, yellow, green). Include doodle-style icons, arrows, circles, and callout boxes. Visible hand holding a marker must draw each element.",
-      elements: "Add these whiteboard elements: hand-drawn arrows, doodle-style boxes/circles, starbursts for emphasis, small icon sketches (ear/headphones for listening, book/magnifier for reading, gears for process, scales for comparison), and teacher-style annotations.",
+      base: "WHITEBOARD STYLE: Use warm off-white (#F7F7F2 or similar) classroom whiteboard background. Draw rich illustrated tutorial visuals with thick imperfect black marker lines, blue handwritten titles, red risk marks, green correct checks, yellow wavy underlines, and purple relationship notes. Visible marker hand follows active strokes.",
+      elements: "Add concrete tutorial elements: one large visual anchor, 4-7 meaningful subject parts, 3-5 short labels, and varied semantic annotations driven by annotation_plan. Every arrow, circle, box, bracket, tick, underline, ray, check, or crossout must be tied to a label or beat target.",
     },
     sharpie: {
       base: "SHARPIE STYLE: Use bright white canvas with THICK black marker strokes (4-6px). Draw bold uppercase-style titles, rough quick sketches, and raw hand-drawn shapes. Use blue/yellow/red highlighter accents sparingly. A visible hand with thick marker must draw every element.",
@@ -3201,11 +3437,12 @@ async function generateRemotionCode(storyboard, options = {}) {
   const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
 
   // Extract video_style and pen_style from storyboard
-  const videoStyle = storyboard?.video_style ?? storyboard?.videoStyle ?? "auto";
-  const penStyle = storyboard?.pen_style ?? storyboard?.penStyle ?? "marker";
+  const videoStyle = canonicalVideoStyle(storyboard?.video_style ?? storyboard?.videoStyle ?? ACTIVE_VIDEO_STYLE);
+  const penStyle = normalizePenStyle(storyboard?.pen_style ?? storyboard?.penStyle ?? ACTIVE_PEN_STYLE);
 
   // Generate style-specific visual instructions based on user selection
   const styleInstructions = getStyleInstructions(videoStyle, penStyle);
+  const visualRules = visualTeachingRulesPrompt("render");
 
   // Retry logic for validation failures
   const MAX_RETRIES = 2;
@@ -3213,8 +3450,11 @@ async function generateRemotionCode(storyboard, options = {}) {
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     const isRetry = attempt > 0;
+    const validationHint = lastError
+      ? ` Previous generation failed validation: ${lastError.message}. Fix that exact issue.`
+      : "";
     const retryHint = isRetry
-      ? " IMPORTANT: The previous generation included forbidden paper/card/panel/surface/shadow/wash styling patterns. CRITICAL: Do NOT define any variable named paper, card, panel, surface, sheet, poster, slide, boardShadow, shadow, or wash in your code. Do NOT use washD, boxShadow, textShadow, drop-shadow, or gradients. Only use AbsoluteFill for the canvas background."
+      ? ` IMPORTANT: The previous generation included a validation failure.${validationHint} CRITICAL: Do NOT define any variable named paper, card, panel, surface, sheet, poster, slide, boardShadow, shadow, or wash in your code. Do NOT use washD, boxShadow, textShadow, drop-shadow, or gradients. Only use AbsoluteFill for the canvas background.`
       : "";
 
     const response = await postJson(`${PYTHON_API}/planner/remotion-code`, {
@@ -3228,11 +3468,13 @@ async function generateRemotionCode(storyboard, options = {}) {
       style_prompt:
         "Directly generate this lesson as a real whiteboard animation with a visible hand holding a marker. " +
         `USER SELECTED STYLE: ${videoStyle.toUpperCase()} with ${penStyle.toUpperCase()} pen. ${styleInstructions} ` +
+        `${visualRules} ` +
         "Respect scene video_style as the Golpo Canvas visual layer: chalkboard_bw uses black canvas with white chalk only; chalkboard_color uses black canvas with white/cyan chalk and limited yellow/teal emphasis; modern_minimal uses warm light grey, thin lines and one cool accent; technical_blueprint uses deep navy blueprint styling; editorial uses warm off-white bold ink with red/orange accents; whiteboard uses off-white marker-board with blue labels and small colored fills; playful uses warm cream crayon-like pastel accents; sharpie uses bright white thick black marker and highlighter accents. " +
         "Respect scene board_mode, hand_usage and visual_style: whiteboard/trace scenes use a visible hand following the active stroke; reference or annotate scenes may present a complex finished subject directly and then use hand callouts; clean_canvas/marketing_doodle scenes may use colorful finished doodles plus hand annotations; chalkboard/math_chalkboard or hand_usage=none scenes hide the hand and reveal equations or steps line by line. " +
-        "Use the default bold editorial hand-drawn explainer look when scenes include generated reference art: thick black crayon/marker artwork, coral-pink arrows/checks/starbursts/underlines, warm yellow highlight blobs, one large subject or at most three large step groups, and generous blank space. " +
-        "Treat generated reference art as text-free artwork; add readable Chinese titles, labels, ticks, underlines and callouts in the renderer with large handwritten glyph text instead of relying on text baked into the image. " +
-        "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. " +
+        "Use the default bold editorial hand-drawn explainer look when scenes include generated reference art: thick black crayon/marker artwork, subject-integral color accents only, warm yellow highlight blobs behind the subject, one large subject or at most three large step groups, and generous blank space. Do not bake callout arrows, pointing arrows, warning marks, starbursts, underlines, labels, or title marks into reference art. " +
+        "Treat generated reference art as text-free artwork with open whitespace only; add readable Chinese titles, labels, ticks, underlines and callouts in the renderer with large handwritten glyph text instead of relying on text baked into the image. Do not use or preserve empty callout boxes, empty circles, placeholder bubbles, blank legend panels, baked label containers, or other ambiguous annotation placeholders from the reference art. " +
+        "Generalize the mixed visual policy across topics: simple graphics are hand-drawn stroke by stroke; especially complex/dense/reference-like graphics are shown directly as finished hand-drawn reference art and then annotated. Both modes must look like the same marker/crayon whiteboard artist made them. " +
+        "For hand-writing scenes, every visible board text and diagram must be written or drawn live while the hand follows the actual stroke path. Every circle, box, bracket, arrow, tick, and emphasis mark must either contain/read next to a short Chinese label or point to a clearly named concept in the same beat; never draw unlabeled decorative geometry. " +
         (subtitlesEnabled
           ? "Render optional subtitles as a separate bottom HTML overlay, using each scene.narration as caption text; the hand should not write subtitles. "
           : "Do not render subtitles or caption overlays. ") +
@@ -3254,7 +3496,8 @@ async function generateRemotionCode(storyboard, options = {}) {
         "final board text should look like solid marker handwriting, not hollow outlined lettering, " +
         "and use strokeDasharray/strokeDashoffset SVG line drawing with matching drawOps. " +
         "If storyboard scenes include rasterReveal and referenceImageAsset, obey rasterReveal.renderMode. For trace, reveal the original reference image through animated SVG masks " +
-        "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for large readable side callouts, short underlines, and small edge ticks near the image; avoid pretending to know exact internal object locations, avoid long sweeping arrows, and avoid large circles covering the diagram. " +
+        "using staticFile(scene.referenceImageAsset) and drive the hand from the same raster drawOps centerline points. For direct, present the complex reference image directly and use the hand only for large readable side callouts, wavy underlines, short arrows, edge ticks, and label-adjacent warning marks; avoid standalone brackets/circles/boxes, avoid pretending to know exact internal object locations, avoid long sweeping arrows, and avoid large circles covering the diagram. " +
+        "CRITICAL: If a storyboard scene has referenceImageAsset, keep that generated/... asset path in the scene data and render it with staticFile(scene.referenceImageAsset) or staticFile(referenceImageAsset); never replace the reference scene with hand-drawn SVG-only shapes and never set referenceImageAsset to null. " +
         "Keep the transparent line-art image on a clean light grey-white whiteboard canvas without yellow panels or color washes, " +
         "and after all trace raster drawOps finish crossfade the masked SVG image out while a short final HTML <Img> overlay of the same transparent image fades in outside SVG, so the last frame fully matches the reference asset without turning transparent pixels black or double-darkening strokes. " +
         "Use a clean warm off-white whiteboard canvas close to #F7F7F2, strong readable marker outlines, blue or black handwritten titles with coral-pink underlines, and purposeful colored teaching strokes. " +
@@ -3273,7 +3516,7 @@ async function generateRemotionCode(storyboard, options = {}) {
         "and lots of negative space. " +
         "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
         "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +
-        "Use teacher-style whiteboard callouts such as arrows, circles, underlines, brackets, ticks, and local zoom boxes; make visuals lively with small humorous teaching metaphors like wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and marker annotations drawn directly on the board. Do not force mascots or decorative cartoon characters. " +
+        "Use teacher-style whiteboard callouts such as arrows, underlines, ticks, and label-adjacent brackets/circles only when they clearly name what is being highlighted; make visuals lively with small humorous teaching metaphors like wrong-floor signs, tug-of-war choices, taxi route arrows, receipt/check tickets, tuning knobs, alarm marks, and marker annotations drawn directly on the board. Do not force mascots or decorative cartoon characters. " +
         (subtitlesEnabled
           ? "Use audioSegments subtitleText only for bottom subtitles. "
           : "Ignore audioSegments subtitleText and do not render any bottom subtitle overlay. ") +
@@ -3284,7 +3527,7 @@ async function generateRemotionCode(storyboard, options = {}) {
     });
 
     try {
-      const validatedTsx = validateGeneratedTsx(response.tsx);
+      const validatedTsx = validateGeneratedTsx(response.tsx, codegenStoryboard);
       const glyphTsx = injectGlyphOutlineDrawing(validatedTsx);
       const plannedSceneFrames = Array.isArray(codegenStoryboard?.scenes)
         ? codegenStoryboard.scenes.reduce((sum, scene) => {
@@ -3301,7 +3544,7 @@ async function generateRemotionCode(storyboard, options = {}) {
         : 0;
 
       return {
-        tsx: validateGeneratedTsx(glyphTsx),
+        tsx: validateGeneratedTsx(glyphTsx, codegenStoryboard),
         durationInFrames: Math.max(
           FPS * 10,
           Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),

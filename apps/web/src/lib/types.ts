@@ -109,6 +109,27 @@ export interface DiagramPlan {
   required_labels: string[];
 }
 
+export type VisualMode = "trace" | "direct_reference" | "hybrid";
+
+export type AnnotationPlanType =
+  | "side_label"
+  | "short_arrow"
+  | "wavy_underline"
+  | "edge_tick"
+  | "risk_ray"
+  | "checkmark"
+  | "crossout"
+  | "route_trace"
+  | "labeled_zoom";
+
+export interface AnnotationPlanItem {
+  type: AnnotationPlanType | string;
+  label: string;
+  target: string;
+  beat_id: string;
+  layer: "renderer" | string;
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -126,6 +147,10 @@ export interface Scene {
   learning_goal?: string | null;
   visual_beats?: VisualBeat[];
   diagram_plan?: DiagramPlan | null;
+  visual_mode?: VisualMode | string | null;
+  teaching_density?: "rich" | string | null;
+  visual_anchor?: string | null;
+  annotation_plan?: AnnotationPlanItem[];
   render_strategy?: string | null;
   visual_complexity?: string | null;
   board_mode?: string | null;
