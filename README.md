@@ -38,6 +38,7 @@ ExplainFlow 需要接入两类大模型能力，语音合成本地完成：
 - 文本规划、Storyboard 和 Remotion 代码生成：使用 OpenAI-compatible Chat API。默认示例是 DeepSeek，`LLM_MODEL` 用于讲解规划，`CODER_MODEL` 用于 Remotion 代码生成。
 - 图像生成：使用火山引擎 Ark / Seedream，用于参考图或场景图生成。完整体验建议配置 `ARK_API_KEY`；只跑纯白板矢量链路时可以先不配。
 - 语音合成：使用 `edge-tts`，只需要配置 `TTS_VOICE`，不需要额外 API key。
+  > **注意**：`edge-tts` 使用的是 Microsoft Edge 浏览器的非官方 Read Aloud 接口，并非 Microsoft 授权的公共 API。在服务器端批量调用存在违反 Microsoft 服务条款的风险，生产或商业部署建议替换为 [Azure Cognitive Services TTS](https://azure.microsoft.com/products/cognitive-services/text-to-speech/)（有免费额度）。
 
 首次启动先复制示例配置：
 

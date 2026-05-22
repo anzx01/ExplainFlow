@@ -56,6 +56,21 @@ by the repository's MIT License together with the source code. If any of these
 assets are replaced with third-party material, add the relevant attribution and
 license notice here before publishing the change.
 
+## TTS 依赖
+
+- **edge-tts** (`services/api` Python 依赖，PyPI)
+
+  `edge-tts` 主体代码采用 GNU Lesser General Public License v3 (LGPLv3)；
+  仅 `srt_composer.py` 采用 MIT。本项目通过 Python 标准 import 动态引用该库，
+  符合 LGPLv3 第 4 条的动态链接要求。
+
+  - 上游仓库：https://github.com/rany2/edge-tts
+  - 许可证全文：https://github.com/rany2/edge-tts/blob/master/LICENSE
+
+  **重要提示**：`edge-tts` 使用的是 Microsoft Edge 浏览器的非官方 Read Aloud
+  接口，并非 Microsoft 授权的公共 API。在服务器端批量调用存在违反 Microsoft
+  服务条款的风险，生产或商业部署建议替换为 Azure Cognitive Services TTS。
+
 ## Generated Outputs
 
 Generated files are not part of this repository's license unless they are
