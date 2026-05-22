@@ -57,7 +57,7 @@ while time.time() - start < timeout:
         headers={'Content-Type': 'application/json'})
     with urllib.request.urlopen(req5, timeout=30) as r:
         status = json.loads(r.read())
-    print(f'  Status: {status["status"]} Progress: {status.get("progress", 0):.1%} Phase: {status.get("phase", "N/A")}')
+    print(f'  Status: {status["status"]} Progress: {status.get("progress", 0):.1f}% Phase: {status.get("phase", "N/A")}')
     if status['status'] == 'done':
         break
     if status['status'] == 'failed':

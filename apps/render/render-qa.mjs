@@ -166,7 +166,7 @@ async function analyzeFrameNonBlank(framePath) {
 // Public export
 // ---------------------------------------------------------------------------
 
-export async function runRenderQa(jobId, outputPath, storyboard) {
+export async function runRenderQa(jobId, outputPath, storyboard, options = {}) {
   updateJob(jobId, { phase: "qa", progress: 100 });
   const checks = [];
   const suggestions = [];
@@ -204,14 +204,23 @@ export async function runRenderQa(jobId, outputPath, storyboard) {
       null, "Retry TTS and render; audio is required and silent videos are blocked.",
     ));
 
-    const expectedDuration = storyboardExpectedDuration(storyboard);
+    const explicitExpectedDuration = Number(options?.expectedDurationSeconds ?? 0);
+    const expectedDuration =
+      Number.isFinite(explicitExpectedDuration) && explicitExpectedDuration > 0
+        ? explicitExpectedDuration
+        : storyboardExpectedDuration(storyboard);
     if (expectedDuration > 0 && mediaInfo.durationSeconds > 0) {
       const delta = Math.abs(mediaInfo.durationSeconds - expectedDuration);
       const tolerance = Math.max(4, expectedDuration * 0.25);
       addCheck(qaCheck(
         "duration_match", delta <= tolerance, delta <= tolerance ? "info" : "warning",
-        `Rendered duration ${Math.round(mediaInfo.durationSeconds)}s vs storyboard ${Math.round(expectedDuration)}s`,
-        { renderedSeconds: mediaInfo.durationSeconds, storyboardSeconds: expectedDuration, deltaSeconds: delta },
+        `Rendered duration ${Math.round(mediaInfo.durationSeconds)}s vs expected ${Math.round(expectedDuration)}s`,
+        {
+          renderedSeconds: mediaInfo.durationSeconds,
+          expectedSeconds: expectedDuration,
+          storyboardSeconds: expectedDuration,
+          deltaSeconds: delta,
+        },
         delta > tolerance ? "Review audio segment timings and scene duration estimates before publishing." : null,
       ));
     }

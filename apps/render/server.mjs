@@ -6,7 +6,7 @@
  * Storyboard -> cached TTS audio -> validated Remotion TSX -> per-job bundle -> MP4.
  */
 import http from "http";
-import { existsSync, mkdirSync, statSync } from "fs";
+import { createReadStream, existsSync, mkdirSync, statSync } from "fs";
 import { basename, join } from "path";
 import { sendJson, serveStaticFile, serveMediaFile } from "./http-utils.mjs";
 import { randomUUID } from "crypto";

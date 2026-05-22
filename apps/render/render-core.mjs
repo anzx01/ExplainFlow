@@ -158,5 +158,7 @@ export async function renderVideo(jobId, storyboard, voice, outputPath, options 
   console.log("[codegen] Generated project:", projectDir);
 
   await bundleAndRender(jobId, entryPath, outputPath);
-  await runRenderQa(jobId, outputPath, storyboardWithTraces);
+  await runRenderQa(jobId, outputPath, storyboardWithTraces, {
+    expectedDurationSeconds: generated.durationInFrames / generated.fps,
+  });
 }
