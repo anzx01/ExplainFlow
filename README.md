@@ -139,6 +139,13 @@ python -m compileall services/api/main.py services/api/src
 node --check apps/render/server.mjs
 ```
 
+## 版权与许可证
+
+ExplainFlow 以 MIT License 开源，详见 [LICENSE](LICENSE)。
+
+第三方依赖、字体、模板素材和随仓库发布的二进制资产说明见
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
 ## 最近进展
 
 2026-05-22 完成渲染链路冒烟和清理：

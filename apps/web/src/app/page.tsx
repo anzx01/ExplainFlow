@@ -189,7 +189,7 @@ export default function HomePage() {
           <div className="w-5 h-5 rounded bg-gradient-to-br from-purple-500 to-pink-500" />
           <span className="text-sm font-bold">ExplainFlow</span>
         </div>
-        <p className="text-sm text-[--fg-muted]">© 2026 ExplainFlow. All rights reserved.</p>
+        <p className="text-sm text-[--fg-muted]">© 2026 ExplainFlow contributors. MIT License.</p>
         <div className="flex gap-6 text-sm text-[--fg-muted]">
           <a href="#" className="hover:text-[--fg-default]">隐私政策</a>
           <a href="#" className="hover:text-[--fg-default]">使用条款</a>

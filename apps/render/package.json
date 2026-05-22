@@ -1,6 +1,7 @@
 {
   "name": "render",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "scripts": {
     "studio": "npx remotion studio src/index.ts",
