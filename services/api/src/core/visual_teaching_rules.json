@@ -72,6 +72,12 @@
       "rule": "Every scene needs one clear visual anchor with 4-7 meaningful subject elements and 3-5 short labels. Rich means teacher-board substance, not a dense poster."
     }
   },
+  "teaching_actions_policy": {
+    "semantic_color_rule": "Use red only for risk, stop, forbidden, missing, broken, or wrong states; green only for checked, allowed, complete, safe, or confirmed states; yellow only for emphasis underlines or teacher highlights; blue/purple for neutral structure and relationships.",
+    "target_binding_rule": "Every annotation must visibly bind a short label to the exact target with a short connector, tick, route trace, check, crossout, or local underline. Avoid free-floating circles, boxes, arrows, or decorative marks.",
+    "takeaway_rule": "Each instructional scene should finish with one compact teacher-board takeaway when space allows, such as a rule,口令, or consequence. The takeaway must be short enough to read at a glance and should appear after the main drawing is understood.",
+    "rhythm_rule": "Draw the visual anchor first, then identify parts, then add risk/safe marks, then finish with the takeaway. This should feel like a teacher building the explanation at the board."
+  },
   "annotation_templates": [
     {
       "type": "side_label",

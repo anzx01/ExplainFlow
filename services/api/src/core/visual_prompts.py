@@ -24,6 +24,7 @@ def visual_teaching_rules_prompt(context: str = "general") -> str:
     templates = rules.get("annotation_templates", [])
     baked = rules.get("baked_image_policy", {})
     mode = rules.get("mode_policy", {})
+    teaching_actions = rules.get("teaching_actions_policy", {})
 
     ui_policy = rules.get("ui_policy", {})
 
@@ -34,6 +35,15 @@ def visual_teaching_rules_prompt(context: str = "general") -> str:
         f"- Style tokens: canvas={style.get('canvas')}; main line={style.get('main_line')}; title={style.get('title')}; risk={style.get('risk')}; safe={style.get('safe')}; emphasis={style.get('emphasis')}; relationship={style.get('relationship')}; hand={style.get('hand')}; lesson={style.get('lesson_feel')}.",
         f"- Mode split: simple trace scenes are for {_rule_join(mode.get('simple_trace', {}).get('use_for', []))}; complex direct_reference scenes are for {_rule_join(mode.get('direct_reference', {}).get('use_for', []))}.",
         f"- Mixed video rule: {mode.get('mixed_video_rule', '')}",
+        "- Teaching actions: "
+        + _rule_join(
+            [
+                teaching_actions.get("semantic_color_rule", ""),
+                teaching_actions.get("target_binding_rule", ""),
+                teaching_actions.get("takeaway_rule", ""),
+                teaching_actions.get("rhythm_rule", ""),
+            ]
+        ),
         "- Annotation plan required: each scene needs annotation_plan entries using at least 3 types from "
         + ", ".join(template.get("type", "") for template in templates)
         + ". Every annotation must include type, label, target, beat_id, layer='renderer'.",

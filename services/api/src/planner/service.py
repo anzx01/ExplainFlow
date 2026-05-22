@@ -3438,18 +3438,7 @@ def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
     _retime_draw_ops_in_window(draw_ops, 0.0, max(1.0, duration - 4.0))
 
 
-def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: list[dict], duration: int) -> None:
-    if not draw_ops:
-        return
-    segments = [
-        segment
-        for segment in audio_segments
-        if isinstance(segment, dict)
-        and float(segment.get("endFrame", 0) or 0) > float(segment.get("startFrame", 0) or 0)
-    ]
-    if not segments:
-        _retime_draw_ops_to_fill_scene(draw_ops, duration)
-        return
+def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict]) -> list[list[dict]]:
     ordered = sorted(
         draw_ops,
         key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
@@ -3488,11 +3477,109 @@ def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: lis
     if cursor < len(unassigned):
         buckets[-1].extend(unassigned[cursor:])
 
-    for index, segment in enumerate(segments):
-        group = sorted(
-            buckets[index],
+    return [
+        sorted(
+            bucket,
             key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
         )
+        for bucket in buckets
+    ]
+
+
+def _draw_op_workload_frames(op: dict, text_by_op_id: dict[str, dict], fps: int) -> float:
+    start = float(op.get("startFrame", 0) or 0)
+    end = float(op.get("endFrame", start + 1) or (start + 1))
+    span = max(1.0, end - start)
+    if op.get("kind") == "text":
+        text_spec = text_by_op_id.get(str(op.get("id") or "")) or {}
+        raw_text = _clean_text(text_spec.get("text") or "")
+        compact_text = re.sub(r"\s+", "", raw_text)
+        char_count = max(1, len(compact_text))
+        cjk_count = len(re.findall(r"[\u3400-\u9fff]", compact_text))
+        font_size = float(text_spec.get("fontSize") or 32)
+        per_char = 4.8 if font_size < 40 else 5.7
+        if cjk_count >= max(1, char_count // 2):
+            per_char += 0.8
+        if font_size >= 54:
+            per_char += 0.7
+        return max(18.0, min(float(fps) * 3.0, 10.0 + char_count * per_char + font_size * 0.08))
+
+    raw_points = op.get("points")
+    points = raw_points if isinstance(raw_points, list) else []
+    length = _polyline_length(points) if points else span * 10.0
+    return max(5.0, min(float(fps), max(span * 0.62, 4.0 + length / 95.0)))
+
+
+def _stretch_audio_segments_for_draw_workload(
+    draw_ops: list[dict],
+    texts: list[dict],
+    audio_segments: list[dict],
+    duration: int,
+    fps: int,
+) -> int:
+    if not draw_ops or not audio_segments:
+        return duration
+    segments = [
+        segment
+        for segment in audio_segments
+        if isinstance(segment, dict)
+        and float(segment.get("endFrame", 0) or 0) > float(segment.get("startFrame", 0) or 0)
+    ]
+    if not segments:
+        return duration
+
+    text_by_op_id = {
+        str(text.get("opId")): text
+        for text in texts
+        if isinstance(text, dict) and text.get("opId")
+    }
+    groups = _audio_segment_groups_for_draw_ops(draw_ops, segments)
+    cursor = 0
+    for index, (segment, group) in enumerate(zip(segments, groups)):
+        original_start = float(segment.get("startFrame", 0) or 0)
+        original_end = float(segment.get("endFrame", original_start + 1) or (original_start + 1))
+        original_duration = max(1, int(round(original_end - original_start)))
+        audio_duration = max(1, int(round(float(segment.get("audioDurationFrames") or segment.get("audioSequenceDuration") or original_duration))))
+        workload = sum(_draw_op_workload_frames(op, text_by_op_id, fps) for op in group)
+        workload_target = int(math.ceil(workload + (fps * 0.35 if group else 0)))
+        audio_target = int(math.ceil(audio_duration + fps * (0.70 if index == len(segments) - 1 else 0.45)))
+        expansion_cap = int(
+            math.ceil(
+                max(original_duration, audio_duration)
+                + fps * (2.4 if workload > audio_duration else 1.2)
+                + min(fps * 1.4, len(group) * 1.1)
+            )
+        )
+        target_duration = max(original_duration, audio_target, min(workload_target, expansion_cap))
+        segment["startFrame"] = cursor
+        segment["endFrame"] = cursor + target_duration
+        segment["duration"] = target_duration
+        segment["audioStartFrame"] = cursor
+        segment["audioEndFrame"] = cursor + audio_duration
+        segment["audioSequenceDuration"] = audio_duration
+        segment["drawBudgetFrames"] = max(1, target_duration - 6)
+        cursor += target_duration
+
+    final_hold = max(18, int(round(fps * 0.65)))
+    return max(duration, cursor + final_hold)
+
+
+def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: list[dict], duration: int) -> None:
+    if not draw_ops:
+        return
+    segments = [
+        segment
+        for segment in audio_segments
+        if isinstance(segment, dict)
+        and float(segment.get("endFrame", 0) or 0) > float(segment.get("startFrame", 0) or 0)
+    ]
+    if not segments:
+        _retime_draw_ops_to_fill_scene(draw_ops, duration)
+        return
+    buckets = _audio_segment_groups_for_draw_ops(draw_ops, segments)
+
+    for index, segment in enumerate(segments):
+        group = buckets[index]
         if not group:
             continue
         start = float(segment.get("startFrame", 0) or 0)
@@ -4168,6 +4255,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         ink, blue, red, green, violet, yellow = "#111111", "#2F6FB2", "#D85C4A", "#3F8F68", "#6E58B5", "#F3BE22"
     draw_ops: list[dict] = []
     texts: list[dict] = []
+    text_boxes: list[dict[str, float]] = []
     strokes: list[dict] = []
     raster_reveal_spec: dict | None = None
     diagram_kind = _diagram_kind_for_scene(scene, scene_index)
@@ -4183,6 +4271,12 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         or _scene_extra(scene, "reference_image_asset")
         or raster_reveal.get("asset")
     )
+    annotation_plan = [
+        item
+        for item in (getattr(scene, "annotation_plan", []) or [])
+        if _clean_text(getattr(item, "layer", "renderer")) == "renderer"
+    ]
+    visual_anchor = _clean_text(getattr(scene, "visual_anchor", "") or "")
 
     def fit_timing(start: int, frames: int) -> tuple[int, int]:
         safe_start = min(max(0, start), max(0, duration - 8))
@@ -4190,6 +4284,64 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         if safe_end <= safe_start:
             safe_end = min(duration - 1, safe_start + 1)
         return safe_start, safe_end
+
+    def text_box_for(value: str, x: float, y: float, font_size: int, max_width: float) -> dict[str, float]:
+        visual_width = _text_visual_width(value, font_size)
+        line_count = max(1, int(math.ceil(visual_width / max(1.0, max_width))))
+        box_width = min(max_width, max(font_size * 1.35, visual_width if line_count == 1 else max_width))
+        box_height = font_size * (1.20 * line_count)
+        return {
+            "x": x - 10,
+            "y": y - 8,
+            "w": box_width + 20,
+            "h": box_height + 14,
+        }
+
+    def boxes_overlap(first: dict[str, float], second: dict[str, float], pad: float = 6.0) -> bool:
+        return not (
+            first["x"] + first["w"] + pad <= second["x"]
+            or second["x"] + second["w"] + pad <= first["x"]
+            or first["y"] + first["h"] + pad <= second["y"]
+            or second["y"] + second["h"] + pad <= first["y"]
+        )
+
+    def resolve_text_position(
+        value: str,
+        x: float,
+        y: float,
+        font_size: int,
+        max_width: float,
+        max_chars: int,
+    ) -> tuple[float, float, dict[str, float]]:
+        visual_width = min(max_width, max(font_size * 1.35, _text_visual_width(value, font_size)))
+        box_height = font_size * 1.34
+        clamped_x = max(width * 0.035, min(float(x), width - visual_width - width * 0.035))
+        clamped_y = max(height * 0.035, min(float(y), height - box_height - height * 0.045))
+        should_avoid = len(re.sub(r"\s+", "", value)) > 1 and max_chars > 1 and max_width > width * 0.055
+        if not should_avoid:
+            return clamped_x, clamped_y, text_box_for(value, clamped_x, clamped_y, font_size, max_width)
+
+        step = max(font_size * 1.12, height * 0.040)
+        candidates = [(clamped_x, clamped_y)]
+        for offset in range(1, 5):
+            candidates.append((clamped_x, clamped_y + step * offset))
+            candidates.append((clamped_x, clamped_y - step * offset))
+        candidates.extend(
+            [
+                (clamped_x + width * 0.055, clamped_y),
+                (clamped_x - width * 0.055, clamped_y),
+                (clamped_x + width * 0.055, clamped_y + step),
+                (clamped_x - width * 0.055, clamped_y + step),
+            ]
+        )
+        for candidate_x, candidate_y in candidates:
+            safe_x = max(width * 0.035, min(candidate_x, width - visual_width - width * 0.035))
+            safe_y = max(height * 0.035, min(candidate_y, height - box_height - height * 0.045))
+            candidate_box = text_box_for(value, safe_x, safe_y, font_size, max_width)
+            if all(not boxes_overlap(candidate_box, existing) for existing in text_boxes):
+                return safe_x, safe_y, candidate_box
+        fallback_box = text_box_for(value, clamped_x, clamped_y, font_size, max_width)
+        return clamped_x, clamped_y, fallback_box
 
     def add_text(
         text: str,
@@ -4207,13 +4359,16 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         op_id = f"s{scene_index}_text_{len(texts)}"
         safe_text = _short_text(text, max_chars)
         text_max_width = max_width if max_width is not None else width - x - 70
+        text_max_width = max(font_size * 1.2, min(float(text_max_width), width * 0.88))
+        safe_x, safe_y, text_box = resolve_text_position(safe_text, x, y, font_size, text_max_width, max_chars)
+        text_boxes.append(text_box)
         safe_start, end = fit_timing(start, frames)
         draw_op = {
             "id": op_id,
             "kind": "text",
             "startFrame": safe_start,
             "endFrame": end,
-            "points": _text_stroke_points(safe_text, x, y, font_size, text_max_width),
+            "points": _text_stroke_points(safe_text, safe_x, safe_y, font_size, text_max_width),
         }
         if beat_id:
             draw_op["beatId"] = beat_id
@@ -4232,8 +4387,8 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             {
                 "opId": op_id,
                 "text": safe_text,
-                "x": round(x, 1),
-                "y": round(y, 1),
+                "x": round(safe_x, 1),
+                "y": round(safe_y, 1),
                 "fontSize": font_size,
                 "color": color,
                 "maxWidth": round(text_max_width, 1),
@@ -4275,11 +4430,11 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 text_max_width,
                 max(font_size * 1.6, len(safe_text) * font_size * (0.72 if re.search(r"[\u3400-\u9fff]", safe_text) else 0.48)),
             )
-            underline_y = y + font_size * 1.05
+            underline_y = safe_y + font_size * 1.05
             underline_points = _curve_points(
-                x,
+                safe_x,
                 underline_y,
-                x + estimated_width,
+                safe_x + estimated_width,
                 underline_y,
                 count=10,
                 wave=max(2.0, font_size * 0.035),
@@ -4653,8 +4808,190 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         pool = steps or core_lines
         return _short_text(pool[index], 16) if index < len(pool) else value
 
+    def annotation_label(annotation_type: str, fallback: str, index: int = 0) -> str:
+        matches = [
+            _short_text(getattr(item, "label", ""), 12)
+            for item in annotation_plan
+            if _clean_text(getattr(item, "type", "")) == annotation_type and _clean_text(getattr(item, "label", ""))
+        ]
+        return matches[index] if index < len(matches) else fallback
+
+    def annotation_items(limit: int = 5) -> list[tuple[str, str, str | None]]:
+        items: list[tuple[str, str, str | None]] = []
+        for item in annotation_plan:
+            label = _short_text(getattr(item, "label", ""), 12)
+            annotation_type = _clean_text(getattr(item, "type", "")) or "side_label"
+            beat_id = _clean_text(getattr(item, "beat_id", "") or "beat_0")
+            if label and label not in [existing[1] for existing in items]:
+                items.append((annotation_type, label, beat_id))
+            if len(items) >= limit:
+                break
+        return items
+
+    def draw_check_mark(
+        cx: float,
+        cy: float,
+        color: str,
+        start: int,
+        frames: int = 10,
+        scale: float = 1.0,
+        beat_id: str | None = None,
+    ) -> int:
+        add_stroke(
+            "annotation_checkmark",
+            [
+                _point(cx - width * 0.020 * scale, cy),
+                _point(cx - width * 0.006 * scale, cy + height * 0.020 * scale),
+                _point(cx + width * 0.034 * scale, cy - height * 0.028 * scale),
+            ],
+            color,
+            max(4, round(5 * scale)),
+            start,
+            frames,
+            beat_id=beat_id,
+        )
+        return start + frames + 3
+
+    def draw_cross_mark(
+        cx: float,
+        cy: float,
+        color: str,
+        start: int,
+        frames: int = 10,
+        scale: float = 1.0,
+        beat_id: str | None = None,
+    ) -> int:
+        add_stroke(
+            "annotation_crossout",
+            _line_points(cx - width * 0.026 * scale, cy - height * 0.030 * scale, cx + width * 0.026 * scale, cy + height * 0.030 * scale, count=4),
+            color,
+            max(4, round(5 * scale)),
+            start,
+            max(5, frames // 2),
+            beat_id=beat_id,
+        )
+        add_stroke(
+            "annotation_crossout",
+            _line_points(cx + width * 0.026 * scale, cy - height * 0.030 * scale, cx - width * 0.026 * scale, cy + height * 0.030 * scale, count=4),
+            color,
+            max(4, round(5 * scale)),
+            start + max(4, frames // 2),
+            max(5, frames // 2),
+            beat_id=beat_id,
+        )
+        return start + frames + 3
+
+    def draw_wavy_underline(
+        x: float,
+        y: float,
+        w: float,
+        color: str,
+        start: int,
+        frames: int = 12,
+        beat_id: str | None = None,
+    ) -> int:
+        add_stroke(
+            "annotation_wavy_underline",
+            _curve_points(x, y, x + w, y, count=12, wave=height * 0.007),
+            color,
+            5,
+            start,
+            frames,
+            beat_id=beat_id,
+        )
+        return start + frames + 3
+
+    def draw_risk_rays(
+        x: float,
+        y: float,
+        color: str,
+        start: int,
+        direction: int = 1,
+        beat_id: str | None = None,
+    ) -> int:
+        for ray_index, offset in enumerate([-0.035, 0.0, 0.035]):
+            add_stroke(
+                "annotation_risk_ray",
+                _line_points(
+                    x,
+                    y + height * offset,
+                    x + direction * width * 0.050,
+                    y + height * (offset - 0.030),
+                    count=3,
+                ),
+                color,
+                4,
+                start + ray_index * 4,
+                6,
+                beat_id=beat_id,
+            )
+        return start + 17
+
+    def semantic_annotation_color(annotation_type: str, label: str, default: str = blue) -> str:
+        annotation_type = _clean_text(annotation_type).lower()
+        label_text = _clean_text(label).lower()
+        if annotation_type in {"risk_ray", "crossout"} or _contains_any(
+            label_text,
+            ["风险", "禁止", "停止", "停", "断", "缺", "错", "不可", "邻线", "危险", "超界"],
+        ):
+            return red
+        if annotation_type in {"checkmark", "route_trace"} or _contains_any(
+            label_text,
+            ["齐全", "确认", "许可", "安全", "上道", "闭环", "复核", "通过", "正确"],
+        ):
+            return green
+        if annotation_type in {"wavy_underline", "edge_tick"} or _contains_any(label_text, ["重点", "边界", "铁律", "命令"]):
+            return blue
+        return default
+
+    def add_step_badge(
+        label: str,
+        cx: float,
+        cy: float,
+        color: str,
+        start: int,
+        beat_id: str | None = None,
+    ) -> int:
+        add_stroke("teacher_step_badge", _circle_points(cx, cy, width * 0.018, height * 0.026, count=12), color, 3, start, 8, beat_id=beat_id)
+        add_text(label, cx - width * 0.006, cy - height * 0.020, max(16, body_size - 12), color, start + 5, 10, width * 0.035, max_chars=1, beat_id=beat_id)
+        return start + 17
+
+    def add_teacher_takeaway(
+        label: str,
+        x: float,
+        y: float,
+        color: str,
+        start: int,
+        beat_id: str | None = None,
+        max_chars: int = 9,
+    ) -> int:
+        safe_label = _short_text(label, max_chars)
+        marker_x = max(width * 0.040, x - width * 0.030)
+        marker_y = y + body_size * 0.45
+        draw_star(marker_x, marker_y, width * 0.014, yellow, start, 10, beat_id=beat_id)
+        add_text(
+            safe_label,
+            x,
+            y,
+            max(24, body_size - 2),
+            color,
+            start + 8,
+            22,
+            width * 0.22,
+            emphasis=True,
+            max_chars=max_chars,
+            beat_id=beat_id,
+        )
+        return start + 36
+
     def direct_callout_labels() -> list[str]:
         labels: list[str] = []
+        for item in annotation_plan:
+            short = _short_text(getattr(item, "label", ""), 14)
+            if short and short not in labels:
+                labels.append(short)
+            if len(labels) >= 5:
+                break
         for beat in getattr(scene, "visual_beats", []) or []:
             for label in beat.required_labels or []:
                 short = _short_text(label, 14)
@@ -4712,10 +5049,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         render_mode = _clean_text(raster_reveal.get("renderMode") or raster_reveal.get("render_mode")).lower()
 
         if render_mode == "direct":
-            region_x = width * 0.245
-            region_y = height * 0.18
-            region_w = width * 0.56
-            region_h = height * 0.58
+            region_x = width * 0.18
+            region_y = height * 0.17
+            region_w = width * 0.64
+            region_h = height * 0.62
         else:
             region_x = width * 0.20
             region_y = diagram_top - height * 0.01
@@ -4732,6 +5069,10 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
         draw_y = region_y + (region_h - draw_h) * 0.5
 
         if render_mode == "direct":
+            draw_x = region_x
+            draw_y = region_y
+            draw_w = region_w
+            draw_h = region_h
             raster_reveal_spec = {
                 "asset": str(reference_image_asset),
                 "x": round(draw_x, 1),
@@ -4739,10 +5080,15 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 "width": round(draw_w, 1),
                 "height": round(draw_h, 1),
                 "renderMode": "direct",
+                "fit": "cover",
                 "directAppearFrame": 0,
                 "strokes": [],
             }
-            labels = direct_callout_labels()[:3]
+            plan_items = annotation_items(4)
+            fallback_labels = direct_callout_labels()
+            while len(plan_items) < 4:
+                fallback = fallback_labels[len(plan_items)] if len(plan_items) < len(fallback_labels) else f"重点{len(plan_items) + 1}"
+                plan_items.append((["side_label", "short_arrow", "wavy_underline", "checkmark"][len(plan_items) % 4], fallback, beat_id_for(len(plan_items))))
             segment_windows: list[tuple[str | None, int, int]] = []
             if audio_segments:
                 for segment in audio_segments:
@@ -4761,42 +5107,61 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                     segment_start = usable_start + index * span
                     segment_windows.append((None, segment_start, min(usable_end, segment_start + span)))
 
-            note_size = max(50, int(body_size * 1.62))
-            note_width = width * 0.22
+            note_size = max(44, int(body_size * 1.44))
+            note_width = width * 0.18
             left_note_x = max(width * 0.055, draw_x - note_width - width * 0.055)
             right_note_x = min(width - note_width - width * 0.055, draw_x + draw_w + width * 0.055)
             label_specs = [
                 {
-                    "label": labels[0],
+                    "annotation_type": plan_items[0][0],
+                    "label": plan_items[0][1],
+                    "beat_id": plan_items[0][2],
                     "side": "left",
                     "text_x": left_note_x,
                     "text_y": draw_y + draw_h * 0.17,
-                    "color": blue,
+                    "color": red if plan_items[0][0] == "risk_ray" else blue,
                 },
                 {
-                    "label": labels[1],
+                    "annotation_type": plan_items[1][0],
+                    "label": plan_items[1][1],
+                    "beat_id": plan_items[1][2],
                     "side": "right",
                     "text_x": right_note_x,
-                    "text_y": draw_y + draw_h * 0.40,
-                    "color": violet,
+                    "text_y": draw_y + draw_h * 0.30,
+                    "color": red if plan_items[1][0] in {"risk_ray", "crossout"} else violet,
                 },
                 {
-                    "label": labels[2],
+                    "annotation_type": plan_items[2][0],
+                    "label": plan_items[2][1],
+                    "beat_id": plan_items[2][2],
                     "side": "left",
                     "text_x": left_note_x,
-                    "text_y": draw_y + draw_h * 0.66,
-                    "color": red,
+                    "text_y": draw_y + draw_h * 0.58,
+                    "color": green if plan_items[2][0] == "checkmark" else red,
+                },
+                {
+                    "annotation_type": plan_items[3][0],
+                    "label": plan_items[3][1],
+                    "beat_id": plan_items[3][2],
+                    "side": "right",
+                    "text_x": right_note_x,
+                    "text_y": draw_y + draw_h * 0.70,
+                    "color": green if plan_items[3][0] == "checkmark" else blue,
                 },
             ]
             cursor = max(start + 8, int(duration * 0.16))
             for index, spec in enumerate(label_specs):
                 beat_id, segment_start, segment_end = segment_windows[min(index, len(segment_windows) - 1)]
+                beat_id = spec.get("beat_id") or beat_id
                 segment_span = max(36, segment_end - segment_start)
                 local_cursor = max(cursor, segment_start + min(12, max(0, segment_span // 8)))
                 label_y = spec["text_y"]
                 label_x = spec["text_x"]
-                color = spec["color"]
                 side = spec["side"]
+                annotation_type = spec.get("annotation_type") or "side_label"
+                color = semantic_annotation_color(annotation_type, spec["label"], spec["color"])
+                connector_color = semantic_annotation_color(annotation_type, spec["label"], blue if side == "left" else violet)
+                underline_color = yellow if annotation_type == "wavy_underline" else connector_color
                 note_text_width = min(note_width * 0.82, _text_visual_width(spec["label"], note_size) * 0.88 + width * 0.018)
                 link_start_x = label_x + note_text_width if side == "left" else label_x - width * 0.012
                 edge_x = draw_x - width * 0.014 if side == "left" else draw_x + draw_w + width * 0.014
@@ -4826,7 +5191,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                         count=9,
                         wave=height * 0.006,
                     ),
-                    red,
+                    underline_color,
                     7,
                     local_cursor + note_frames + 1,
                     min(12, max(7, segment_span // 10)),
@@ -4844,7 +5209,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                         count=8,
                         wave=height * 0.006,
                     ),
-                    red,
+                    connector_color,
                     5,
                     local_cursor + note_frames + 6,
                     min(16, max(8, segment_span // 8)),
@@ -4854,7 +5219,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 add_stroke(
                     "callout_tick",
                     _line_points(edge_x, edge_y, edge_x + tick_dir * width * 0.030, edge_y, count=4),
-                    red,
+                    connector_color,
                     7,
                     local_cursor + note_frames + min(18, max(8, segment_span // 8)),
                     min(10, max(6, segment_span // 12)),
@@ -4863,25 +5228,25 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                 accent_start = local_cursor + note_frames + min(26, max(12, segment_span // 7))
                 accent_x = label_x - width * 0.018 if side == "left" else label_x + note_text_width + width * 0.018
                 accent_y = label_y + note_size * 0.50
-                if index == 0:
-                    for ray_index in range(2):
-                        offset = ray_index * height * 0.018
-                        add_stroke(
-                            "label_risk_ray",
-                            _line_points(
-                                accent_x,
-                                accent_y - height * 0.028 + offset,
-                                accent_x - tick_dir * width * 0.026,
-                                accent_y - height * 0.042 + offset,
-                                count=3,
-                            ),
-                            color,
-                            4,
-                            accent_start + ray_index * 4,
-                            6,
-                            beat_id=beat_id,
-                        )
-                elif index == 1:
+                if annotation_type == "risk_ray":
+                    draw_risk_rays(accent_x, accent_y, red, accent_start, direction=-tick_dir, beat_id=beat_id)
+                elif annotation_type == "checkmark":
+                    draw_check_mark(accent_x, accent_y, green, accent_start, min(12, max(8, segment_span // 11)), beat_id=beat_id)
+                elif annotation_type == "crossout":
+                    draw_cross_mark(accent_x, accent_y, red, accent_start, min(14, max(9, segment_span // 10)), beat_id=beat_id)
+                elif annotation_type == "wavy_underline":
+                    draw_wavy_underline(label_x, label_y + note_size * 1.22, underline_w, yellow, accent_start, min(12, max(8, segment_span // 11)), beat_id=beat_id)
+                elif annotation_type == "route_trace":
+                    add_arrow(
+                        _curve_points(edge_x, edge_y, edge_x + tick_dir * width * 0.085, edge_y + height * 0.045, count=12, wave=height * 0.018),
+                        green,
+                        5,
+                        accent_start,
+                        min(16, max(9, segment_span // 10)),
+                        role="annotation_route_trace",
+                        beat_id=beat_id,
+                    )
+                elif annotation_type == "side_label":
                     draw_star(
                         accent_x,
                         accent_y - height * 0.018,
@@ -4892,19 +5257,7 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
                         beat_id=beat_id,
                     )
                 else:
-                    add_stroke(
-                        "label_check",
-                        [
-                            _point(accent_x - tick_dir * width * 0.022, accent_y),
-                            _point(accent_x - tick_dir * width * 0.008, accent_y + height * 0.018),
-                            _point(accent_x + tick_dir * width * 0.028, accent_y - height * 0.026),
-                        ],
-                        green,
-                        5,
-                        accent_start,
-                        min(12, max(8, segment_span // 11)),
-                        beat_id=beat_id,
-                    )
+                    draw_check_mark(accent_x, accent_y, green, accent_start, min(12, max(8, segment_span // 11)), beat_id=beat_id)
                 cursor = max(local_cursor + note_frames + 32, segment_end - 4)
             return min(duration - 8, cursor)
 
@@ -5065,6 +5418,225 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             add_text(fallback_label(3, "Key change"), x2 - box_w * 0.14, y + box_h + height * 0.09, body_size, violet, cursor + 8, 22, box_w * 1.35)
             cursor += 32
         return add_process_doodles(cursor, x3 + box_w * 0.30, y + box_h + height * 0.08)
+
+    def build_railway_permission_gate(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        b2 = beat_id_for(2)
+        b3 = beat_id_for(3)
+        icon_y = diagram_top + height * 0.12
+        icon_w = width * 0.125
+        icon_h = height * 0.145
+        centers = [board_center_x - width * 0.29, board_center_x, board_center_x + width * 0.29]
+
+        doc_x = centers[0] - icon_w * 0.5
+        doc_y = icon_y
+        add_stroke("railway_document", _rect_points(doc_x, doc_y, icon_w, icon_h), blue, 4, cursor, 16, close=True, beat_id=b0)
+        add_stroke("railway_document_fold", [_point(doc_x + icon_w * 0.72, doc_y), _point(doc_x + icon_w, doc_y + icon_h * 0.24), _point(doc_x + icon_w * 0.72, doc_y + icon_h * 0.24), _point(doc_x + icon_w * 0.72, doc_y)], blue, 3, cursor + 10, 10, close=True, beat_id=b0)
+        for line_index in range(3):
+            add_stroke("railway_document_line", _line_points(doc_x + icon_w * 0.16, doc_y + icon_h * (0.30 + line_index * 0.18), doc_x + icon_w * 0.62, doc_y + icon_h * (0.30 + line_index * 0.18), count=4), ink, 3, cursor + 18 + line_index * 4, 6, beat_id=b0)
+        draw_check_mark(doc_x + icon_w * 0.76, doc_y + icon_h * 0.68, green, cursor + 32, 10, 0.72, b0)
+        add_text("作业计划", doc_x - width * 0.006, doc_y + icon_h + height * 0.030, body_size, blue, cursor + 38, 20, icon_w * 1.2, max_chars=4, beat_id=b0)
+
+        scroll_x = centers[1] - icon_w * 0.50
+        scroll_y = icon_y + height * 0.006
+        add_stroke("railway_order_scroll", _arc_points(scroll_x + icon_w * 0.16, scroll_y + icon_h * 0.22, icon_w * 0.13, icon_h * 0.18, math.pi * 0.55, math.pi * 1.55, count=10), violet, 4, cursor + 10, 12, beat_id=b1)
+        add_stroke("railway_order_scroll", _rect_points(scroll_x + icon_w * 0.15, scroll_y + icon_h * 0.10, icon_w * 0.70, icon_h * 0.70), violet, 4, cursor + 20, 16, close=False, beat_id=b1)
+        add_stroke("railway_order_seal", _circle_points(scroll_x + icon_w * 0.66, scroll_y + icon_h * 0.59, icon_w * 0.080, icon_h * 0.080, count=14), red, 4, cursor + 38, 9, beat_id=b1)
+        add_stroke("railway_radio_wave", _arc_points(scroll_x + icon_w * 0.92, scroll_y + icon_h * 0.35, icon_w * 0.12, icon_h * 0.20, -math.pi * 0.35, math.pi * 0.35, count=9), green, 3, cursor + 44, 8, beat_id=b1)
+        add_text("调度命令", scroll_x - width * 0.006, scroll_y + icon_h + height * 0.030, body_size, violet, cursor + 50, 20, icon_w * 1.35, max_chars=4, beat_id=b1)
+
+        track_x = centers[2] - icon_w * 0.52
+        track_y = icon_y + height * 0.018
+        for rail_offset in [0.20, 0.54]:
+            add_stroke("railway_track", _line_points(track_x + icon_w * rail_offset, track_y, track_x + icon_w * (rail_offset + 0.12), track_y + icon_h * 0.82, count=8), ink, 4, cursor + 20, 16, beat_id=b2)
+        for sleeper_index in range(6):
+            sy = track_y + icon_h * (0.09 + sleeper_index * 0.13)
+            add_stroke("railway_sleeper", _line_points(track_x + icon_w * 0.17, sy, track_x + icon_w * 0.73, sy + icon_h * 0.020, count=4), ink, 2, cursor + 34 + sleeper_index * 3, 5, beat_id=b2)
+        add_stroke("railway_boundary", _line_points(track_x + icon_w * 0.80, track_y + icon_h * 0.08, track_x + icon_w * 0.93, track_y + icon_h * 0.86, count=7), red, 5, cursor + 54, 12, beat_id=b2)
+        add_text("线路边界", track_x - width * 0.004, track_y + icon_h + height * 0.030, body_size, red, cursor + 64, 20, icon_w * 1.28, max_chars=4, beat_id=b2)
+        cursor += 86
+
+        gate_x = board_center_x
+        gate_y = diagram_top + height * 0.48
+        for center in centers:
+            add_arrow(_curve_points(center, icon_y + icon_h + height * 0.060, gate_x, gate_y - height * 0.030, count=13, wave=height * 0.035), blue if center < gate_x else green, 4, cursor, 16, role="permission_merge", beat_id=b3)
+            cursor += 9
+        merge_label = annotation_label("short_arrow", "汇合")
+        add_text(merge_label, gate_x - width * 0.040, gate_y - height * 0.135, body_size, blue, cursor, 18, width * 0.10, emphasis=True, max_chars=4, beat_id=b3)
+        cursor += 20
+
+        post_h = height * 0.19
+        post_gap = width * 0.17
+        add_stroke("permission_gate", _line_points(gate_x - post_gap * 0.5, gate_y, gate_x - post_gap * 0.5, gate_y + post_h, count=5), ink, 5, cursor, 10, beat_id=b3)
+        add_stroke("permission_gate", _line_points(gate_x + post_gap * 0.5, gate_y, gate_x + post_gap * 0.5, gate_y + post_h, count=5), ink, 5, cursor + 7, 10, beat_id=b3)
+        add_stroke("permission_gate_top", _arc_points(gate_x, gate_y + height * 0.020, post_gap * 0.52, height * 0.075, math.pi, math.pi * 2, count=16), green, 5, cursor + 16, 14, beat_id=b3)
+        add_stroke("permission_gate_bar", _line_points(gate_x - post_gap * 0.42, gate_y + post_h * 0.58, gate_x + post_gap * 0.42, gate_y + post_h * 0.44, count=6), green, 5, cursor + 28, 10, beat_id=b3)
+        add_text("许可闸门", gate_x - width * 0.060, gate_y + post_h + height * 0.020, body_size, green, cursor + 38, 20, width * 0.14, emphasis=True, max_chars=4, beat_id=b3)
+        draw_wavy_underline(gate_x - width * 0.062, gate_y + post_h + height * 0.082, width * 0.135, yellow, cursor + 58, 12, b3)
+        add_text(annotation_label("side_label", "缺一不可"), gate_x + width * 0.145, gate_y + height * 0.020, body_size, violet, cursor + 70, 20, width * 0.16, max_chars=5, beat_id=b3)
+        draw_cross_mark(gate_x - width * 0.175, gate_y + post_h * 0.58, red, cursor + 74, 12, 0.95, b3)
+        add_text(annotation_label("crossout", "禁止上道"), gate_x - width * 0.280, gate_y + post_h * 0.42, body_size, red, cursor + 82, 22, width * 0.17, emphasis=True, max_chars=5, beat_id=b3)
+        add_teacher_takeaway("三项齐再上道", gate_x + width * 0.125, gate_y + post_h * 0.70, green, cursor + 104, b3, max_chars=7)
+        return cursor + 142
+
+    def build_railway_contact_loop(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        b2 = beat_id_for(2)
+        top_node = (board_center_x, diagram_top + height * 0.14, "驻站联络员", violet, b0)
+        left_node = (board_center_x - width * 0.27, diagram_top + height * 0.43, "作业负责人", blue, b0)
+        right_node = (board_center_x + width * 0.27, diagram_top + height * 0.43, "现场防护员", green, b0)
+        nodes = [top_node, left_node, right_node]
+        for x, y, label, color, beat in nodes:
+            draw_person_icon(x, y, color, cursor, 1.25, beat)
+            add_stroke("railway_headset", _arc_points(x + width * 0.020, y - height * 0.010, width * 0.025, height * 0.035, -math.pi * 0.45, math.pi * 0.45, count=9), color, 3, cursor + 25, 8, beat_id=beat)
+            add_stroke("railway_radio_wave", _arc_points(x + width * 0.050, y + height * 0.020, width * 0.035, height * 0.055, -math.pi * 0.35, math.pi * 0.35, count=9), color, 3, cursor + 32, 8, beat_id=beat)
+            add_text(label, x - width * 0.080, y + height * 0.185, body_size, color, cursor + 42, 20, width * 0.16, max_chars=5, beat_id=beat)
+            cursor += 22
+
+        arrow_start = cursor + 8
+        confirm_label = annotation_label("short_arrow", "复诵确认")
+        add_arrow(_curve_points(left_node[0] + width * 0.060, left_node[1] - height * 0.020, top_node[0] - width * 0.060, top_node[1] + height * 0.105, count=14, wave=-height * 0.035), blue, 5, arrow_start, 18, role="contact_loop", beat_id=b1)
+        add_arrow(_curve_points(top_node[0] + width * 0.060, top_node[1] + height * 0.105, right_node[0] - width * 0.060, right_node[1] - height * 0.020, count=14, wave=-height * 0.035), violet, 5, arrow_start + 18, 18, role="contact_loop", beat_id=b1)
+        add_arrow(_curve_points(right_node[0] - width * 0.070, right_node[1] + height * 0.130, left_node[0] + width * 0.070, left_node[1] + height * 0.130, count=16, wave=height * 0.050), green, 5, arrow_start + 36, 18, role="contact_loop", beat_id=b1)
+        add_text(confirm_label, board_center_x - width * 0.058, diagram_top + height * 0.333, body_size, blue, arrow_start + 54, 20, width * 0.14, emphasis=True, max_chars=4, beat_id=b1)
+        draw_wavy_underline(board_center_x - width * 0.060, diagram_top + height * 0.394, width * 0.125, yellow, arrow_start + 72, 12, b1)
+        badge_y = diagram_top + height * 0.270
+        add_step_badge("1", board_center_x - width * 0.175, badge_y, blue, arrow_start + 78, b1)
+        add_text("报清", board_center_x - width * 0.150, badge_y - height * 0.025, max(18, body_size - 8), blue, arrow_start + 86, 14, width * 0.08, max_chars=2, beat_id=b1)
+        add_step_badge("2", board_center_x + width * 0.105, badge_y, violet, arrow_start + 94, b1)
+        add_text("复诵", board_center_x + width * 0.130, badge_y - height * 0.025, max(18, body_size - 8), violet, arrow_start + 102, 14, width * 0.08, max_chars=2, beat_id=b1)
+        add_step_badge("3", board_center_x, diagram_top + height * 0.555, green, arrow_start + 110, b1)
+        add_text("回传", board_center_x + width * 0.025, diagram_top + height * 0.530, max(18, body_size - 8), green, arrow_start + 118, 14, width * 0.08, max_chars=2, beat_id=b1)
+
+        break_x = board_center_x + width * 0.18
+        break_y = diagram_top + height * 0.28
+        add_stroke("contact_broken_link", _line_points(break_x - width * 0.040, break_y, break_x + width * 0.036, break_y + height * 0.052, count=3), red, 4, arrow_start + 86, 8, beat_id=b2)
+        draw_cross_mark(break_x + width * 0.012, break_y + height * 0.028, red, arrow_start + 94, 12, 0.95, b2)
+        add_text(annotation_label("crossout", "通信中断"), break_x + width * 0.045, break_y - height * 0.020, body_size, red, arrow_start + 104, 22, width * 0.16, emphasis=True, max_chars=4, beat_id=b2)
+        add_text(annotation_label("side_label", "立即停止"), board_center_x - width * 0.082, diagram_top + height * 0.640, body_size, red, arrow_start + 122, 22, width * 0.18, emphasis=True, max_chars=4, beat_id=b2)
+        draw_risk_rays(board_center_x + width * 0.055, diagram_top + height * 0.660, red, arrow_start + 136, direction=1, beat_id=b2)
+        add_teacher_takeaway("断联即停", board_center_x + width * 0.155, diagram_top + height * 0.615, red, arrow_start + 150, b2, max_chars=4)
+        return arrow_start + 190
+
+    def build_railway_ppe_check(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        b2 = beat_id_for(2)
+        worker_x = board_center_x - width * 0.16
+        head_y = diagram_top + height * 0.12
+        torso_y = head_y + height * 0.115
+        body_h = height * 0.265
+
+        add_stroke("ppe_hardhat", _arc_points(worker_x, head_y, width * 0.070, height * 0.055, math.pi, math.pi * 2, count=15), yellow, 5, cursor, 14, beat_id=b0)
+        add_stroke("ppe_hardhat_brim", _line_points(worker_x - width * 0.080, head_y + height * 0.004, worker_x + width * 0.080, head_y + height * 0.004, count=6), yellow, 5, cursor + 12, 8, beat_id=b0)
+        add_stroke("ppe_head", _circle_points(worker_x, head_y + height * 0.055, width * 0.044, height * 0.052, count=18), ink, 4, cursor + 20, 12, beat_id=b0)
+        vest = [
+            _point(worker_x - width * 0.075, torso_y),
+            _point(worker_x + width * 0.075, torso_y),
+            _point(worker_x + width * 0.115, torso_y + body_h),
+            _point(worker_x - width * 0.115, torso_y + body_h),
+            _point(worker_x - width * 0.075, torso_y),
+        ]
+        add_stroke("ppe_vest", vest, green, 5, cursor + 34, 18, close=True, beat_id=b0)
+        add_stroke("ppe_reflective_strip", _line_points(worker_x - width * 0.040, torso_y + height * 0.030, worker_x + width * 0.010, torso_y + body_h * 0.78, count=6), yellow, 4, cursor + 52, 10, beat_id=b0)
+        add_stroke("ppe_reflective_strip", _line_points(worker_x + width * 0.040, torso_y + height * 0.030, worker_x - width * 0.010, torso_y + body_h * 0.78, count=6), yellow, 4, cursor + 58, 10, beat_id=b0)
+        add_stroke("ppe_arm", _line_points(worker_x - width * 0.085, torso_y + height * 0.045, worker_x - width * 0.155, torso_y + height * 0.150, count=5), ink, 4, cursor + 66, 9, beat_id=b0)
+        add_stroke("ppe_arm", _line_points(worker_x + width * 0.085, torso_y + height * 0.045, worker_x + width * 0.155, torso_y + height * 0.150, count=5), ink, 4, cursor + 72, 9, beat_id=b0)
+        add_stroke("ppe_leg", _line_points(worker_x - width * 0.050, torso_y + body_h, worker_x - width * 0.080, torso_y + body_h + height * 0.150, count=5), ink, 5, cursor + 80, 9, beat_id=b0)
+        add_stroke("ppe_leg", _line_points(worker_x + width * 0.050, torso_y + body_h, worker_x + width * 0.080, torso_y + body_h + height * 0.150, count=5), ink, 5, cursor + 86, 9, beat_id=b0)
+        add_stroke("ppe_boot", _line_points(worker_x - width * 0.105, torso_y + body_h + height * 0.155, worker_x - width * 0.045, torso_y + body_h + height * 0.155, count=4), red, 5, cursor + 94, 8, beat_id=b0)
+        add_stroke("ppe_boot", _line_points(worker_x + width * 0.045, torso_y + body_h + height * 0.155, worker_x + width * 0.105, torso_y + body_h + height * 0.155, count=4), red, 5, cursor + 99, 8, beat_id=b0)
+
+        add_text(annotation_label("side_label", "安全帽"), worker_x - width * 0.265, head_y - height * 0.028, body_size, yellow, cursor + 108, 20, width * 0.13, emphasis=True, max_chars=4, beat_id=b0)
+        add_arrow(_curve_points(worker_x - width * 0.130, head_y, worker_x - width * 0.055, head_y, count=8, wave=-height * 0.014), yellow, 4, cursor + 124, 12, role="ppe_callout", beat_id=b0)
+        draw_check_mark(worker_x - width * 0.118, head_y - height * 0.010, green, cursor + 133, 9, 0.55, b0)
+        add_text("反光背心", worker_x - width * 0.292, torso_y + height * 0.128, body_size, green, cursor + 136, 20, width * 0.16, max_chars=4, beat_id=b0)
+        add_arrow(_curve_points(worker_x - width * 0.135, torso_y + height * 0.155, worker_x - width * 0.040, torso_y + height * 0.160, count=8, wave=height * 0.015), green, 4, cursor + 152, 12, role="ppe_callout", beat_id=b0)
+        draw_check_mark(worker_x - width * 0.118, torso_y + height * 0.155, green, cursor + 161, 9, 0.55, b0)
+        add_text("防护鞋", worker_x - width * 0.248, torso_y + body_h + height * 0.122, body_size, red, cursor + 164, 18, width * 0.12, max_chars=3, beat_id=b0)
+        add_arrow(_curve_points(worker_x - width * 0.118, torso_y + body_h + height * 0.130, worker_x - width * 0.070, torso_y + body_h + height * 0.152, count=7, wave=-height * 0.010), red, 4, cursor + 178, 10, role="ppe_callout", beat_id=b0)
+        draw_check_mark(worker_x - width * 0.118, torso_y + body_h + height * 0.132, green, cursor + 187, 9, 0.55, b0)
+        cursor += 194
+
+        tray_x = board_center_x + width * 0.120
+        tray_y = diagram_top + height * 0.260
+        tray_w = width * 0.270
+        tray_h = height * 0.235
+        add_stroke("tool_tray", _rect_points(tray_x, tray_y, tray_w, tray_h), ink, 5, cursor, 16, close=True, beat_id=b1)
+        radio_x = tray_x + tray_w * 0.12
+        radio_y = tray_y + tray_h * 0.18
+        add_stroke("tool_radio", _rect_points(radio_x, radio_y, tray_w * 0.20, tray_h * 0.48), blue, 4, cursor + 16, 12, close=True, beat_id=b1)
+        add_stroke("tool_radio_antenna", _line_points(radio_x + tray_w * 0.16, radio_y, radio_x + tray_w * 0.22, radio_y - tray_h * 0.18, count=4), blue, 3, cursor + 27, 7, beat_id=b1)
+        add_stroke("tool_wrench", _line_points(tray_x + tray_w * 0.43, tray_y + tray_h * 0.58, tray_x + tray_w * 0.68, tray_y + tray_h * 0.28, count=7), violet, 5, cursor + 36, 12, beat_id=b1)
+        add_stroke("tool_flashlight", _line_points(tray_x + tray_w * 0.70, tray_y + tray_h * 0.66, tray_x + tray_w * 0.88, tray_y + tray_h * 0.52, count=5), green, 7, cursor + 46, 10, beat_id=b1)
+        add_text("对讲机", radio_x - width * 0.010, radio_y + tray_h * 0.58, max(18, body_size - 6), blue, cursor + 58, 16, tray_w * 0.27, max_chars=3, beat_id=b1)
+        add_text("工具清点", tray_x + tray_w * 0.32, tray_y - height * 0.070, body_size, violet, cursor + 70, 20, width * 0.14, emphasis=True, max_chars=4, beat_id=b1)
+        draw_check_mark(tray_x + tray_w * 0.88, tray_y - height * 0.043, green, cursor + 86, 12, 0.90, b1)
+        add_text(annotation_label("checkmark", "齐全"), tray_x + tray_w * 0.88 + width * 0.025, tray_y - height * 0.070, body_size, green, cursor + 96, 18, width * 0.10, max_chars=2, beat_id=b1)
+        add_teacher_takeaway("逐项点名", tray_x + tray_w * 0.48, tray_y + tray_h + height * 0.035, violet, cursor + 108, b1, max_chars=4)
+
+        missing_x = tray_x + tray_w * 0.76
+        missing_y = tray_y + tray_h * 0.77
+        add_stroke("missing_slot", _line_points(missing_x - width * 0.035, missing_y, missing_x + width * 0.035, missing_y, count=4), red, 4, cursor + 142, 8, beat_id=b2)
+        draw_cross_mark(missing_x + width * 0.058, missing_y, red, cursor + 150, 12, 0.85, b2)
+        add_text(annotation_label("crossout", "缺项即停"), tray_x + tray_w * 0.42, tray_y + tray_h + height * 0.095, body_size, red, cursor + 162, 22, width * 0.18, emphasis=True, max_chars=4, beat_id=b2)
+        draw_risk_rays(tray_x + tray_w * 0.36, tray_y + tray_h + height * 0.115, red, cursor + 180, direction=-1, beat_id=b2)
+        return cursor + 202
+
+    def build_railway_minute_review(start: int) -> int:
+        cursor = start
+        b0 = beat_id_for(0)
+        b1 = beat_id_for(1)
+        b2 = beat_id_for(2)
+        route_label = annotation_label("route_trace", "复核路径")
+        route_points = _curve_points(
+            board_center_x - width * 0.36,
+            diagram_top + height * 0.43,
+            board_center_x + width * 0.18,
+            diagram_top + height * 0.25,
+            count=28,
+            wave=-height * 0.090,
+        )
+        add_arrow(route_points, green, 6, cursor, 28, role="minute_review_route", beat_id=b0)
+        add_text(route_label, board_center_x - width * 0.365, diagram_top + height * 0.315, body_size, green, cursor + 26, 20, width * 0.16, emphasis=True, max_chars=4, beat_id=b0)
+        cursor += 50
+        labels = ["人", "证", "令", "物", "路", "护"]
+        checkpoint_indices = [1, 6, 11, 16, 21, 26]
+        for index, label in enumerate(labels):
+            point = route_points[checkpoint_indices[index]]
+            color = [blue, violet, red, green, blue, violet][index]
+            add_stroke("review_checkpoint", _circle_points(point["x"], point["y"], width * 0.030, height * 0.040, count=16), color, 4, cursor, 10, beat_id=b0)
+            add_text(label, point["x"] - width * 0.012, point["y"] - height * 0.024, body_size, color, cursor + 8, 12, width * 0.04, max_chars=1, beat_id=b0)
+            cursor += 13
+        add_text("人证令物路护", board_center_x - width * 0.330, diagram_top + height * 0.555, max(22, body_size - 4), violet, cursor + 4, 18, width * 0.20, emphasis=True, max_chars=6, beat_id=b0)
+        add_arrow(_curve_points(board_center_x - width * 0.195, diagram_top + height * 0.555, board_center_x - width * 0.075, diagram_top + height * 0.485, count=10, wave=-height * 0.016), violet, 4, cursor + 18, 12, role="review_legend_link", beat_id=b0)
+        cursor += 38
+
+        split_x = route_points[-1]["x"] + width * 0.035
+        split_y = route_points[-1]["y"]
+        go_x = split_x + width * 0.190
+        go_y = split_y - height * 0.095
+        stop_x = split_x + width * 0.190
+        stop_y = split_y + height * 0.130
+        add_arrow(_curve_points(split_x, split_y, go_x - width * 0.045, go_y, count=12, wave=-height * 0.040), green, 5, cursor, 16, role="review_go", beat_id=b1)
+        add_stroke("go_gate", _rect_points(go_x - width * 0.040, go_y - height * 0.045, width * 0.105, height * 0.090), green, 4, cursor + 14, 12, close=True, beat_id=b1)
+        add_text(annotation_label("short_arrow", "上道"), go_x - width * 0.022, go_y - height * 0.026, body_size, green, cursor + 24, 16, width * 0.08, max_chars=2, beat_id=b1)
+        draw_check_mark(go_x + width * 0.090, go_y, green, cursor + 36, 10, 0.75, b1)
+        cursor += 52
+
+        add_arrow(_curve_points(split_x, split_y + height * 0.020, stop_x - width * 0.048, stop_y, count=12, wave=height * 0.044), red, 5, cursor, 16, role="review_stop", beat_id=b2)
+        add_stroke("stop_bar", _line_points(stop_x - width * 0.055, stop_y - height * 0.045, stop_x + width * 0.055, stop_y + height * 0.045, count=6), red, 6, cursor + 14, 10, beat_id=b2)
+        add_text(annotation_label("risk_ray", "停止上道"), stop_x + width * 0.010, stop_y + height * 0.060, body_size, red, cursor + 24, 18, width * 0.16, emphasis=True, max_chars=4, beat_id=b2)
+        draw_risk_rays(stop_x + width * 0.115, stop_y + height * 0.020, red, cursor + 40, direction=1, beat_id=b2)
+        add_text(annotation_label("side_label", "不符即停"), board_center_x - width * 0.055, diagram_top + height * 0.655, body_size + 2, blue, cursor + 56, 22, width * 0.15, emphasis=True, max_chars=4, beat_id=b2)
+        draw_wavy_underline(board_center_x - width * 0.056, diagram_top + height * 0.720, width * 0.135, yellow, cursor + 76, 12, b2)
+        add_teacher_takeaway("一分钟内说清", board_center_x - width * 0.185, diagram_top + height * 0.690, violet, cursor + 88, b2, max_chars=6)
+        return cursor + 128
 
     def build_comparison_transform(start: int) -> int:
         y = diagram_top + height * 0.16
@@ -5790,6 +6362,20 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
             return build_renewal_summary_rich
         return None
 
+    def select_railway_builder():
+        corpus_local = f"{_scene_corpus(scene)} {visual_anchor}".lower()
+        if not _contains_any(corpus_local, ["铁路", "上道", "站场", "道岔", "信号机", "防护员", "调度命令", "对讲机", "ppe"]):
+            return None
+        if _contains_any(corpus_local, ["ppe", "安全帽", "反光背心", "防护鞋", "对讲机", "工具清点"]):
+            return build_railway_ppe_check
+        if _contains_any(corpus_local, ["三方联络", "驻站联络员", "现场防护员", "复诵确认", "通信中断"]):
+            return build_railway_contact_loop
+        if _contains_any(corpus_local, ["一分钟复核", "六项复核", "复核路线", "铁律"]):
+            return build_railway_minute_review
+        if _contains_any(corpus_local, ["作业计划", "调度命令", "线路边界", "许可闸门", "命令和边界"]):
+            return build_railway_permission_gate
+        return None
+
     cursor = 0
     title_size = 58 if width >= 1600 else 44
     body_size = 32 if width >= 1600 else 26
@@ -5820,9 +6406,11 @@ def _build_fallback_scene_spec(scene: Scene, scene_index: int, fps: int, width: 
     elif is_chalkboard:
         cursor = build_chalkboard_derivation(cursor)
     else:
+        railway_builder = select_railway_builder()
         seven_habits_builder = select_seven_habits_builder()
-        cursor = (seven_habits_builder or builders.get(diagram_kind, build_process_flow))(cursor)
+        cursor = (railway_builder or seven_habits_builder or builders.get(diagram_kind, build_process_flow))(cursor)
 
+    duration = _stretch_audio_segments_for_draw_workload(draw_ops, texts, audio_segments, duration, fps)
     _retime_draw_ops_to_audio_segments(draw_ops, audio_segments, duration)
     return {
         "title": scene.title,
@@ -5888,7 +6476,7 @@ type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: nu
 type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean; markerFillOpacity?: number };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
 type RasterStrokeSpec = { opId: string; d: string; revealWidth: number; dashLength: number };
-type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[]; renderMode?: "trace" | "direct"; directAppearFrame?: number };
+type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[]; renderMode?: "trace" | "direct"; fit?: "contain" | "cover"; directAppearFrame?: number };
 type AudioSegmentSpec = { id: string; index?: number; startFrame: number; endFrame: number; duration: number; audioStartFrame?: number; audioEndFrame?: number; audioSequenceDuration?: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
 type SceneSpec = {
   title: string;
@@ -6197,6 +6785,7 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
           top: reveal.y,
           width: reveal.width,
           height: reveal.height,
+          objectFit: reveal.fit === "cover" ? "cover" : "fill",
           opacity,
           pointerEvents: "none",
           zIndex: 4,
