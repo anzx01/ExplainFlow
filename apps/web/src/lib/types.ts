@@ -130,6 +130,33 @@ export interface AnnotationPlanItem {
   layer: "renderer" | string;
 }
 
+export interface RenderRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface RenderReveal {
+  startMs: number;
+  durationMs: number;
+  protectedRegions: RenderRegion[];
+  ink_weight?: number;
+  color_weight?: number;
+}
+
+export interface RenderElement {
+  id: string;
+  sequence: number;
+  parallelGroup?: string | null;
+  narrativeRole?: string;
+  subtitle?: string | null;
+  region: RenderRegion;
+  reveal: RenderReveal;
+  points?: Array<[number, number]>;
+  source?: "generated" | "authored" | string;
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -157,6 +184,9 @@ export interface Scene {
   visual_style?: string | null;
   pen_style?: PenStyleId | string | null;
   qa_fix_hint?: string | null;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  renderElements?: RenderElement[];
 }
 
 export interface Storyboard {

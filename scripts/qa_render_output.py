@@ -14,6 +14,48 @@ from pathlib import Path
 from typing import Any
 
 
+def render_contract_checks(storyboard: dict[str, Any]) -> list[dict[str, Any]]:
+    checks: list[dict[str, Any]] = []
+    errors: list[str] = []
+    warnings: list[str] = []
+    for index, scene in enumerate(storyboard.get("scenes") or []):
+        sid = scene.get("id") or f"scene_{index}"
+        width = int(scene.get("canvas_width", scene.get("canvasWidth", 1920)) or 1920)
+        height = int(scene.get("canvas_height", scene.get("canvasHeight", 1080)) or 1080)
+        elements = scene.get("render_elements", scene.get("renderElements", [])) or []
+        ordered = sorted(elements, key=lambda e: (int(e.get("sequence", 0)), str(e.get("id", ""))))
+        previous_sequence = 0
+        previous_end = 0
+        previous_parallel_group = None
+        for element in ordered:
+            eid = element.get("id") or "element"
+            sequence = int(element.get("sequence", 0))
+            region = element.get("region") or {}
+            x, y = int(region.get("x", -1)), int(region.get("y", -1))
+            rw, rh = int(region.get("width", 0)), int(region.get("height", 0))
+            if sequence <= previous_sequence:
+                errors.append(f"{sid}/{eid}: sequence is not strictly increasing")
+            previous_sequence = sequence
+            if x < 0 or y < 0 or rw <= 0 or rh <= 0 or x + rw > width or y + rh > height:
+                errors.append(f"{sid}/{eid}: region is outside {width}x{height} canvas")
+            reveal = element.get("reveal") or {}
+            start = int(reveal.get("start_ms", reveal.get("startMs", 0)) or 0)
+            duration = int(reveal.get("duration_ms", reveal.get("durationMs", 0)) or 0)
+            parallel_group = element.get("parallel_group", element.get("parallelGroup"))
+            if duration <= 0:
+                errors.append(f"{sid}/{eid}: duration must be positive")
+            if start < previous_end and not (parallel_group and parallel_group == previous_parallel_group):
+                errors.append(f"{sid}/{eid}: reveal overlaps previous element")
+            previous_end = max(previous_end, start + duration)
+            previous_parallel_group = parallel_group
+        duration_ms = int(float(scene.get("duration_estimate", 0) or 0) * 1000)
+        if elements and duration_ms - previous_end < 500:
+            warnings.append(f"{sid}: final artwork hold is shorter than 500ms")
+    checks.append(check(not errors, "render_contract", "error" if errors else "info", "Render contract is valid" if not errors else f"{len(errors)} render contract error(s)", details={"errors": errors[:20]} if errors else None, suggestion="Fix scene renderElements sequence, regions, and reveal timing before rendering."))
+    checks.append(check(not warnings, "render_contract_hold", "warning" if warnings else "info", "All scenes keep a final hold" if not warnings else f"{len(warnings)} scene(s) have a short final hold", details={"warnings": warnings[:20]} if warnings else None, suggestion="Leave at least 500ms of complete artwork at the end of every scene."))
+    return checks
+
+
 def run(cmd: list[str], timeout: int = 60) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, check=True, capture_output=True, text=True, timeout=timeout)
 
@@ -41,9 +83,9 @@ def ffprobe(video_path: Path) -> dict[str, Any]:
     return json.loads(proc.stdout or "{}")
 
 
-def extract_frame(video_path: Path, duration: float) -> Path:
-    frame_path = Path(tempfile.gettempdir()) / f"explainflow_qa_{video_path.stem}.ppm"
-    seek_at = max(0.2, min(max(duration * 0.5, 0.2), 3.0))
+def extract_frame(video_path: Path, duration: float, position: float = 0.5, suffix: str = "mid") -> Path:
+    frame_path = Path(tempfile.gettempdir()) / f"explainflow_qa_{video_path.stem}_{suffix}.ppm"
+    seek_at = max(0.05, min(max(duration * position, 0.05), max(duration - 0.05, 0.05)))
     run(
         [
             "ffmpeg",
@@ -249,22 +291,40 @@ def main() -> int:
                 )
             )
             if duration > 0:
-                frame = extract_frame(video, duration)
-                try:
-                    stats = read_ppm_brightness(frame)
-                    nonblank = stats["brightnessStdDev"] >= args.min_frame_stddev
+                samples = []
+                for suffix, position in (("opening", 0.05), ("middle", 0.5), ("ending", 0.95)):
+                    frame = extract_frame(video, duration, position, suffix)
+                    try:
+                        samples.append({"sample": suffix, **read_ppm_brightness(frame)})
+                    finally:
+                        frame.unlink(missing_ok=True)
+                flat = [sample for sample in samples if sample["brightnessStdDev"] < args.min_frame_stddev]
+                checks.append(
+                    check(
+                        not flat,
+                        "nonblank_frames",
+                        "error",
+                        "Opening, middle, and ending frames contain visible variation" if not flat else f"{len(flat)} sampled frame(s) look blank or flat",
+                        details={"samples": samples, "minStdDev": args.min_frame_stddev},
+                        suggestion="Regenerate scene images/code and inspect the opening, middle, and ending diagnostic frames.",
+                    )
+                )
+                video_streams = [s for s in streams if s.get("codec_type") == "video"]
+                audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+                if audio_streams and video_streams:
+                    video_duration = float(video_streams[0].get("duration") or duration)
+                    audio_duration = float(audio_streams[0].get("duration") or duration)
+                    delta = abs(video_duration - audio_duration)
                     checks.append(
                         check(
-                            nonblank,
-                            "nonblank_frame",
-                            "error",
-                            f"Frame brightness stddev {stats['brightnessStdDev']}",
-                            details={**stats, "minStdDev": args.min_frame_stddev},
-                            suggestion="Regenerate scene images/code; the sampled frame looks blank or flat.",
+                            delta <= 0.5,
+                            "audio_video_duration_delta",
+                            "warning" if delta > 0.5 else "info",
+                            f"Audio/video duration delta is {delta:.2f}s",
+                            details={"videoSeconds": video_duration, "audioSeconds": audio_duration, "deltaSeconds": delta},
+                            suggestion="Align narration audio and composition duration; avoid long silent tails or clipped speech.",
                         )
                     )
-                finally:
-                    frame.unlink(missing_ok=True)
         except Exception as exc:
             checks.append(
                 check(
@@ -280,6 +340,7 @@ def main() -> int:
         try:
             storyboard = json.loads(args.storyboard.read_text(encoding="utf-8"))
             checks.extend(storyboard_checks(storyboard))
+            checks.extend(render_contract_checks(storyboard))
         except Exception as exc:
             checks.append(
                 check(

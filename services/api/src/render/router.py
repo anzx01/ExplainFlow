@@ -3,8 +3,10 @@ from collections.abc import AsyncIterator
 
 import httpx
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+from pathlib import Path
 
-from src.core.llm import LLMUnavailableError, check_llm_connection
+from src.core.llm import LLMUnavailableError
 from .models import (
     BackgroundMusicLibrary,
     BulkDeleteJobsRequest,
@@ -12,11 +14,52 @@ from .models import (
     RenderJobRequest,
     RenderJobStatus,
     RenderJobSummary,
+    EnginePreviewRequest,
+    EnginePreviewResponse,
 )
+from .engine_adapter import PREVIEW_DIR, engine_status, render_engine_preview
 
 router = APIRouter(prefix="/render", tags=["render"])
 
 RENDER_SERVER = "http://localhost:3001"
+
+
+@router.get("/engine/status")
+async def get_engine_status() -> dict:
+    return engine_status()
+
+
+@router.post("/engine/preview", response_model=EnginePreviewResponse)
+async def create_engine_preview(req: EnginePreviewRequest) -> EnginePreviewResponse:
+    try:
+        output = await render_engine_preview(
+            req.image_url,
+            duration=req.duration,
+            fps=req.fps,
+            width=req.width,
+            height=req.height,
+            hand=req.hand,
+            stroke_detail=req.stroke_detail,
+            color_fill=req.color_fill,
+            color_fill_scope=req.color_fill_scope,
+        )
+        return EnginePreviewResponse(
+            ok=True,
+            scene_id=req.scene_id,
+            preview_url=f"/render/engine/preview/{output.name}",
+            file_size_bytes=output.stat().st_size,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/engine/preview/{filename}")
+async def get_engine_preview(filename: str) -> FileResponse:
+    safe_name = Path(filename).name
+    path = PREVIEW_DIR / safe_name
+    if path.suffix.lower() != ".mp4" or not path.exists():
+        raise HTTPException(status_code=404, detail="Preview not found")
+    return FileResponse(path, media_type="video/mp4", filename=safe_name)
 
 
 @contextlib.asynccontextmanager
@@ -35,7 +78,6 @@ async def _proxy(timeout: float = 5) -> AsyncIterator[httpx.AsyncClient]:
 @router.post("/job", response_model=RenderJobStatus)
 async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
     try:
-        await check_llm_connection()
         async with _proxy(timeout=10) as client:
             resp = await client.post(
                 f"{RENDER_SERVER}/render",

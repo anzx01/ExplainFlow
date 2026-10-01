@@ -3,7 +3,7 @@
  * 依赖: config.mjs, jobs.mjs, utils.mjs, tts.mjs
  */
 import { execFile } from "child_process";
-import { existsSync, statSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, statSync } from "fs";
 import { join } from "path";
 import { promisify } from "util";
 import sharp from "sharp";
@@ -45,6 +45,51 @@ function collectStoryboardQaChecks(storyboard) {
   const checks = [];
   const scenes = Array.isArray(storyboard?.scenes) ? storyboard.scenes : [];
   const storyboardText = JSON.stringify(storyboard ?? {});
+
+  const contractErrors = [];
+  const shortHolds = [];
+  for (const [sceneIndex, scene] of scenes.entries()) {
+    const sceneId = scene?.id ?? `scene_${sceneIndex}`;
+    const width = Number(scene?.canvasWidth ?? scene?.canvas_width ?? 1920);
+    const height = Number(scene?.canvasHeight ?? scene?.canvas_height ?? 1080);
+    const durationMs = Number(scene?.duration_estimate ?? 0) * 1000;
+    const elements = [...(scene?.renderElements ?? scene?.render_elements ?? [])]
+      .sort((a, b) => Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0));
+    let previousSequence = 0;
+    let previousEnd = 0;
+    let previousParallel = null;
+    for (const element of elements) {
+      const id = element?.id ?? "element";
+      const sequence = Number(element?.sequence ?? 0);
+      const region = element?.region ?? {};
+      const reveal = element?.reveal ?? {};
+      const start = Number(reveal?.startMs ?? reveal?.start_ms ?? 0);
+      const duration = Number(reveal?.durationMs ?? reveal?.duration_ms ?? 0);
+      const parallel = element?.parallelGroup ?? element?.parallel_group ?? null;
+      if (sequence <= previousSequence) contractErrors.push(`${sceneId}/${id}: sequence`);
+      if (Number(region.x) < 0 || Number(region.y) < 0 || Number(region.width) <= 0 || Number(region.height) <= 0 || Number(region.x) + Number(region.width) > width || Number(region.y) + Number(region.height) > height) {
+        contractErrors.push(`${sceneId}/${id}: region`);
+      }
+      if (start < previousEnd && !(parallel && parallel === previousParallel)) contractErrors.push(`${sceneId}/${id}: overlap`);
+      if (duration <= 0 || start + duration > durationMs) contractErrors.push(`${sceneId}/${id}: timing`);
+      previousSequence = sequence;
+      previousEnd = Math.max(previousEnd, start + duration);
+      previousParallel = parallel;
+    }
+    if (elements.length && durationMs - previousEnd < 500) shortHolds.push(sceneId);
+  }
+  checks.push(qaCheck(
+    "render_contract", contractErrors.length === 0, contractErrors.length ? "error" : "info",
+    contractErrors.length ? `${contractErrors.length} render contract error(s)` : "Render element regions and timing are valid",
+    contractErrors.length ? { errors: contractErrors.slice(0, 20) } : null,
+    contractErrors.length ? "Open the storyboard region/timeline editor and repair invalid sequence, region, or timing values." : null,
+  ));
+  checks.push(qaCheck(
+    "final_artwork_hold", shortHolds.length === 0, shortHolds.length ? "warning" : "info",
+    shortHolds.length ? `${shortHolds.length} scene(s) have less than 500ms final hold` : "Every scene keeps at least 500ms of completed artwork",
+    shortHolds.length ? { scenes: shortHolds } : null,
+    shortHolds.length ? "Shorten the last reveal or extend the scene duration." : null,
+  ));
 
   const hardTranslationTerms = ["互赖", "相互依赖赖", "interdependence 的"];
   const badTerm = hardTranslationTerms.find((term) => storyboardText.includes(term));
@@ -129,9 +174,11 @@ function collectStoryboardQaChecks(storyboard) {
   return checks;
 }
 
-async function extractQaFrame(videoPath, durationSeconds, jobId) {
-  const framePath = join(OUTPUT_DIR, `${jobId}_qa_frame.png`);
-  const seekAt = Math.max(0.2, Math.min(Math.max(0.2, durationSeconds * 0.5), 3));
+async function extractQaFrame(videoPath, durationSeconds, jobId, label, position) {
+  const diagnosticDir = join(OUTPUT_DIR, "qa", jobId);
+  mkdirSync(diagnosticDir, { recursive: true });
+  const framePath = join(diagnosticDir, `${label}.png`);
+  const seekAt = Math.max(0.05, Math.min(durationSeconds * position, Math.max(0.05, durationSeconds - 0.05)));
   await execFileAsync(
     FFMPEG_BINARY,
     ["-y", "-ss", String(seekAt), "-i", videoPath, "-frames:v", "1", "-vf", "scale=320:-1", framePath],
@@ -229,21 +276,23 @@ export async function runRenderQa(jobId, outputPath, storyboard, options = {}) {
   }
 
   if (mediaInfo?.durationSeconds) {
-    let framePath = null;
     try {
-      framePath = await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId);
-      const frame = await analyzeFrameNonBlank(framePath);
-      const isNonBlank = frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV;
+      const samples = [];
+      for (const [label, position] of [["opening", 0.03], ["middle", 0.5], ["ending", 0.97]]) {
+        const framePath = await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId, label, position);
+        samples.push({ label, path: framePath, ...(await analyzeFrameNonBlank(framePath)) });
+      }
+      const middle = samples.find((sample) => sample.label === "middle");
+      const ending = samples.find((sample) => sample.label === "ending");
+      const isNonBlank = [middle, ending].every((frame) => frame && frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV);
       addCheck(qaCheck(
-        "nonblank_frame", isNonBlank, "error",
-        isNonBlank ? `Frame has brightness stddev ${frame.brightnessStdDev}` : `Frame looks blank or flat; brightness stddev ${frame.brightnessStdDev}`,
-        { ...frame, minStdDev: MIN_RENDER_FRAME_STDDEV },
-        "Regenerate scene images/code; verify the composition renders visible board content and reference assets.",
+        "sampled_frames", isNonBlank, "error",
+        isNonBlank ? "Opening, middle, and ending diagnostics were captured; middle and ending contain visible content" : "Middle or ending diagnostic frame looks blank or flat",
+        { samples, minStdDev: MIN_RENDER_FRAME_STDDEV },
+        "Inspect outputs/qa/<job-id>/ and repair scene visibility, timing, or reference assets.",
       ));
     } catch (err) {
       addCheck(qaCheck("frame_extract", false, "error", `Could not extract QA frame: ${err.message}`, null, "Check ffmpeg installation and render again."));
-    } finally {
-      if (framePath) { try { unlinkSync(framePath); } catch {} }
     }
   }
 

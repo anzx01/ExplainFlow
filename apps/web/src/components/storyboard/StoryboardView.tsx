@@ -1,8 +1,11 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import type { Scene, Storyboard, AnimationInstruction } from "@/lib/types";
 import { penStyleLabel, videoStyleLabel } from "@/lib/constants";
+
+const StoryboardCanvasEditor = dynamic(() => import("./StoryboardCanvasEditor"), { ssr: false });
 
 interface Props {
   storyboard: Storyboard;
@@ -107,6 +110,7 @@ function SceneEditor({
   const isBusy = (action: string) => busyAction === `${scene.id}:${action}`;
   return (
     <div className="h-full flex flex-col overflow-y-auto p-5 space-y-5">
+      <StoryboardCanvasEditor scene={scene} onUpdate={(updates) => onUpdate?.(updates)} />
       <div>
         <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
           场景标题
@@ -318,7 +322,7 @@ export function StoryboardView({
       </div>
 
       {/* Edit panel */}
-      <div className="w-80 flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] overflow-hidden">
+      <div className="w-[820px] max-w-[58vw] flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] overflow-hidden">
         <div className="px-4 py-3 border-b border-[--border-subtle]">
           <p className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider">场景编辑</p>
         </div>

@@ -58,6 +58,32 @@ export interface DiagramPlan {
   required_labels: string[];
 }
 
+export interface RenderRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface RenderReveal {
+  startMs: number;
+  durationMs: number;
+  protectedRegions?: RenderRegion[];
+  inkWeight?: number;
+  colorWeight?: number;
+}
+
+export interface RenderElement {
+  id: string;
+  sequence: number;
+  parallelGroup?: string | null;
+  narrativeRole?: string;
+  subtitle?: string | null;
+  region: RenderRegion;
+  reveal: RenderReveal;
+  points?: Array<[number, number]>;
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -74,6 +100,9 @@ export interface Scene {
   diagram_plan?: DiagramPlan | null;
   // 由 server.mjs injectTextPaths() 注入
   titlePath?: SvgTextPath | null;
+  canvasWidth?: number;
+  canvasHeight?: number;
+  renderElements?: RenderElement[];
 }
 
 export interface Storyboard {

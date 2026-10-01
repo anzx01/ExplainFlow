@@ -26,6 +26,7 @@ from .quality import (
     _is_simple_trace_scene,
     _scene_required_label_count,
 )
+from ..render_contract import ensure_scene_contract_defaults
 
 def _best_scene_for_direct_reference(scenes: list[Scene]) -> Scene | None:
     candidates = [
@@ -177,6 +178,7 @@ def _ensure_mixed_visual_modes(storyboard: Storyboard, video_style: str, pen_sty
             )
 
     for scene in storyboard.scenes:
+        ensure_scene_contract_defaults(scene)
         _apply_pen_style_to_scene(scene, pen_style)
     return storyboard
 
@@ -279,6 +281,8 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         )
     storyboard = _ensure_mixed_visual_modes(storyboard, video_style, pen_style)
     storyboard = _ensure_core_teaching_fields(storyboard)
+    for scene in storyboard.scenes:
+        ensure_scene_contract_defaults(scene)
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
     return _sanitize_storyboard_narration(storyboard)
 

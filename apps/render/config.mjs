@@ -360,8 +360,9 @@ export const BROWSER_EXECUTABLE = firstExistingPath([
   findExecutableOnPath("chrome"),
   findExecutableOnPath("msedge"),
 ]);
-export const FFPROBE_BINARY = configuredExecutable(process.env.FFPROBE_PATH) || findWingetFfmpegBinary("ffprobe") || findExecutableOnPath("ffprobe") || "ffprobe";
-export const FFMPEG_BINARY = configuredExecutable(process.env.FFMPEG_PATH) || findWingetFfmpegBinary("ffmpeg") || findExecutableOnPath("ffmpeg") || "ffmpeg";
+const REMOTION_COMPOSITOR_DIR = join(__dirname, "node_modules", "@remotion", "compositor-win32-x64-msvc");
+export const FFPROBE_BINARY = configuredExecutable(process.env.FFPROBE_PATH) || findWingetFfmpegBinary("ffprobe") || findExecutableOnPath("ffprobe") || firstExistingPath([join(REMOTION_COMPOSITOR_DIR, "ffprobe.exe")]) || "ffprobe";
+export const FFMPEG_BINARY = configuredExecutable(process.env.FFMPEG_PATH) || findWingetFfmpegBinary("ffmpeg") || findExecutableOnPath("ffmpeg") || firstExistingPath([join(REMOTION_COMPOSITOR_DIR, "ffmpeg.exe")]) || "ffmpeg";
 
 // 样式配置（需要在此处加载，因为后续常量依赖它们）
 

@@ -9,9 +9,18 @@ dependencies = [
     "edge-tts>=7.2.8",
     "fastapi>=0.136.1",
     "httpx>=0.28.1",
+    "imageio-ffmpeg>=0.6",
+    "numpy>=1.26",
     "openai>=2.37.0",
+    "pillow>=10.3",
     "pydantic>=2.13.4",
     "pydantic-settings>=2.14.1",
     "python-dotenv>=1.2.2",
     "uvicorn[standard]>=0.47.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
 ]

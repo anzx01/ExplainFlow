@@ -17,7 +17,9 @@ const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
 
 type Point = { x: number; y: number };
-type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string };
+type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string; contractElementId?: string };
+type RectRegion = { x: number; y: number; width: number; height: number };
+type RenderElementSpec = { id: string; sequence: number; parallelGroup?: string | null; startFrame: number; endFrame: number; region: RectRegion; laterRegions: RectRegion[]; protectedRegions: RectRegion[] };
 type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number; markerStrokeWidth?: number; markerFillOpacity?: number };
 type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean; markerFillOpacity?: number };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
@@ -43,6 +45,7 @@ type SceneSpec = {
   referenceImageAsset?: string | null;
   rasterReveal?: RasterRevealSpec | null;
   subtitleText?: string | null;
+  renderElements?: RenderElementSpec[];
 };
 
 const scenes = __SCENES_JSON__ as SceneSpec[];
@@ -63,6 +66,25 @@ const sceneBackground = (scene: SceneSpec) => {
 };
 const sceneCaptionColor = (scene: SceneSpec) =>
   scene.boardMode === "chalkboard" || scene.visualStyle === "math_chalkboard" ? "#F6F2E9" : "#111318";
+
+const maskIdForOp = (scene: SceneSpec, op: DrawOp) =>
+  op.contractElementId && scene.renderElements?.some((item) => item.id === op.contractElementId)
+    ? `contract-mask-${op.contractElementId.replace(/[^a-zA-Z0-9_-]/g, "-")}`
+    : undefined;
+
+const ContractMasks = ({ scene }: { scene: SceneSpec }) => (
+  <defs>
+    {(scene.renderElements ?? []).map((element) => (
+      <mask key={element.id} id={`contract-mask-${element.id.replace(/[^a-zA-Z0-9_-]/g, "-")}`} maskUnits="userSpaceOnUse">
+        <rect x="0" y="0" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} fill="black" />
+        <rect x={element.region.x} y={element.region.y} width={element.region.width} height={element.region.height} fill="white" />
+        {[...element.laterRegions, ...element.protectedRegions].map((region, index) => (
+          <rect key={index} x={region.x} y={region.y} width={region.width} height={region.height} fill="black" />
+        ))}
+      </mask>
+    ))}
+  </defs>
+);
 
 const progressForOp = (frame: number, op: DrawOp) => {
   const baseConfig = {
@@ -199,7 +221,7 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
   );
 };
 
-const DrawGlyphPath = ({ spec, op }: { spec: GlyphPathSpec; op: DrawOp }) => {
+const DrawGlyphPath = ({ scene, spec, op }: { scene: SceneSpec; spec: GlyphPathSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
@@ -210,7 +232,7 @@ const DrawGlyphPath = ({ spec, op }: { spec: GlyphPathSpec; op: DrawOp }) => {
       })
     : 0;
   return (
-    <g>
+    <g mask={maskIdForOp(scene, op) ? `url(#${maskIdForOp(scene, op)})` : undefined}>
       {fillOpacity > 0 ? <path d={spec.d} fill={spec.color} opacity={fillOpacity} stroke="none" /> : null}
       <path
         d={spec.d}
@@ -230,12 +252,12 @@ const GlyphText = ({ scene }: { scene: SceneSpec }) => (
   <g data-font-family={FONT_FAMILY}>
     {(scene.glyphPaths ?? []).map((glyphPath) => {
       const op = scene.drawOps.find((drawOp) => drawOp.id === glyphPath.opId);
-      return op ? <DrawGlyphPath key={glyphPath.opId} spec={glyphPath} op={op} /> : null;
+      return op ? <DrawGlyphPath key={glyphPath.opId} scene={scene} spec={glyphPath} op={op} /> : null;
     })}
   </g>
 );
 
-const DrawStroke = ({ spec, op }: { spec: StrokeSpec; op: DrawOp }) => {
+const DrawStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: StrokeSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
@@ -249,6 +271,7 @@ const DrawStroke = ({ spec, op }: { spec: StrokeSpec; op: DrawOp }) => {
       strokeLinejoin="round"
       strokeDasharray={length}
       strokeDashoffset={length * (1 - progress)}
+      mask={maskIdForOp(scene, op) ? `url(#${maskIdForOp(scene, op)})` : undefined}
     />
   );
 };
@@ -371,7 +394,7 @@ const AnimeDoodle = ({ scene }: { scene: SceneSpec }) => {
         .filter((stroke) => stroke.role === "doodle")
         .map((stroke) => {
           const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
-          return op ? <DrawStroke key={stroke.opId} spec={stroke} op={op} /> : null;
+          return op ? <DrawStroke key={stroke.opId} scene={scene} spec={stroke} op={op} /> : null;
         })}
     </>
   );
@@ -383,7 +406,7 @@ const CartoonDiagram = ({ scene }: { scene: SceneSpec }) => (
       .filter((stroke) => stroke.role !== "doodle")
       .map((stroke) => {
         const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
-        return op ? <DrawStroke key={stroke.opId} spec={stroke} op={op} /> : null;
+        return op ? <DrawStroke key={stroke.opId} scene={scene} spec={stroke} op={op} /> : null;
       })}
   </>
 );
@@ -485,6 +508,7 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
         />
       ) : null}
       <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", zIndex: 10 }} viewBox={`0 0 ${VIDEO_WIDTH} ${VIDEO_HEIGHT}`}>
+        <ContractMasks scene={scene} />
         <RasterRevealImage scene={scene} sceneIndex={sceneIndex} />
         <AnimeDoodle scene={scene} />
         <CartoonDiagram scene={scene} />

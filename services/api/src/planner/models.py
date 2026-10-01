@@ -63,6 +63,41 @@ class AnnotationPlanItem(BaseModel):
     layer: str = "renderer"
 
 
+class RenderRegion(BaseModel):
+    """Integer canvas-space rectangle shared by preview and renderers."""
+    model_config = ConfigDict(extra="allow")
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class RenderReveal(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    start_ms: int = Field(default=0, ge=0, alias="startMs")
+    duration_ms: int = Field(default=1000, gt=0, alias="durationMs")
+    protected_regions: list[RenderRegion] = Field(default_factory=list, alias="protectedRegions")
+    ink_weight: float = Field(default=2.0, gt=0)
+    color_weight: float = Field(default=1.0, gt=0)
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+
+class RenderElement(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str
+    sequence: int = Field(ge=1)
+    parallel_group: str | None = Field(default=None, alias="parallelGroup")
+    narrative_role: str = Field(default="content", alias="narrativeRole")
+    subtitle: str | None = None
+    region: RenderRegion
+    reveal: RenderReveal = Field(default_factory=RenderReveal)
+    points: list[tuple[float, float]] = Field(default_factory=list)
+    source: str = "authored"
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+
 class Scene(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -89,6 +124,11 @@ class Scene(BaseModel):
     video_style: str | None = None
     visual_style: str | None = None
     pen_style: str | None = None
+    canvas_width: int = Field(default=1920, ge=1, alias="canvasWidth")
+    canvas_height: int = Field(default=1080, ge=1, alias="canvasHeight")
+    render_elements: list[RenderElement] = Field(default_factory=list, alias="renderElements")
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
 class Storyboard(BaseModel):
@@ -99,6 +139,42 @@ class Storyboard(BaseModel):
     scenes: list[Scene] = Field(default_factory=list)
     video_style: str | None = None
     pen_style: str | None = None
+
+
+class ValidateStoryboardRequest(BaseModel):
+    storyboard: Storyboard
+    fps: int = Field(default=30, ge=1, le=120)
+
+
+class RenderContractIssueModel(BaseModel):
+    code: str
+    message: str
+    severity: str
+    scene_id: str | None = None
+    element_id: str | None = None
+
+
+class ValidateStoryboardResponse(BaseModel):
+    ok: bool
+    storyboard: Storyboard
+    issues: list[RenderContractIssueModel]
+    timelines: dict[str, list[dict]]
+    snapshot: dict
+
+
+class ParseSrtRequest(BaseModel):
+    srt: str = Field(min_length=1)
+    target_sec: float = Field(default=30.0, gt=0, le=300)
+    min_sec: float = Field(default=25.0, gt=0, le=300)
+    max_sec: float = Field(default=35.0, gt=0, le=300)
+
+
+class ParseSrtResponse(BaseModel):
+    cues: list[dict]
+    scenes: list[dict]
+    total_duration_ms: int = Field(alias="totalDurationMs")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GenerateStoryboardRequest(BaseModel):

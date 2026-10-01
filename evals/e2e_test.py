@@ -25,7 +25,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "services" / "api"))
 from src.explain.models import GenerateGraphRequest
 from src.explain.service import generate_explain_graph
 from src.planner.models import GenerateRemotionCodeRequest, GenerateStoryboardRequest, Storyboard
-from src.planner.service import generate_remotion_code, generate_storyboard
+from src.planner.storyboard_gen.builder import generate_storyboard
+from src.planner.remotion_codegen.compiler import generate_remotion_code
 from src.imagegen.service import SceneImageRequest, generate_all_scene_images
 
 

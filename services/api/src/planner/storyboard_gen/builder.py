@@ -38,6 +38,7 @@ from .scene_mgmt import (
 from .quality_ensure import _ensure_storyboard_quality
 from ..coverage.appender import _sanitize_storyboard_narration
 from ..prompts.storyboard import STORYBOARD_SYSTEM_PROMPT
+from ..render_contract import finalize_storyboard_contract
 
 logger = logging.getLogger(__name__)
 
@@ -236,6 +237,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
     storyboard = _sanitize_storyboard_narration(storyboard)
+    storyboard = finalize_storyboard_contract(storyboard)
 
     logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)
     return storyboard

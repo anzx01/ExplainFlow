@@ -179,7 +179,7 @@ export async function generateRemotionCode(storyboard, options = {}) {
       return {
         tsx: validateGeneratedTsx(glyphTsx, codegenStoryboard),
         durationInFrames: Math.max(
-          FPS * 10,
+          FPS,
           Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
           plannedSceneFrames,
           Number(response.duration_in_frames ?? FPS * 60),

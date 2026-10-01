@@ -6,7 +6,7 @@
  * Storyboard -> cached TTS audio -> validated Remotion TSX -> per-job bundle -> MP4.
  */
 import http from "http";
-import { createReadStream, existsSync, mkdirSync, statSync } from "fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from "fs";
 import { basename, join } from "path";
 import { sendJson, serveStaticFile, serveMediaFile } from "./http-utils.mjs";
 import { randomUUID } from "crypto";
@@ -23,7 +23,6 @@ import {
   assertStoryboardEncodingHealthy,
   cleanUserText,
   clampNumber,
-  ensureLargeModelAvailable,
   listMusicTracks,
   makeSlug,
   readBody,
@@ -32,6 +31,7 @@ import {
 } from "./utils.mjs";
 import { probePlayableAudio, normalizeMusicTrackForRemotion } from "./tts.mjs";
 import { deleteJobRecord, isInside, renderVideo } from "./render-core.mjs";
+import { buildProjectSnapshot } from "./snapshot.mjs";
 
 // ---------------------------------------------------------------------------
 // Startup: ensure required directories exist and reset stale jobs
@@ -111,7 +111,6 @@ const server = http.createServer(async (req, res) => {
       try {
         storyboard = sanitizeStoryboardText(storyboard);
         assertStoryboardEncodingHealthy(storyboard);
-        await ensureLargeModelAvailable();
       } catch (err) {
         sendJson(res, String(err.message ?? "").startsWith("检测到中文编码异常") ? 400 : 503, { error: err.message });
         return;
@@ -120,20 +119,40 @@ const server = http.createServer(async (req, res) => {
       const jobId = randomUUID();
       const outputPath = join(OUTPUT_DIR, `${makeSlug(storyboard.topic)}_${jobId.slice(0, 8)}.mp4`);
       const createdAt = new Date().toISOString();
+      const renderOptions = {
+        voice,
+        subtitlesEnabled: Boolean(subtitlesEnabled ?? subtitles_enabled),
+        backgroundMusicUrl: backgroundMusicTrack?.url ?? null,
+        backgroundMusicVolume: backgroundMusicVolumeValue,
+      };
+      const snapshot = buildProjectSnapshot(storyboard, renderOptions);
+      const cachedJob = Object.values(jobs).find((job) =>
+        job?.status === "done" &&
+        job?.snapshot?.stages?.render === snapshot.stages.render &&
+        job?.outputPath && existsSync(job.outputPath),
+      );
+      if (cachedJob) {
+        copyFileSync(cachedJob.outputPath, outputPath);
+        jobs[jobId] = {
+          status: "done", outputPath, progress: 100, phase: "done",
+          topic: cleanUserText(storyboard.topic, "Untitled"), createdAt,
+          actualDurationSeconds: cachedJob.actualDurationSeconds ?? null,
+          qa: cachedJob.qa ?? null, snapshot, cacheHit: true,
+        };
+        saveJobsAsync();
+        sendJson(res, 202, { jobId, createdAt, cacheHit: true });
+        return;
+      }
       jobs[jobId] = {
         status: "processing", outputPath, progress: 0, phase: "queued",
         topic: cleanUserText(storyboard.topic, "Untitled"),
         backgroundMusicId: backgroundMusicTrack?.id ?? null,
-        createdAt,
+        createdAt, snapshot, cacheHit: false,
       };
       saveJobsAsync();
       sendJson(res, 202, { jobId, createdAt });
 
-      renderVideo(jobId, storyboard, voice, outputPath, {
-        subtitlesEnabled: Boolean(subtitlesEnabled ?? subtitles_enabled),
-        backgroundMusicUrl: backgroundMusicTrack?.url ?? null,
-        backgroundMusicVolume: backgroundMusicVolumeValue,
-      })
+      renderVideo(jobId, storyboard, voice, outputPath, renderOptions)
         .then(() => updateJob(jobId, { status: "done", progress: 100, phase: "done" }))
         .catch((err) => {
           updateJob(jobId, { status: "failed", phase: "failed", error: err.message });

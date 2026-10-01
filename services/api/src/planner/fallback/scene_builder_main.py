@@ -6,6 +6,49 @@ from .draw_ops import _stretch_audio_segments_for_draw_workload, _retime_draw_op
 from ..storyboard_gen.normalizer import _clean_text
 
 
+def _apply_render_contract(self) -> list[dict]:
+    elements = sorted(self.scene.render_elements, key=lambda item: (item.sequence, item.id))
+    if not elements:
+        return []
+    scene_ms = max(1, round(self.scene.duration_estimate * 1000))
+    scale = self.duration / max(1, round(scene_ms * self.fps / 1000))
+    specs: list[dict] = []
+    for index, element in enumerate(elements):
+        start = round(element.reveal.start_ms * self.fps / 1000 * scale)
+        end = round((element.reveal.start_ms + element.reveal.duration_ms) * self.fps / 1000 * scale)
+        later = [item.region.model_dump(mode="json") for item in elements[index + 1 :]]
+        specs.append(
+            {
+                "id": element.id,
+                "sequence": element.sequence,
+                "parallelGroup": element.parallel_group,
+                "startFrame": max(0, start),
+                "endFrame": max(start + 1, min(self.duration, end)),
+                "region": element.region.model_dump(mode="json"),
+                "laterRegions": later,
+                "protectedRegions": [
+                    item.model_dump(mode="json") for item in element.reveal.protected_regions
+                ],
+            }
+        )
+    if not self.draw_ops:
+        return specs
+    for op_index, op in enumerate(self.draw_ops):
+        element_index = min(len(specs) - 1, op_index * len(specs) // len(self.draw_ops))
+        op["contractElementId"] = specs[element_index]["id"]
+    for spec in specs:
+        assigned = [op for op in self.draw_ops if op.get("contractElementId") == spec["id"]]
+        if not assigned:
+            continue
+        window = max(1, spec["endFrame"] - spec["startFrame"])
+        for index, op in enumerate(assigned):
+            start = spec["startFrame"] + round(index * window / len(assigned))
+            end = spec["startFrame"] + round((index + 1) * window / len(assigned))
+            op["startFrame"] = start
+            op["endFrame"] = max(start + 1, end)
+    return specs
+
+
 def _select_seven_habits_builder(self):
     corpus_local = _scene_corpus(self.scene)
     title_local = _clean_text(self.scene.title).lower()
@@ -110,6 +153,7 @@ def _build(self) -> dict:
         self.draw_ops, self.texts, self.audio_segments, self.duration, self.fps
     )
     _retime_draw_ops_to_audio_segments(self.draw_ops, self.audio_segments, self.duration)
+    render_elements = _apply_render_contract(self)
     return {
         "title": self.scene.title,
         "diagramKind": self.diagram_kind,
@@ -128,6 +172,7 @@ def _build(self) -> dict:
         "strokes": self.strokes,
         "referenceImageAsset": str(self.reference_image_asset) if self.reference_image_asset else None,
         "rasterReveal": self.raster_reveal_spec,
+        "renderElements": render_elements,
     }
 
 

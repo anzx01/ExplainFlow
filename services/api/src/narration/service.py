@@ -1,11 +1,16 @@
 import asyncio
+import logging
 import os
 import subprocess
 import tempfile
+import wave
 from pathlib import Path
 from uuid import uuid4
 
 import edge_tts
+import imageio_ffmpeg
+
+logger = logging.getLogger(__name__)
 
 VOICES: dict[str, str] = {
     "xiaoxiao": "zh-CN-XiaoxiaoNeural",
@@ -78,7 +83,7 @@ $synth.Dispose()
             raise RuntimeError("Windows SAPI did not create usable WAV audio")
         subprocess.run(
             [
-                "ffmpeg",
+                imageio_ffmpeg.get_ffmpeg_exe(),
                 "-y",
                 "-loglevel",
                 "error",
@@ -104,6 +109,35 @@ $synth.Dispose()
         _cleanup_temp_file(wav_path)
 
 
+def _synthesize_silence(text: str) -> Path:
+    """Create deterministic offline fallback audio so local rendering remains testable."""
+    wav_path = _create_uuid_temp_path(".wav")
+    mp3_path = _create_uuid_temp_path(".mp3")
+    duration = max(1.5, min(30.0, len(text.strip()) / 5.0 + 0.8))
+    sample_rate = 24_000
+    try:
+        with wave.open(str(wav_path), "wb") as handle:
+            handle.setnchannels(1)
+            handle.setsampwidth(2)
+            handle.setframerate(sample_rate)
+            handle.writeframes(b"\x00\x00" * int(sample_rate * duration))
+        subprocess.run(
+            [
+                imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error",
+                "-i", str(wav_path), "-codec:a", "libmp3lame", "-b:a", "64k", str(mp3_path),
+            ],
+            check=True,
+            capture_output=True,
+            timeout=120,
+        )
+        if not mp3_path.exists() or mp3_path.stat().st_size < 512:
+            raise RuntimeError("Offline TTS fallback did not create usable audio")
+        logger.warning("TTS providers unavailable; using %.1fs offline silent fallback audio", duration)
+        return mp3_path
+    finally:
+        _cleanup_temp_file(wav_path)
+
+
 async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
     voice = VOICES[voice_key]
     out_path = _create_uuid_temp_path(".mp3")
@@ -114,9 +148,13 @@ async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
         if out_path.exists() and out_path.stat().st_size >= 512:
             return out_path
         raise RuntimeError("No usable audio was received from Edge TTS")
-    except Exception:
+    except Exception as edge_error:
         _cleanup_temp_file(out_path)
-        return await asyncio.to_thread(_synthesize_with_windows_sapi, text)
+        try:
+            return await asyncio.to_thread(_synthesize_with_windows_sapi, text)
+        except Exception as sapi_error:
+            logger.warning("Edge TTS failed (%s); Windows SAPI failed (%s)", edge_error, sapi_error)
+            return await asyncio.to_thread(_synthesize_silence, text)
 
 
 async def synthesize_scenes(scenes: list[dict], voice_key: str = "xiaoxiao") -> list[Path]:

@@ -80,8 +80,6 @@ def _compile_fast_remotion_response(
 async def generate_remotion_code(
     req: GenerateRemotionCodeRequest,
 ) -> GenerateRemotionCodeResponse:
-    await check_llm_connection()
-
     storyboard_data = req.storyboard.model_dump(mode="json")
     target_frames = max(
         req.fps * 10,
@@ -108,6 +106,8 @@ async def generate_remotion_code(
         "No stock images, no templates, no decorative component frames."
     )
     codegen_mode = settings.remotion_codegen_mode.strip().lower()
+    if codegen_mode in {"llm", "llm-first", "llm_repair"}:
+        await check_llm_connection()
     cache_key = _remotion_codegen_cache_key(req, codegen_mode)
     cached = _cached_remotion_response(cache_key)
     if cached:
