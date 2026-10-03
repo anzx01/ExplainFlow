@@ -157,6 +157,32 @@ export interface RenderElement {
   source?: "generated" | "authored" | string;
 }
 
+export interface AssetBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface SceneAssetContract {
+  mode: "trace" | "direct" | "full" | string;
+  masterAsset?: string | null;
+  inkAsset?: string | null;
+  colorAsset?: string | null;
+  textAsset?: string | null;
+  width?: number | null;
+  height?: number | null;
+  sourceHash?: string | null;
+  promptHash?: string | null;
+  styleFingerprint?: string | null;
+  characterFingerprint?: string | null;
+  provider?: string | null;
+  quality?: string | null;
+  observedContentBounds?: AssetBounds | null;
+  cropConfidence?: number | null;
+  layers?: string[];
+}
+
 export interface Scene {
   id: string;
   order: number;
@@ -187,6 +213,7 @@ export interface Scene {
   canvasWidth?: number;
   canvasHeight?: number;
   renderElements?: RenderElement[];
+  assetContract?: SceneAssetContract | null;
 }
 
 export interface Storyboard {
@@ -195,6 +222,11 @@ export interface Storyboard {
   scenes: Scene[];
   video_style?: VideoStyleId | string | null;
   pen_style?: PenStyleId | string | null;
+  style_lock?: string | null;
+  character_lock?: string | null;
+  palette_id?: string | null;
+  style_fingerprint?: string | null;
+  character_fingerprint?: string | null;
 }
 
 // ── Render Jobs ─────────────────────────────────────────────────

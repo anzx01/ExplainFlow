@@ -85,7 +85,7 @@ export async function injectImageTraces(storyboard, jobId) {
     if (!imageBuffer) continue;
     localImageSceneIds.add(scene.id);
     try {
-      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene);
+      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, { forceTrace: true });
       rasterBySceneId[scene.id] = raster;
       console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from local image, ${raster.rasterReveal.strokes.length} reveal path(s)`);
     } catch (err) {
@@ -109,6 +109,9 @@ export async function injectImageTraces(storyboard, jobId) {
     scenes: storyboard.scenes.map((scene) => ({
       ...scene,
       ...(rasterResults[scene.id] ?? {}),
+      assetContract:
+        rasterResults[scene.id]?.assetContract ??
+        scene.assetContract ?? scene.asset_contract ?? null,
       trace_strokes:
         rasterResults[scene.id]?.trace_strokes ??
         traceResults[scene.id] ??
@@ -129,6 +132,7 @@ export async function injectImageTraces(storyboard, jobId) {
           video_style: String(scene.video_style ?? scene.videoStyle ?? "").trim().toLowerCase(),
           visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
           pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
+          quality: "final",
         })),
       }, 180000);
       const generatedCount = candidates.filter((scene) => response.images?.[scene.id]).length;
@@ -144,7 +148,7 @@ export async function injectImageTraces(storyboard, jobId) {
       const imageBase64 = response.images?.[scene.id];
       if (!imageBase64) continue;
       try {
-        const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene);
+        const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene, { forceTrace: true });
         rasterBySceneId[scene.id] = raster;
         console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from Seedream, ${raster.rasterReveal.strokes.length} reveal path(s)`);
       } catch (err) {

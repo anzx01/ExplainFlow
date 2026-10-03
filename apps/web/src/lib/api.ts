@@ -80,12 +80,39 @@ export async function generateSceneImage(storyboard: Storyboard, scene: Scene): 
         video_style: scene.video_style || storyboard.video_style || "whiteboard",
         visual_style: scene.visual_style || "teacher_whiteboard",
         pen_style: scene.pen_style || storyboard.pen_style || "marker",
+        quality: "preview",
       },
     ],
   });
   const image = data.images?.[sceneId];
   if (!image) throw new Error("Scene image generation returned empty result");
   return image.startsWith("data:image/") ? image : `data:image/png;base64,${image}`;
+}
+
+export type ActionBoardAction = {
+  action_id: string;
+  title?: string;
+  image_description: string;
+  quality?: "preview" | "final";
+};
+
+export async function generateActionBoard(
+  boardId: string,
+  topic: string,
+  actions: ActionBoardAction[],
+  columns = 3
+): Promise<{ image: string; diagnostics: Record<string, unknown> }> {
+  const data = await post<{ image: string | null; diagnostics: Record<string, unknown> }>("/imagegen/action-board", {
+    board_id: boardId,
+    topic,
+    actions,
+    columns,
+  });
+  if (!data.image) throw new Error("Action board generation returned empty result");
+  return {
+    image: data.image.startsWith("data:image/") ? data.image : `data:image/png;base64,${data.image}`,
+    diagnostics: data.diagnostics,
+  };
 }
 
 export async function synthesizeSceneAudio(text: string, voice = "xiaoxiao"): Promise<string> {

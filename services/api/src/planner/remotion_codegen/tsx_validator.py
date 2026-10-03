@@ -68,7 +68,7 @@ def _validate_generated_tsx(tsx: str) -> str:
         raise ValueError("Generated Remotion code must use a Chinese handwriting-style font family such as KaiTi/STKaiti")
     if not _has_teaching_accent(code):
         raise ValueError("Generated Remotion code must include purposeful teaching accent colors, not only black and white")
-    if HAND_ASSET not in code:
+    if HAND_ASSET not in code and "hand-real-pen.png" not in code:
         raise ValueError(f"Generated Remotion code must use staticFile('{HAND_ASSET}') for the visible hand holding a pen")
     if not re.search(r"\bstaticFile\s*\(", code):
         raise ValueError("Generated Remotion code must reference the hand asset with staticFile()")

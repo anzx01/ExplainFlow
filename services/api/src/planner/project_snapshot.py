@@ -7,7 +7,7 @@ import json
 from typing import Any
 
 
-SNAPSHOT_VERSION = 1
+SNAPSHOT_VERSION = 2
 
 
 def canonical_json(value: Any) -> str:
@@ -32,6 +32,11 @@ def build_project_snapshot(
         "topic": storyboard.get("topic"),
         "video_style": storyboard.get("video_style", storyboard.get("videoStyle")),
         "pen_style": storyboard.get("pen_style", storyboard.get("penStyle")),
+        "style_lock": storyboard.get("style_lock", storyboard.get("styleLock")),
+        "character_lock": storyboard.get("character_lock", storyboard.get("characterLock")),
+        "palette_id": storyboard.get("palette_id", storyboard.get("paletteId")),
+        "style_fingerprint": storyboard.get("style_fingerprint", storyboard.get("styleFingerprint")),
+        "character_fingerprint": storyboard.get("character_fingerprint", storyboard.get("characterFingerprint")),
         "scenes": scenes,
     }
     storyboard_fp = fingerprint(normalized, namespace="storyboard")

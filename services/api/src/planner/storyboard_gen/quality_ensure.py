@@ -250,6 +250,13 @@ def _ensure_storyboard_quality(storyboard: Storyboard, graph: ExplainGraph, targ
         if cooking_suffix and cooking_suffix not in (scene.image_description or ""):
             scene.image_description = f"{scene.image_description}. {cooking_suffix}".strip(". ")
             scene.image_description = _normalize_image_description_text(scene.image_description)
+        if cooking_suffix:
+            scene.visual_mode = "direct_reference"
+            scene.render_strategy = "direct"
+            scene.visual_complexity = "reference"
+            scene.board_mode = "reference"
+            scene.hand_usage = "annotate"
+            scene.visual_style = "marketing_doodle"
         is_math_board = (
             video_style in {"auto", "chalkboard_bw", "chalkboard_color"}
             and default_visual_style == "math_chalkboard"

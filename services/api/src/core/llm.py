@@ -191,23 +191,46 @@ async def chat_json(
         LLMUnavailableError: If all retries are exhausted.
         LLMResponseParseError: If the response cannot be parsed as JSON.
     """
-    async def _call() -> dict:
+    async def _call(active_messages: list[dict]):
         client = get_client()
-        resp = await client.chat.completions.create(
+        return await client.chat.completions.create(
             model=model or settings.llm_model,
-            messages=messages,
+            messages=active_messages,
             response_format={"type": "json_object"},
             temperature=temperature,
+            max_tokens=settings.llm_json_max_tokens,
         )
-        content = resp.choices[0].message.content or "{}"
-        # Use safe_parse_json for better error messages
-        return safe_parse_json(content)
 
-    try:
-        return await _call_with_retry(_call, max_retries=max_retries)
-    except SchemaValidationError as exc:
-        # Re-raise schema validation errors with the original exception type
-        raise LLMResponseParseError(str(exc)) from exc
+    active_messages = list(messages)
+    last_error: Exception | None = None
+    parse_attempts = max(0, settings.llm_json_parse_retries) + 1
+    for parse_attempt in range(parse_attempts):
+        response = await _call_with_retry(lambda: _call(active_messages), max_retries=max_retries)
+        choice = response.choices[0]
+        content = choice.message.content or "{}"
+        finish_reason = getattr(choice, "finish_reason", None)
+        try:
+            if finish_reason == "length":
+                raise SchemaValidationError("LLM JSON response was truncated by the output token limit")
+            return safe_parse_json(content)
+        except (SchemaValidationError, json.JSONDecodeError) as exc:
+            last_error = exc
+            if parse_attempt + 1 >= parse_attempts:
+                break
+            logger.warning(
+                "[LLM] Invalid/truncated JSON on parse attempt %d/%d; requesting compact JSON: %s",
+                parse_attempt + 1,
+                parse_attempts,
+                exc,
+            )
+            active_messages = list(messages) + [{
+                "role": "system",
+                "content": (
+                    "Your previous JSON response was truncated or invalid. Return the complete JSON object again in a compact form. "
+                    "Do not use markdown. Keep only required fields. Shorten narration, descriptions, labels, and arrays; never cut off a string or omit closing braces."
+                ),
+            }]
+    raise LLMResponseParseError(str(last_error or "Unable to parse LLM JSON response")) from last_error
 
 
 async def chat_text(

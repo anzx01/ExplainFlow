@@ -3,7 +3,7 @@ import re
 from ..models import Storyboard
 
 ALLOWED_IMPORTS = {"react", "remotion"}
-HAND_ASSET = "hand-real-pen.png"
+HAND_ASSET = "hand-srt-drawing.png"
 
 FORBIDDEN_CODE_TOKENS = (
     "from \"./",
@@ -213,7 +213,7 @@ def _validate_no_paper_surface(code: str) -> None:
 
 def _validate_static_file_usage(code: str) -> None:
     allowed_asset = re.compile(
-        r"^(?:hand-real-pen\.png|generated/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$"
+        r"^(?:hand-real-pen\.png|hand-srt-drawing\.png|generated/[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$"
     )
     for asset in re.findall(r"\bstaticFile\s*\(\s*['\"]([^'\"]+)['\"]\s*\)", code):
         if not allowed_asset.match(asset):
@@ -223,7 +223,7 @@ def _validate_static_file_usage(code: str) -> None:
         value = arg.strip()
         if value.startswith(("'", '"')):
             continue
-        if value not in {"HAND_ASSET", "referenceImageAsset", "scene.referenceImageAsset", "reveal.asset"}:
+        if value not in {"HAND_ASSET", "referenceImageAsset", "scene.referenceImageAsset", "reveal.asset", "colorAsset"}:
             raise ValueError(f"Generated code uses uncontrolled staticFile() argument: {value}")
 
 

@@ -1,7 +1,8 @@
 import json
 import logging
+import math
 
-from src.core.llm import chat_json, check_llm_connection
+from src.core.llm import LLMResponseParseError, chat_json, check_llm_connection
 from src.core.visual_prompts import visual_teaching_rules_prompt
 from src.explain.models import ExplainGraph
 from ..models import (
@@ -41,6 +42,44 @@ from ..prompts.storyboard import STORYBOARD_SYSTEM_PROMPT
 from ..render_contract import finalize_storyboard_contract
 
 logger = logging.getLogger(__name__)
+
+
+def _fallback_raw_storyboard(graph: ExplainGraph, desired_scene_count: int, target_duration: int) -> dict:
+    nodes = sorted(graph.nodes, key=lambda item: item.teach_order)
+    count = max(3, min(6, desired_scene_count, len(nodes) or 3))
+    chunk_size = max(1, math.ceil(len(nodes) / count))
+    groups = [nodes[index:index + chunk_size] for index in range(0, len(nodes), chunk_size)] or [[]]
+    scenes = []
+    for index, group in enumerate(groups[:6]):
+        labels = [node.label for node in group][:5] or [graph.topic]
+        descriptions = [node.description for node in group if node.description]
+        title = labels[0] if len(labels) == 1 else f"{labels[0]}与{labels[-1]}"
+        narration = "；".join(descriptions)[:360] or f"这一幕解释{title}，并把它放回{graph.topic}的整体结构中。"
+        scenes.append({
+            "id": f"scene_{index}", "order": index, "title": title,
+            "learning_goal": f"理解{title}", "narration": narration,
+            "duration_estimate": max(8, target_duration / max(1, count)),
+            "node_ids": [node.id for node in group],
+            "visual_mode": "trace" if index % 2 == 0 else "direct_reference",
+            "teaching_density": "rich", "visual_anchor": labels[0],
+            "render_strategy": "trace" if index % 2 == 0 else "hybrid",
+            "visual_complexity": "medium", "board_mode": "whiteboard",
+            "hand_usage": "trace" if index % 2 == 0 else "annotate",
+            "video_style": "whiteboard", "visual_style": "teacher_whiteboard", "pen_style": "marker",
+            "image_description": f"bold hand-drawn whiteboard explainer illustration about {graph.topic}, one central visual metaphor with connected parts, black marker outlines, blue and yellow accents, generous blank margins, text-free artwork, no logo, no watermark",
+            "diagram_plan": {"kind": "process", "layout": "title then central anchor then connectors then takeaway", "required_labels": labels[:5]},
+            "visual_beats": [{"id": "beat_0", "draw_intent": f"画出{title}的核心结构", "narration": narration, "required_labels": labels[:5], "duration_estimate": 7}],
+            "annotation_plan": [
+                {"type": "label", "label": labels[0], "target": "main anchor", "beat_id": "beat_0", "layer": "renderer"},
+                {"type": "arrow", "label": "关系", "target": "connector", "beat_id": "beat_0", "layer": "renderer"},
+                {"type": "highlight", "label": "重点", "target": "result", "beat_id": "beat_0", "layer": "renderer"},
+            ],
+            "animations": [
+                {"type": "whiteboard_draw", "duration": 4, "content": labels[0]},
+                {"type": "draw_arrow", "duration": 2, "content": "关系"},
+            ],
+        })
+    return {"scenes": scenes}
 
 async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     await check_llm_connection()
@@ -116,6 +155,8 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
             "edges": [edge.model_dump(mode="json") for edge in graph.edges],
             "key_insights": graph.key_insights,
             "requirements": [
+                "Return compact JSON and always close every string, array, and object. Never use markdown.",
+                "Keep each narration under 180 Chinese characters, each image_description under 120 English words, each scene to 1-3 visual_beats, exactly 3 annotation_plan items, and 2-3 animations.",
                 "Generate concrete scenes, not generic slide bullets.",
                 "Use natural Chinese for all scene titles, narration, diagram labels, and visual beats. When source concepts are English, transcreate them into Chinese expressions a real teacher would say; keep English only for fixed technical terms, acronyms, formulas, or search names, optionally in parentheses.",
                 "Avoid dictionary-like hard translations and awkward coined shorthand. Prefer clear Chinese phrases over literal word-by-word translations; e.g. dependence/independence/interdependence can become '依赖 → 独立 → 互相依赖/成熟协作/协作共赢' depending on context, rather than a stiff literal label.",
@@ -160,12 +201,16 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
 
     logger.info("Generating storyboard for: %s, target=%ds", graph.topic, req.target_duration)
 
-    raw = await chat_json(
-        messages=[
-            {"role": "system", "content": f"{STORYBOARD_SYSTEM_PROMPT}\n\n{visual_teaching_rules_prompt('planner')}"},
-            {"role": "user", "content": user_content},
-        ]
-    )
+    try:
+        raw = await chat_json(
+            messages=[
+                {"role": "system", "content": f"{STORYBOARD_SYSTEM_PROMPT}\n\n{visual_teaching_rules_prompt('planner')}"},
+                {"role": "user", "content": user_content},
+            ]
+        )
+    except LLMResponseParseError as exc:
+        logger.error("Storyboard JSON remained invalid after retry; using deterministic graph fallback: %s", exc)
+        raw = _fallback_raw_storyboard(graph, desired_scene_count, req.target_duration)
 
     scenes: list[Scene] = []
     total_duration = 0.0
@@ -229,6 +274,9 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         scenes=scenes,
         video_style=video_style,
         pen_style=pen_style,
+        style_lock=req.style_lock,
+        character_lock=req.character_lock,
+        palette_id=req.palette_id,
     )
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)

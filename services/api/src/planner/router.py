@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 
-from src.core.llm import LLMUnavailableError
+from src.core.llm import LLMResponseParseError, LLMUnavailableError
 from .models import (
     GenerateRemotionCodeRequest,
     GenerateRemotionCodeResponse,
@@ -74,6 +74,8 @@ async def create_storyboard(req: GenerateStoryboardRequest) -> GenerateStoryboar
         return GenerateStoryboardResponse(storyboard=storyboard)
     except LLMUnavailableError as e:
         raise HTTPException(status_code=503, detail=str(e)) from e
+    except LLMResponseParseError as e:
+        raise HTTPException(status_code=502, detail=f"Storyboard model returned invalid JSON after retry: {e}") from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e)) from e
 

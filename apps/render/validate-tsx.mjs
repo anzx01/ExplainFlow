@@ -94,14 +94,14 @@ function validateRequiredReferenceRendering(code, storyboard) {
 }
 
 function validateStaticFileUsage(code) {
-  const allowedAsset = /^(?:hand-real-pen\.png|generated\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$/;
+  const allowedAsset = /^(?:hand-real-pen\.png|hand-srt-drawing\.png|generated\/[a-zA-Z0-9_-]+\/[a-zA-Z0-9_.-]+\.(?:png|jpg|jpeg|webp))$/;
   for (const match of [...code.matchAll(/\bstaticFile\s*\(\s*["']([^"']+)["']\s*\)/g)]) {
     if (!allowedAsset.test(match[1])) throw new Error(`Generated TSX references disallowed static asset: ${match[1]}`);
   }
   for (const match of [...code.matchAll(/\bstaticFile\s*\(([^)]*)\)/g)]) {
     const arg = match[1].trim();
     if (/^["']/.test(arg)) continue;
-    if (!/^(?:HAND_ASSET|referenceImageAsset|scene\.referenceImageAsset|reveal\.asset)$/.test(arg)) {
+    if (!/^(?:HAND_ASSET|referenceImageAsset|scene\.referenceImageAsset|reveal\.asset|colorAsset)$/.test(arg)) {
       throw new Error(`Generated TSX uses uncontrolled staticFile() argument: ${arg}`);
     }
   }
@@ -171,7 +171,7 @@ export function validateGeneratedTsx(tsx, storyboard = null) {
     return !(Math.max(r, g, b) - Math.min(r, g, b) < 24) && !(Math.min(r, g, b) > 238) && !(Math.max(r, g, b) < 48);
   });
   if (!hasWatercolorAccent && !/\brgba?\s*\(/i.test(code)) throw new Error("Generated TSX must include purposeful teaching accent colors");
-  if (!code.includes(HAND_ASSET)) throw new Error(`Generated TSX must use staticFile("${HAND_ASSET}") for the visible hand holding a pen`);
+  if (!code.includes(HAND_ASSET) && !code.includes("hand-real-pen.png")) throw new Error(`Generated TSX must use staticFile("${HAND_ASSET}") for the visible hand holding a pen`);
   if (!/\bstaticFile\s*\(/.test(code)) throw new Error("Generated TSX must reference the hand asset with staticFile()");
   validateStaticFileUsage(code);
   if (!/\bImg\b/.test(code)) throw new Error("Generated TSX must render the visible hand with Remotion <Img>");

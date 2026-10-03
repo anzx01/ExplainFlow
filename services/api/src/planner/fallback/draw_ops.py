@@ -15,7 +15,14 @@ def _retime_draw_ops_in_window(
         return
     ordered = sorted(
         enumerate(draw_ops),
-        key=lambda item: (float(item[1].get("startFrame", 0)), item[0]),
+        # Put semantic paths ahead of title/label glyphs when they share a
+        # start time. This guarantees that a scene opens on its main object,
+        # while the hand remains attached to a real illustrated stroke.
+        key=lambda item: (
+            float(item[1].get("startFrame", 0)),
+            0 if item[1].get("kind") == "path" else 1,
+            item[0],
+        ),
     )
     spans = [
         max(0.5, float(op.get("endFrame", 0)) - float(op.get("startFrame", 0)))
@@ -46,7 +53,11 @@ def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
 def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict]) -> list[list[dict]]:
     ordered = sorted(
         draw_ops,
-        key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
+        key=lambda op: (
+            float(op.get("startFrame", 0)),
+            0 if op.get("kind") == "path" else 1,
+            str(op.get("id", "")),
+        ),
     )
     buckets: list[list[dict]] = [[] for _ in segments]
     segment_index_by_id = {
@@ -85,7 +96,11 @@ def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict
     return [
         sorted(
             bucket,
-            key=lambda op: (float(op.get("startFrame", 0)), str(op.get("id", ""))),
+            key=lambda op: (
+                float(op.get("startFrame", 0)),
+                0 if op.get("kind") == "path" else 1,
+                str(op.get("id", "")),
+            ),
         )
         for bucket in buckets
     ]

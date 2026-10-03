@@ -140,11 +140,33 @@ class FallbackSceneBuilder:
         self.trace_strokes = raw_trace_strokes if isinstance(raw_trace_strokes, list) else []
         raw_raster_reveal = _scene_extra(scene, "rasterReveal") or _scene_extra(scene, "raster_reveal") or {}
         self.raster_reveal = raw_raster_reveal if isinstance(raw_raster_reveal, dict) else {}
+        raw_asset_contract = _scene_extra(scene, "assetContract") or _scene_extra(scene, "asset_contract") or {}
+        self.asset_contract = raw_asset_contract if isinstance(raw_asset_contract, dict) else {}
+        if self.asset_contract:
+            contract_master = self.asset_contract.get("masterAsset") or self.asset_contract.get("master_asset")
+            contract_ink = self.asset_contract.get("inkAsset") or self.asset_contract.get("ink_asset")
+            contract_color = self.asset_contract.get("colorAsset") or self.asset_contract.get("color_asset")
+            contract_width = self.asset_contract.get("width")
+            contract_height = self.asset_contract.get("height")
+            if contract_master and not self.raster_reveal.get("asset"):
+                self.raster_reveal["asset"] = contract_master
+            if contract_ink and not self.raster_reveal.get("inkAsset"):
+                self.raster_reveal["inkAsset"] = contract_ink
+            if contract_color and not self.raster_reveal.get("colorAsset"):
+                self.raster_reveal["colorAsset"] = contract_color
+            if contract_width and not self.raster_reveal.get("imageWidth"):
+                self.raster_reveal["imageWidth"] = contract_width
+            if contract_height and not self.raster_reveal.get("imageHeight"):
+                self.raster_reveal["imageHeight"] = contract_height
+            if self.asset_contract.get("mode") == "full" and not self.raster_reveal.get("renderMode"):
+                self.raster_reveal["renderMode"] = "direct"
         self.raster_strokes = self.raster_reveal.get("strokes") if isinstance(self.raster_reveal.get("strokes"), list) else []
         self.reference_image_asset = (
             _scene_extra(scene, "referenceImageAsset")
             or _scene_extra(scene, "reference_image_asset")
             or self.raster_reveal.get("asset")
+            or self.asset_contract.get("masterAsset")
+            or self.asset_contract.get("master_asset")
         )
         self.annotation_plan = [
             item

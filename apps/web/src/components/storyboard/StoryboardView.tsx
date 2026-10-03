@@ -48,6 +48,55 @@ function AnimationTag({ anim }: { anim: AnimationInstruction }) {
   );
 }
 
+function AssetContractPanel({ scene }: { scene: Scene }) {
+  const contract = scene.assetContract;
+  const elements = [...(scene.renderElements ?? [])].sort((a, b) => a.sequence - b.sequence);
+  if (!contract && elements.length === 0) return null;
+  return (
+    <div className="space-y-3">
+      {contract && (
+        <div>
+          <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+            资产契约
+          </h3>
+          <div className="rounded-lg bg-[--bg-base] border border-[--border-default] p-3 space-y-2 text-xs font-mono text-[--fg-muted]">
+            <div className="flex flex-wrap gap-x-4 gap-y-1">
+              <span>mode: <b className="text-cyan-300">{contract.mode}</b></span>
+              <span>size: <b className="text-[--fg-default]">{contract.width ?? "?"}×{contract.height ?? "?"}</b></span>
+              <span>quality: <b className="text-[--fg-default]">{contract.quality ?? "?"}</b></span>
+            </div>
+            <div>layers: <b className="text-[--fg-default]">{(contract.layers ?? []).join(" → ") || "未记录"}</b></div>
+            {contract.provider && <div>provider: {contract.provider}</div>}
+            {contract.sourceHash && <div className="truncate" title={contract.sourceHash}>source: {contract.sourceHash.slice(0, 16)}…</div>}
+            {contract.promptHash && <div className="truncate" title={contract.promptHash}>prompt: {contract.promptHash.slice(0, 16)}…</div>}
+            {contract.observedContentBounds && (
+              <div>
+                bounds: ({contract.observedContentBounds.x}, {contract.observedContentBounds.y}) {contract.observedContentBounds.width}×{contract.observedContentBounds.height}
+                {typeof contract.cropConfidence === "number" ? ` · ${(contract.cropConfidence * 100).toFixed(0)}%` : ""}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {elements.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+            元素时间轴
+          </h3>
+          <div className="rounded-lg bg-[--bg-base] border border-[--border-default] divide-y divide-[--border-default]">
+            {elements.map((element) => (
+              <div key={element.id} className="px-3 py-2 text-xs font-mono text-[--fg-muted] flex items-center justify-between gap-3">
+                <span className="truncate text-[--fg-default]">{element.sequence}. {element.id}</span>
+                <span className="shrink-0">{element.reveal.startMs}–{element.reveal.startMs + element.reveal.durationMs}ms</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SceneCard({
   scene,
   selected,
@@ -111,6 +160,7 @@ function SceneEditor({
   return (
     <div className="h-full flex flex-col overflow-y-auto p-5 space-y-5">
       <StoryboardCanvasEditor scene={scene} onUpdate={(updates) => onUpdate?.(updates)} />
+      <AssetContractPanel scene={scene} />
       <div>
         <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
           场景标题

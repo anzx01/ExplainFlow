@@ -63,6 +63,37 @@ class AnnotationPlanItem(BaseModel):
     layer: str = "renderer"
 
 
+class AssetBounds(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    x: int = Field(ge=0)
+    y: int = Field(ge=0)
+    width: int = Field(gt=0)
+    height: int = Field(gt=0)
+
+
+class SceneAssetContract(BaseModel):
+    """Traceable relationship between a scene master and derived render assets."""
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    mode: str = Field(default="trace", pattern="^(trace|direct|full)$")
+    master_asset: str | None = Field(default=None, alias="masterAsset")
+    ink_asset: str | None = Field(default=None, alias="inkAsset")
+    color_asset: str | None = Field(default=None, alias="colorAsset")
+    text_asset: str | None = Field(default=None, alias="textAsset")
+    width: int | None = Field(default=None, gt=0)
+    height: int | None = Field(default=None, gt=0)
+    source_hash: str | None = Field(default=None, alias="sourceHash")
+    prompt_hash: str | None = Field(default=None, alias="promptHash")
+    style_fingerprint: str | None = Field(default=None, alias="styleFingerprint")
+    character_fingerprint: str | None = Field(default=None, alias="characterFingerprint")
+    provider: str | None = None
+    quality: str | None = None
+    observed_content_bounds: AssetBounds | None = Field(default=None, alias="observedContentBounds")
+    crop_confidence: float | None = Field(default=None, ge=0, le=1, alias="cropConfidence")
+    layers: list[str] = Field(default_factory=lambda: ["ink", "color"])
+
+
 class RenderRegion(BaseModel):
     """Integer canvas-space rectangle shared by preview and renderers."""
     model_config = ConfigDict(extra="allow")
@@ -124,6 +155,7 @@ class Scene(BaseModel):
     video_style: str | None = None
     visual_style: str | None = None
     pen_style: str | None = None
+    asset_contract: SceneAssetContract | None = Field(default=None, alias="assetContract")
     canvas_width: int = Field(default=1920, ge=1, alias="canvasWidth")
     canvas_height: int = Field(default=1080, ge=1, alias="canvasHeight")
     render_elements: list[RenderElement] = Field(default_factory=list, alias="renderElements")
@@ -139,6 +171,13 @@ class Storyboard(BaseModel):
     scenes: list[Scene] = Field(default_factory=list)
     video_style: str | None = None
     pen_style: str | None = None
+    style_lock: str | None = Field(default=None, alias="styleLock")
+    character_lock: str | None = Field(default=None, alias="characterLock")
+    palette_id: str | None = Field(default=None, alias="paletteId")
+    style_fingerprint: str | None = Field(default=None, alias="styleFingerprint")
+    character_fingerprint: str | None = Field(default=None, alias="characterFingerprint")
+
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
 
 
 class ValidateStoryboardRequest(BaseModel):
@@ -182,6 +221,11 @@ class GenerateStoryboardRequest(BaseModel):
     target_duration: int = Field(default=120, ge=60, le=180)
     video_style: str = "whiteboard"
     pen_style: str = "marker"
+    style_lock: str | None = Field(default=None, alias="styleLock")
+    character_lock: str | None = Field(default=None, alias="characterLock")
+    palette_id: str | None = Field(default=None, alias="paletteId")
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class GenerateStoryboardResponse(BaseModel):

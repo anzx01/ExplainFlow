@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 
 from .models import RenderElement, RenderRegion, RenderReveal, Scene, Storyboard
@@ -77,6 +78,27 @@ def validate_scene_contract(scene: Scene, *, total_duration_ms: int | None = Non
     previous_sequence = 0
     previous_end = 0
     elements = sorted(scene.render_elements, key=lambda item: (item.sequence, item.id))
+    asset = scene.asset_contract
+    if asset:
+        required_layers = {"text", "ink", "color"}
+        if asset.mode == "trace":
+            if not asset.master_asset:
+                issues.append(ContractIssue("asset_master_missing", "Trace asset contract requires masterAsset", "error", scene.id))
+            if not asset.ink_asset:
+                issues.append(ContractIssue("asset_ink_missing", "Trace asset contract requires inkAsset", "error", scene.id))
+            if not asset.color_asset:
+                issues.append(ContractIssue("asset_color_missing", "Trace asset contract requires colorAsset", "error", scene.id))
+        elif asset.mode == "full":
+            if not asset.color_asset:
+                issues.append(ContractIssue("full_asset_missing", "Full asset contract requires colorAsset", "error", scene.id))
+            if set(asset.layers) != {"color"}:
+                issues.append(ContractIssue("full_asset_layers_invalid", "Full asset mode can only expose the color layer", "error", scene.id))
+        if asset.width and asset.height and asset.observed_content_bounds:
+            bounds = asset.observed_content_bounds
+            if bounds.x + bounds.width > asset.width or bounds.y + bounds.height > asset.height:
+                issues.append(ContractIssue("asset_bounds_out_of_bounds", "Observed asset content bounds exceed the source asset", "error", scene.id))
+        if asset.layers and asset.layers != sorted(asset.layers, key=lambda layer: {"text": 0, "ink": 1, "detail": 2, "color": 3}.get(layer, 99)):
+            issues.append(ContractIssue("asset_layer_order_invalid", "Asset layers must be ordered text, ink, detail, color", "error", scene.id))
     for element_index, element in enumerate(elements):
         if element.sequence <= previous_sequence:
             issues.append(ContractIssue("sequence_not_increasing", "Element sequence must be strictly increasing", element_id=element.id))
@@ -120,9 +142,25 @@ def validate_storyboard_contract(storyboard: Storyboard, *, fps: int = 30) -> li
 
 def ensure_scene_contract_defaults(scene: Scene) -> Scene:
     """Populate deterministic element defaults without inventing visual content."""
-    if scene.render_elements and not all(item.source == "generated" for item in scene.render_elements):
-        return scene
     duration_ms = max(1000, round(scene.duration_estimate * 1000))
+
+    # Keep the completed artwork visible after the last reveal. This is part of
+    # the scene contract, so hand-authored and model-authored elements follow
+    # the same rule. Clamping the final reveal preserves the requested scene
+    # duration and avoids adding an unvoiced tail during audio retiming.
+    if scene.render_elements:
+        ordered = sorted(scene.render_elements, key=lambda item: (item.sequence, item.id))
+        last = ordered[-1]
+        reveal = last.reveal
+        latest_end = reveal.start_ms + reveal.duration_ms
+        hold_start = max(0, duration_ms - 500)
+        if latest_end > hold_start:
+            if reveal.start_ms >= hold_start:
+                reveal.start_ms = max(0, hold_start - 1)
+            reveal.duration_ms = max(1, hold_start - reveal.start_ms)
+        if not all(item.source == "generated" for item in scene.render_elements):
+            return scene
+
     elements: list[RenderElement] = []
     count = max(len(scene.animations), 1)
     available_height = max(1, scene.canvas_height - 160)
@@ -171,4 +209,8 @@ def finalize_storyboard_contract(storyboard: Storyboard, *, fps: int = 30) -> St
         )
         raise ValueError(f"Storyboard render contract failed: {summary}")
     storyboard.total_duration_estimate = round(sum(scene.duration_estimate for scene in storyboard.scenes), 1)
+    if storyboard.style_lock and not storyboard.style_fingerprint:
+        storyboard.style_fingerprint = hashlib.sha256(storyboard.style_lock.encode("utf-8")).hexdigest()[:16]
+    if storyboard.character_lock and not storyboard.character_fingerprint:
+        storyboard.character_fingerprint = hashlib.sha256(storyboard.character_lock.encode("utf-8")).hexdigest()[:16]
     return storyboard

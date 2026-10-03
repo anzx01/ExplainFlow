@@ -66,6 +66,22 @@ OPENAI_BASE_URL=https://api.deepseek.com/v1
 LLM_MODEL=deepseek-chat
 CODER_MODEL=deepseek-coder
 
+# Local Flux image generation (default)
+IMAGEGEN_PROVIDER=local
+LOCAL_IMAGEGEN_RUNTIME=D:\ck\stable-diffusion-cpp-bin\vulkan\sd-cli.exe
+LOCAL_IMAGEGEN_MODEL=E:\MYLLM\flux1-schnell-fp8\gguf\flux1-schnell-Q5_K_S.gguf
+LOCAL_IMAGEGEN_VAE=E:\MYLLM\flux1-schnell-fp8\extracted\vae\diffusion_pytorch_model.safetensors
+LOCAL_IMAGEGEN_CLIP_L=E:\MYLLM\flux1-schnell-fp8\extracted\clip\clip-text-model.safetensors
+LOCAL_IMAGEGEN_T5XXL=E:\MYLLM\flux1-schnell-fp8\extracted\t5\t5xxl-relative-q8_0.gguf
+LOCAL_IMAGEGEN_BACKEND=diffusion=Vulkan0,te=cpu,vae=Vulkan0
+LOCAL_IMAGEGEN_WIDTH=1024
+LOCAL_IMAGEGEN_HEIGHT=1024
+LOCAL_IMAGEGEN_PREVIEW_WIDTH=512
+LOCAL_IMAGEGEN_PREVIEW_HEIGHT=512
+LOCAL_IMAGEGEN_STEPS=4
+LOCAL_IMAGEGEN_MAX_ATTEMPTS=3
+
+# Optional Ark provider: IMAGEGEN_PROVIDER=ark or local_then_ark
 ARK_API_KEY=your-volcengine-ark-key
 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 SEEDREAM_MODEL=doubao-seedream-5-0-260128

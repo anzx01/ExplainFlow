@@ -1,6 +1,9 @@
 import { createHash } from "crypto";
 
-export const SNAPSHOT_VERSION = 1;
+// Bump whenever render semantics, image tracing, or stage-quality gates change.
+// This prevents an older MP4 (for example one made from a stale noodle image)
+// from being reused after the scene contract or source image is repaired.
+export const SNAPSHOT_VERSION = 3;
 
 function normalize(value) {
   if (Array.isArray(value)) return value.map(normalize);
@@ -20,7 +23,11 @@ export function buildProjectSnapshot(storyboard, renderOptions = {}) {
     topic: storyboard?.topic ?? null,
     videoStyle: storyboard?.video_style ?? storyboard?.videoStyle ?? null,
     penStyle: storyboard?.pen_style ?? storyboard?.penStyle ?? null,
+    styleLock: storyboard?.style_lock ?? storyboard?.styleLock ?? null,
+    characterLock: storyboard?.character_lock ?? storyboard?.characterLock ?? null,
+    paletteId: storyboard?.palette_id ?? storyboard?.paletteId ?? null,
     scenes: storyboard?.scenes ?? [],
+    imageQualityContractVersion: 3,
   };
   const storyboardFingerprint = fingerprint(normalizedStoryboard, "storyboard");
   const styleFingerprint = fingerprint({

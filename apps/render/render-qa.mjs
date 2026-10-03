@@ -91,6 +91,45 @@ function collectStoryboardQaChecks(storyboard) {
     shortHolds.length ? "Shorten the last reveal or extend the scene duration." : null,
   ));
 
+  const assetContractErrors = [];
+  const assetContractWarnings = [];
+  for (const [sceneIndex, scene] of scenes.entries()) {
+    const sceneId = scene?.id ?? `scene_${sceneIndex}`;
+    const contract = scene?.assetContract ?? scene?.asset_contract ?? null;
+    const hasRaster = Boolean(scene?.rasterReveal ?? scene?.raster_reveal ?? scene?.referenceImageAsset ?? scene?.reference_image_asset);
+    if (!contract) {
+      if (hasRaster) assetContractErrors.push(`${sceneId}: missing assetContract`);
+      else if (sceneLocalImageBuffer(scene)) assetContractWarnings.push(`${sceneId}: local image has no assetContract yet`);
+      continue;
+    }
+    const mode = String(contract.mode ?? "").toLowerCase();
+    const layers = Array.isArray(contract.layers) ? contract.layers : [];
+    const expectedTrace = ["ink", "color"];
+    const expectedFull = ["color"];
+    if (!["trace", "direct", "full"].includes(mode)) assetContractErrors.push(`${sceneId}: invalid mode`);
+    if (!Number.isFinite(Number(contract.width)) || Number(contract.width) <= 0 || !Number.isFinite(Number(contract.height)) || Number(contract.height) <= 0) {
+      assetContractErrors.push(`${sceneId}: invalid dimensions`);
+    }
+    if (mode === "trace" && (!contract.masterAsset || !contract.inkAsset || !contract.colorAsset)) {
+      assetContractErrors.push(`${sceneId}: trace requires masterAsset, inkAsset, and colorAsset`);
+    }
+    if ((mode === "full" || mode === "direct") && !contract.colorAsset) assetContractErrors.push(`${sceneId}: full/direct requires colorAsset`);
+    const expectedLayers = mode === "full" ? expectedFull : expectedTrace;
+    if (layers.length && JSON.stringify(layers) !== JSON.stringify(expectedLayers)) assetContractErrors.push(`${sceneId}: layer order`);
+    const bounds = contract.observedContentBounds ?? contract.observed_content_bounds;
+    if (bounds && (Number(bounds.x) < 0 || Number(bounds.y) < 0 || Number(bounds.width) <= 0 || Number(bounds.height) <= 0 || Number(bounds.x) + Number(bounds.width) > Number(contract.width) || Number(bounds.y) + Number(bounds.height) > Number(contract.height))) {
+      assetContractErrors.push(`${sceneId}: observed bounds`);
+    }
+  }
+  checks.push(qaCheck(
+    "asset_contract",
+    assetContractErrors.length === 0,
+    assetContractErrors.length ? "error" : assetContractWarnings.length ? "warning" : "info",
+    assetContractErrors.length ? `${assetContractErrors.length} asset contract error(s)` : assetContractWarnings.length ? `${assetContractWarnings.length} asset contract warning(s)` : "Scene asset contracts are valid",
+    assetContractErrors.length || assetContractWarnings.length ? { errors: assetContractErrors.slice(0, 20), warnings: assetContractWarnings.slice(0, 20) } : null,
+    assetContractErrors.length ? "Regenerate the scene asset pipeline and preserve the master, ink, color, dimensions, and layer metadata." : null,
+  ));
+
   const hardTranslationTerms = ["互赖", "相互依赖赖", "interdependence 的"];
   const badTerm = hardTranslationTerms.find((term) => storyboardText.includes(term));
   checks.push(qaCheck(
@@ -191,13 +230,20 @@ async function analyzeFrameNonBlank(framePath) {
   const image = sharp(framePath).ensureAlpha().raw();
   const { data, info } = await image.toBuffer({ resolveWithObject: true });
   const pixels = Math.max(1, info.width * info.height);
-  let sum = 0, sumSquares = 0, opaque = 0;
+  let sum = 0, sumSquares = 0, opaque = 0, centerForeground = 0, centerPixels = 0;
   for (let offset = 0; offset < data.length; offset += 4) {
+    const pixelIndex = offset / 4;
+    const x = pixelIndex % info.width;
+    const y = Math.floor(pixelIndex / info.width);
     const alpha = data[offset + 3] / 255;
     const brightness = (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
     sum += brightness;
     sumSquares += brightness * brightness;
     if (alpha > 0.05) opaque += 1;
+    if (x >= info.width * 0.08 && x <= info.width * 0.92 && y >= info.height * 0.18 && y <= info.height * 0.82) {
+      centerPixels += 1;
+      if (brightness < 235) centerForeground += 1;
+    }
   }
   const mean = sum / pixels;
   const variance = Math.max(0, sumSquares / pixels - mean * mean);
@@ -206,6 +252,7 @@ async function analyzeFrameNonBlank(framePath) {
     meanBrightness: Math.round(mean * 10) / 10,
     brightnessStdDev: Math.round(Math.sqrt(variance) * 10) / 10,
     opaqueRatio: Math.round((opaque / pixels) * 1000) / 1000,
+    centerForegroundRatio: Math.round((centerForeground / Math.max(1, centerPixels)) * 10000) / 10000,
   };
 }
 
@@ -278,17 +325,20 @@ export async function runRenderQa(jobId, outputPath, storyboard, options = {}) {
   if (mediaInfo?.durationSeconds) {
     try {
       const samples = [];
-      for (const [label, position] of [["opening", 0.03], ["middle", 0.5], ["ending", 0.97]]) {
+      // 0.5 often lands exactly on a scene boundary for evenly timed boards,
+      // producing a false blank-frame failure while the next scene is still
+      // drawing its title. Sample just before that boundary instead.
+      for (const [label, position] of [["opening", 0.03], ["middle", 0.47], ["ending", 0.97]]) {
         const framePath = await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId, label, position);
         samples.push({ label, path: framePath, ...(await analyzeFrameNonBlank(framePath)) });
       }
       const middle = samples.find((sample) => sample.label === "middle");
       const ending = samples.find((sample) => sample.label === "ending");
-      const isNonBlank = [middle, ending].every((frame) => frame && frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV);
+      const isNonBlank = [middle, ending].every((frame) => frame && frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV && frame.centerForegroundRatio >= 0.012);
       addCheck(qaCheck(
         "sampled_frames", isNonBlank, "error",
         isNonBlank ? "Opening, middle, and ending diagnostics were captured; middle and ending contain visible content" : "Middle or ending diagnostic frame looks blank or flat",
-        { samples, minStdDev: MIN_RENDER_FRAME_STDDEV },
+        { samples, minStdDev: MIN_RENDER_FRAME_STDDEV, minCenterForegroundRatio: 0.012 },
         "Inspect outputs/qa/<job-id>/ and repair scene visibility, timing, or reference assets.",
       ));
     } catch (err) {

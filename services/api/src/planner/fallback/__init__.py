@@ -11,4 +11,5 @@ from . import scene_builder_diagrams  # noqa: F401
 from . import scene_builder_diagrams2  # noqa: F401
 from . import scene_builder_board  # noqa: F401
 from . import scene_builder_device  # noqa: F401
+from . import scene_builder_cooking  # noqa: F401
 from . import scene_builder_main  # noqa: F401

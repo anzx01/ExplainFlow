@@ -12,11 +12,49 @@ def _apply_render_contract(self) -> list[dict]:
         return []
     scene_ms = max(1, round(self.scene.duration_estimate * 1000))
     scale = self.duration / max(1, round(scene_ms * self.fps / 1000))
+    region_sx = self.width / max(1, self.scene.canvas_width)
+    region_sy = self.height / max(1, self.scene.canvas_height)
+
+    def scaled_region(region) -> dict:
+        return {
+            "x": round(region.x * region_sx, 2),
+            "y": round(region.y * region_sy, 2),
+            "width": round(region.width * region_sx, 2),
+            "height": round(region.height * region_sy, 2),
+        }
+
+    def point_in_region(point: dict, region: dict) -> bool:
+        return (
+            region["x"] <= float(point.get("x", -1)) < region["x"] + region["width"]
+            and region["y"] <= float(point.get("y", -1)) < region["y"] + region["height"]
+        )
+
+    def path_weight(op: dict) -> float:
+        points = op.get("points") or []
+        length = 0.0
+        for first, second in zip(points, points[1:]):
+            dx = float(second.get("x", 0)) - float(first.get("x", 0))
+            dy = float(second.get("y", 0)) - float(first.get("y", 0))
+            length += (dx * dx + dy * dy) ** 0.5
+        return max(1.0, length ** 0.5)
+
+    def schedule_ops(ops: list[dict], start: int, end: int) -> None:
+        if not ops:
+            return
+        weights = [path_weight(op) for op in ops]
+        total = sum(weights) or float(len(ops))
+        cursor = float(start)
+        for index, (op, weight) in enumerate(zip(ops, weights)):
+            next_cursor = float(end) if index == len(ops) - 1 else min(float(end), cursor + (end - start) * weight / total)
+            op["startFrame"] = round(cursor, 2)
+            op["endFrame"] = round(max(cursor + 0.01, next_cursor), 2)
+            cursor = next_cursor
+
     specs: list[dict] = []
     for index, element in enumerate(elements):
         start = round(element.reveal.start_ms * self.fps / 1000 * scale)
         end = round((element.reveal.start_ms + element.reveal.duration_ms) * self.fps / 1000 * scale)
-        later = [item.region.model_dump(mode="json") for item in elements[index + 1 :]]
+        later = [scaled_region(item.region) for item in elements[index + 1 :]]
         specs.append(
             {
                 "id": element.id,
@@ -24,34 +62,90 @@ def _apply_render_contract(self) -> list[dict]:
                 "parallelGroup": element.parallel_group,
                 "startFrame": max(0, start),
                 "endFrame": max(start + 1, min(self.duration, end)),
-                "region": element.region.model_dump(mode="json"),
+                "region": scaled_region(element.region),
                 "laterRegions": later,
                 "protectedRegions": [
-                    item.model_dump(mode="json") for item in element.reveal.protected_regions
+                    scaled_region(item) for item in element.reveal.protected_regions
                 ],
             }
         )
     if not self.draw_ops:
         return specs
-    for op_index, op in enumerate(self.draw_ops):
-        element_index = min(len(specs) - 1, op_index * len(specs) // len(self.draw_ops))
+
+    spec_by_id = {spec["id"]: spec for spec in specs}
+    op_by_id = {op.get("id"): op for op in self.draw_ops}
+    raster_strokes = (self.raster_reveal_spec or {}).get("strokes", []) if self.raster_reveal_spec else []
+    raster_op_ids = {
+        op_id
+        for stroke in raster_strokes
+        for op_id in (stroke.get("opId"), stroke.get("colorOpId"))
+        if op_id
+    }
+
+    # Keep paired ink/color paths on the same semantic element. For legacy
+    # raster traces without an explicit assignment, choose the allowed region
+    # containing the most sampled path points, preferring later elements in a
+    # tie so an overlap cannot leak before its own turn.
+    for stroke_index, stroke in enumerate(raster_strokes):
+        ink_op = op_by_id.get(stroke.get("opId"))
+        color_op = op_by_id.get(stroke.get("colorOpId"))
+        assigned_id = next((
+            op.get("contractElementId")
+            for op in (ink_op, color_op)
+            if op and op.get("contractElementId") in spec_by_id
+        ), None)
+        if not assigned_id and ink_op:
+            scored: list[tuple[int, int, str]] = []
+            for index, spec in enumerate(specs):
+                allowed_points = sum(
+                    1 for point in (ink_op.get("points") or [])
+                    if point_in_region(point, spec["region"])
+                    and not any(point_in_region(point, region) for region in [*spec["laterRegions"], *spec["protectedRegions"]])
+                )
+                scored.append((allowed_points, index, spec["id"]))
+            score, _, candidate = max(scored, default=(0, 0, specs[min(len(specs) - 1, stroke_index * len(specs) // max(1, len(raster_strokes)))]["id"]))
+            assigned_id = candidate if score > 0 else specs[min(len(specs) - 1, stroke_index * len(specs) // max(1, len(raster_strokes)))]["id"]
+        if assigned_id:
+            if ink_op:
+                ink_op["contractElementId"] = assigned_id
+            if color_op:
+                color_op["contractElementId"] = assigned_id
+
+    unassigned = [op for op in self.draw_ops if op.get("contractElementId") not in spec_by_id]
+    for op_index, op in enumerate(unassigned):
+        element_index = min(len(specs) - 1, op_index * len(specs) // max(1, len(unassigned)))
         op["contractElementId"] = specs[element_index]["id"]
+
+    element_by_id = {element.id: element for element in elements}
     for spec in specs:
         assigned = [op for op in self.draw_ops if op.get("contractElementId") == spec["id"]]
         if not assigned:
             continue
         window = max(1, spec["endFrame"] - spec["startFrame"])
-        for index, op in enumerate(assigned):
-            start = spec["startFrame"] + round(index * window / len(assigned))
-            end = spec["startFrame"] + round((index + 1) * window / len(assigned))
-            op["startFrame"] = start
-            op["endFrame"] = max(start + 1, end)
+        raster_ink = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "ink"]
+        raster_color = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "color"]
+        other = [op for op in assigned if op.get("id") not in raster_op_ids]
+        if raster_ink or raster_color:
+            element = element_by_id[spec["id"]]
+            weight_total = element.reveal.ink_weight + element.reveal.color_weight
+            ink_end = spec["startFrame"] + max(1, round(window * element.reveal.ink_weight / weight_total))
+            ink_end = min(spec["endFrame"] - (1 if window > 1 else 0), ink_end)
+            schedule_ops(raster_ink, spec["startFrame"], max(spec["startFrame"] + 1, ink_end))
+            schedule_ops(raster_color, max(spec["startFrame"] + 1, ink_end), spec["endFrame"])
+        if other:
+            schedule_ops(other, spec["startFrame"], spec["endFrame"])
     return specs
 
 
 def _select_seven_habits_builder(self):
     corpus_local = _scene_corpus(self.scene)
     title_local = _clean_text(self.scene.title).lower()
+    domain_markers = [
+        "seven habits", "7 habits", "高效能人士的七个习惯", "七个习惯",
+        "主动积极", "以终为始", "要事第一", "双赢", "知彼解己", "统合综效", "不断更新",
+    ]
+    if not _contains_any(corpus_local.lower(), domain_markers):
+        return None
     habit_markers = [
         "七个习惯",
         "习惯1",
@@ -90,6 +184,12 @@ def _select_seven_habits_builder(self):
 
 def _select_railway_builder(self):
     corpus_local = f"{_scene_corpus(self.scene)} {self.visual_anchor}".lower()
+    domain_markers = [
+        "railway", "railroad", "rail track", "station safety", "railway ppe",
+        "铁路", "轨道", "车站", "道岔", "信号机", "防护员", "调度命令", "接触网",
+    ]
+    if not _contains_any(corpus_local, domain_markers):
+        return None
     if not _contains_any(corpus_local, ["铁路", "上道", "站场", "道岔", "信号机", "防护员", "调度命令", "对讲机", "ppe"]):
         return None
     if _contains_any(corpus_local, ["ppe", "安全帽", "反光背心", "防护鞋", "对讲机", "工具清点"]):
@@ -138,7 +238,23 @@ def _build(self) -> dict:
         "teaching_board": self.build_teaching_board,
         "semiconductor_device": self.build_semiconductor_device,
     }
-    if self.raster_reveal and self.reference_image_asset:
+    cooking = _contains_any(_scene_corpus(self.scene).lower(), ["饺子", "面粉", "擀皮", "包制", "下锅", "包馅", "dumpling", "dough", "wrapper"])
+    # A traced model image is authoritative; procedural cooking art is only a
+    # fallback when image generation or line-art extraction is unavailable.
+    if cooking and not (self.raster_reveal and self.reference_image_asset):
+        cooking_builders = {
+            "ingredients": self.build_cooking_ingredients,
+            "wrappers": self.build_cooking_wrappers,
+            "wrapping": self.build_cooking_wrapping,
+            "boiling": self.build_cooking_boiling,
+        }
+        title = f"{self.scene.title} {self.scene.narration}".lower()
+        key = "boiling" if _contains_any(title, ["下锅", "煮", "浮起", "boil", "water"]) else "wrapping" if _contains_any(title, ["捏", "包", "馅", "fold", "wrap"]) else "wrappers" if _contains_any(title, ["擀", "切", "剂", "rolling", "wrapper"]) else "ingredients"
+        # Put the main cooking action on the board at scene start. The title
+        # can draw concurrently, but the hand must never begin on an empty
+        # board while the narrated action is still waiting to appear.
+        cursor = cooking_builders[key](0)
+    elif self.raster_reveal and self.reference_image_asset:
         cursor = self.build_raster_reveal(cursor)
     elif self.trace_strokes:
         cursor = self.build_reference_trace(cursor)
@@ -171,6 +287,7 @@ def _build(self) -> dict:
         "glyphPaths": [],
         "strokes": self.strokes,
         "referenceImageAsset": str(self.reference_image_asset) if self.reference_image_asset else None,
+        "assetContract": self.asset_contract or None,
         "rasterReveal": self.raster_reveal_spec,
         "renderElements": render_elements,
     }

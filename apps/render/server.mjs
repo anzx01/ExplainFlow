@@ -125,8 +125,9 @@ const server = http.createServer(async (req, res) => {
         backgroundMusicUrl: backgroundMusicTrack?.url ?? null,
         backgroundMusicVolume: backgroundMusicVolumeValue,
       };
+      const forceRender = Boolean(payload.forceRender ?? payload.force_render);
       const snapshot = buildProjectSnapshot(storyboard, renderOptions);
-      const cachedJob = Object.values(jobs).find((job) =>
+      const cachedJob = forceRender ? null : Object.values(jobs).find((job) =>
         job?.status === "done" &&
         job?.snapshot?.stages?.render === snapshot.stages.render &&
         job?.outputPath && existsSync(job.outputPath),

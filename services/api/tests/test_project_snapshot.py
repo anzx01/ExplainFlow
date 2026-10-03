@@ -18,6 +18,6 @@ def test_snapshot_tracks_scene_and_stage_dependencies():
         style_snapshot={"style": "marker"},
         render_config={"fps": 30},
     )
-    assert snapshot["snapshotVersion"] == 1
+    assert snapshot["snapshotVersion"] == 2
     assert snapshot["sceneFingerprints"]["scene-1"]
     assert snapshot["stages"]["images"] != snapshot["stages"]["render"]

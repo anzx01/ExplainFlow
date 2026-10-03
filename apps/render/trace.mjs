@@ -6,6 +6,7 @@
  * Seedream 候选评分 + injectImageTraces → trace-inject.mjs
  */
 import { mkdirSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
 import { join } from "path";
 import sharp from "sharp";
 import {
@@ -44,6 +45,64 @@ export {
 // ---------------------------------------------------------------------------
 // raster reveal
 // ---------------------------------------------------------------------------
+
+function median(values) {
+  if (values.length === 0) return 255;
+  values.sort((a, b) => a - b);
+  return values[Math.floor(values.length / 2)];
+}
+
+function sampleCornerBackground(data, width, height, channels) {
+  const margin = Math.max(3, Math.min(24, Math.round(Math.min(width, height) / 50)));
+  const samples = [[], [], []];
+  const corners = [
+    [0, 0], [Math.max(0, width - margin), 0],
+    [0, Math.max(0, height - margin)], [Math.max(0, width - margin), Math.max(0, height - margin)],
+  ];
+  for (const [left, top] of corners) {
+    for (let y = top; y < Math.min(height, top + margin); y += 1) {
+      for (let x = left; x < Math.min(width, left + margin); x += 1) {
+        const offset = (y * width + x) * channels;
+        samples[0].push(data[offset]);
+        samples[1].push(data[offset + 1]);
+        samples[2].push(data[offset + 2]);
+      }
+    }
+  }
+  return samples.map(median);
+}
+
+function adaptiveInkAlpha(data, width, height, channels) {
+  const gray = new Float32Array(width * height);
+  const integral = new Float64Array((width + 1) * (height + 1));
+  for (let y = 0; y < height; y += 1) {
+    let rowSum = 0;
+    for (let x = 0; x < width; x += 1) {
+      const source = (y * width + x) * channels;
+      const value = 0.299 * data[source] + 0.587 * data[source + 1] + 0.114 * data[source + 2];
+      gray[y * width + x] = value;
+      rowSum += value;
+      integral[(y + 1) * (width + 1) + x + 1] = integral[y * (width + 1) + x + 1] + rowSum;
+    }
+  }
+  const alpha = new Uint8Array(width * height);
+  const radius = 7;
+  for (let y = 0; y < height; y += 1) {
+    const top = Math.max(0, y - radius), bottom = Math.min(height - 1, y + radius);
+    for (let x = 0; x < width; x += 1) {
+      const left = Math.max(0, x - radius), right = Math.min(width - 1, x + radius);
+      const area = (right - left + 1) * (bottom - top + 1);
+      const sum = integral[(bottom + 1) * (width + 1) + right + 1]
+        - integral[top * (width + 1) + right + 1]
+        - integral[(bottom + 1) * (width + 1) + left]
+        + integral[top * (width + 1) + left];
+      const localMean = sum / Math.max(1, area);
+      const contrast = localMean - 8 - gray[y * width + x];
+      alpha[y * width + x] = clamp(Math.round(contrast * 22), 0, 255);
+    }
+  }
+  return alpha;
+}
 
 export async function traceRasterRevealImage(imageBuffer) {
   const { data, info } = await sharp(imageBuffer, { failOn: "none" })
@@ -99,6 +158,42 @@ export async function makeTransparentLineArtAsset(imageBuffer) {
     .raw()
     .toBuffer({ resolveWithObject: true });
   const { width, height, channels } = info;
+  const inkAlpha = adaptiveInkAlpha(data, width, height, channels);
+  let minX = width, minY = height, maxX = -1, maxY = -1;
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      if (inkAlpha[y * width + x] < 18) continue;
+      minX = Math.min(minX, x); minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+    }
+  }
+  const bounds = maxX >= minX && maxY >= minY
+    ? { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
+    : null;
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let i = 0; i < width * height; i += 1) {
+    const source = i * channels;
+    const target = i * 4;
+    rgba[target] = 45;
+    rgba[target + 1] = 45;
+    rgba[target + 2] = 45;
+    rgba[target + 3] = inkAlpha[i];
+  }
+  const buffer = await sharp(rgba, { raw: { width, height, channels: 4 } })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+  return { buffer, width, height, bounds };
+}
+
+async function makeTransparentColorAsset(imageBuffer) {
+  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
+    .rotate()
+    .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
+    .flatten({ background: "#ffffff" })
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  const { width, height, channels } = info;
+  const background = sampleCornerBackground(data, width, height, channels);
   const rgba = Buffer.alloc(width * height * 4);
   for (let i = 0; i < width * height; i += 1) {
     const source = i * channels;
@@ -106,14 +201,14 @@ export async function makeTransparentLineArtAsset(imageBuffer) {
     const r = data[source], g = data[source + 1], b = data[source + 2];
     const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
     const chroma = Math.max(r, g, b) - Math.min(r, g, b);
-    const darkAlpha = clamp(Math.round((225 - luminance) * 6.0), 0, 255);
-    const colorInkAlpha = chroma > 70 && luminance < 235
-      ? clamp(Math.round((chroma - 45) * 3.5 + (235 - luminance) * 1.4), 0, 255) : 0;
-    const paperLike = luminance > 230 && chroma < 75;
-    const alpha = paperLike ? 0 : Math.max(darkAlpha, colorInkAlpha);
-    rgba[target] = alpha === 0 ? 255 : r;
-    rgba[target + 1] = alpha === 0 ? 255 : g;
-    rgba[target + 2] = alpha === 0 ? 255 : b;
+    const backgroundDistance = Math.abs(r - background[0]) + Math.abs(g - background[1]) + Math.abs(b - background[2]);
+    const darkAlpha = clamp(Math.round((220 - luminance) * 5.0), 0, 255);
+    const colorAlpha = clamp(Math.round((backgroundDistance - 18) * 4.5 + Math.max(0, chroma - 20) * 1.2), 0, 255);
+    const paperLike = backgroundDistance < 22 || (luminance > 242 && chroma < 24);
+    const alpha = paperLike ? 0 : Math.max(darkAlpha, colorAlpha);
+    rgba[target] = r;
+    rgba[target + 1] = g;
+    rgba[target + 2] = b;
     rgba[target + 3] = alpha;
   }
   const buffer = await sharp(rgba, { raw: { width, height, channels: 4 } })
@@ -122,25 +217,46 @@ export async function makeTransparentLineArtAsset(imageBuffer) {
   return { buffer, width, height };
 }
 
-export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene) {
+export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, options = {}) {
   const assetDir = join(PUBLIC_GENERATED_DIR, jobId);
   mkdirSync(assetDir, { recursive: true });
   const transparentAsset = await makeTransparentLineArtAsset(imageBuffer);
   const assetBuffer = transparentAsset.buffer;
   const sceneId = scene?.id ?? "scene";
   const safeSceneId = safeAssetSegment(sceneId, "scene");
+  const masterFilename = `${safeSceneId}-master.png`;
   const filename = `${safeSceneId}.png`;
+  const colorFilename = `${safeSceneId}-color.png`;
+  writeFileSync(join(assetDir, masterFilename), imageBuffer);
   writeFileSync(join(assetDir, filename), assetBuffer);
+  const colorAssetData = await makeTransparentColorAsset(imageBuffer);
+  writeFileSync(join(assetDir, colorFilename), colorAssetData.buffer);
   const trace = await traceRasterRevealImage(assetBuffer);
   if (trace.strokes.length < 6) {
     throw new Error(`raster reveal produced too few path(s): ${trace.strokes.length}`);
   }
   const asset = `generated/${jobId}/${filename}`;
-  const renderMode = sceneShouldDirectRender(scene, trace) ? "direct" : "trace";
+  const masterAsset = `generated/${jobId}/${masterFilename}`;
+  const colorAsset = `generated/${jobId}/${colorFilename}`;
+  const forceTrace = options.forceTrace === true;
+  const renderMode = forceTrace || !sceneShouldDirectRender(scene, trace) ? "trace" : "direct";
   return {
+    assetContract: {
+      mode: renderMode === "direct" ? "full" : "trace",
+      masterAsset,
+      inkAsset: asset,
+      colorAsset,
+      width: transparentAsset.width,
+      height: transparentAsset.height,
+      sourceHash: createHash("sha256").update(imageBuffer).digest("hex"),
+      layers: renderMode === "direct" ? ["color"] : ["ink", "color"],
+      observedContentBounds: transparentAsset.bounds,
+      cropConfidence: transparentAsset.bounds ? 1 : 0,
+      stage: "render-assets",
+    },
     referenceImageAsset: asset,
     rasterReveal: {
-      asset, renderMode,
+      asset, inkAsset: asset, colorAsset, renderMode,
       imageWidth: transparentAsset.width, imageHeight: transparentAsset.height,
       transparentBackground: true,
       traceWidth: trace.traceWidth, traceHeight: trace.traceHeight,

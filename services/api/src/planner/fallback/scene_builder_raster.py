@@ -41,6 +41,8 @@ def build_raster_reveal(self, start: int) -> int:
         draw_h = region_h
         self.raster_reveal_spec = {
             "asset": str(self.reference_image_asset),
+            "inkAsset": self.raster_reveal.get("inkAsset") or self.raster_reveal.get("ink_asset") or str(self.reference_image_asset),
+            "colorAsset": self.raster_reveal.get("colorAsset") or self.raster_reveal.get("color_asset"),
             "x": round(draw_x, 1),
             "y": round(draw_y, 1),
             "width": round(draw_w, 1),
@@ -126,6 +128,41 @@ def build_raster_reveal(self, start: int) -> int:
         return min(self.duration - 8, cursor)
 
     prepared: list[dict] = []
+    contract_elements = sorted(self.scene.render_elements, key=lambda item: (item.sequence, item.id))
+    contract_sx = self.width / max(1, self.scene.canvas_width)
+    contract_sy = self.height / max(1, self.scene.canvas_height)
+
+    def point_in_region(point: dict[str, float], region) -> bool:
+        left = region.x * contract_sx
+        top = region.y * contract_sy
+        right = (region.x + region.width) * contract_sx
+        bottom = (region.y + region.height) * contract_sy
+        return left <= point["x"] < right and top <= point["y"] < bottom
+
+    def point_allowed(point: dict[str, float], element_index: int) -> bool:
+        element = contract_elements[element_index]
+        if not point_in_region(point, element.region):
+            return False
+        if any(point_in_region(point, later.region) for later in contract_elements[element_index + 1 :]):
+            return False
+        if any(point_in_region(point, protected) for protected in element.reveal.protected_regions):
+            return False
+        return True
+
+    def append_prepared(points: list[dict[str, float]], reveal_width: float, contract_element_id: str | None = None) -> None:
+        if len(points) < 2:
+            return
+        length = _polyline_length(points)
+        if length <= 1.0:
+            return
+        prepared.append({
+            "points": points,
+            "revealWidth": round(reveal_width, 1),
+            "dashLength": round(length, 1),
+            "weight": math.sqrt(max(1.0, length)),
+            "contractElementId": contract_element_id,
+        })
+
     for raw_path in self.raster_strokes:
         if not isinstance(raw_path, dict):
             continue
@@ -145,32 +182,96 @@ def build_raster_reveal(self, start: int) -> int:
             continue
         normalized_width = raw_path.get("revealWidth") or raw_path.get("reveal_width") or 0.018
         reveal_width = max(36.0, min(128.0, float(normalized_width) * max(draw_w, draw_h)))
-        prepared.append({"points": points, "revealWidth": round(reveal_width, 1), "dashLength": round(_polyline_length(points), 1), "weight": math.sqrt(max(1.0, _polyline_length(points)))})
+        if not contract_elements:
+            append_prepared(points, reveal_width)
+            continue
+
+        path_was_partitioned = False
+        for element_index, element in enumerate(contract_elements):
+            run: list[dict[str, float]] = []
+            for point in points:
+                if point_allowed(point, element_index):
+                    run.append(point)
+                    continue
+                if len(run) >= 2:
+                    append_prepared(run, reveal_width, element.id)
+                    path_was_partitioned = True
+                run = []
+            if len(run) >= 2:
+                append_prepared(run, reveal_width, element.id)
+                path_was_partitioned = True
+
+        # A legacy contract may describe only renderer-added annotations rather
+        # than the reference image. Preserve the trace instead of making the
+        # scene blank; authored image regions still take the strict path above.
+        if not path_was_partitioned:
+            append_prepared(points, reveal_width)
 
     if not prepared:
         return self.build_process_flow(start)
 
     window_start = min(max(0, start), max(0, self.duration - 32))
     window_end = max(window_start + 12.0, self.duration - 24.0)
+    ink_window_end = window_start + (window_end - window_start) * (2.0 / 3.0)
     total_weight = sum(item["weight"] for item in prepared) or float(len(prepared))
-    cursor_float = float(window_start)
+    ink_cursor = float(window_start)
+    color_cursor = float(ink_window_end)
     raster_paths: list[dict] = []
     for index, item in enumerate(prepared):
         op_id = f"s{self.scene_index}_raster_{index}"
-        span = max(0.45, (window_end - window_start) * item["weight"] / total_weight)
-        end_float = window_end if index == len(prepared) - 1 else min(window_end, cursor_float + span)
-        self.draw_ops.append({"id": op_id, "kind": "path", "startFrame": round(cursor_float, 2), "endFrame": round(max(cursor_float + 0.35, end_float), 2), "points": item["points"]})
-        raster_paths.append({"opId": op_id, "d": _path_from_points(item["points"]), "revealWidth": item["revealWidth"], "dashLength": item["dashLength"]})
-        cursor_float = end_float
+        color_op_id = f"{op_id}_color"
+        ink_span = max(0.45, (ink_window_end - window_start) * item["weight"] / total_weight)
+        color_span = max(0.35, (window_end - ink_window_end) * item["weight"] / total_weight)
+        ink_end = ink_window_end if index == len(prepared) - 1 else min(ink_window_end, ink_cursor + ink_span)
+        color_end = window_end if index == len(prepared) - 1 else min(window_end, color_cursor + color_span)
+        draw_op = {"id": op_id, "kind": "path", "phase": "ink", "startFrame": round(ink_cursor, 2), "endFrame": round(max(ink_cursor + 0.35, ink_end), 2), "points": item["points"]}
+        color_op = {"id": color_op_id, "kind": "path", "phase": "color", "startFrame": round(color_cursor, 2), "endFrame": round(max(color_cursor + 0.35, color_end), 2), "points": item["points"]}
+        if item.get("contractElementId"):
+            draw_op["contractElementId"] = item["contractElementId"]
+            color_op["contractElementId"] = item["contractElementId"]
+        self.draw_ops.append(draw_op)
+        self.draw_ops.append(color_op)
+        raster_paths.append({"opId": op_id, "colorOpId": color_op_id, "d": _path_from_points(item["points"]), "revealWidth": item["revealWidth"], "dashLength": item["dashLength"]})
+        ink_cursor = ink_end
+        color_cursor = color_end
 
     self.raster_reveal_spec = {
         "asset": str(self.reference_image_asset),
+        "inkAsset": self.raster_reveal.get("inkAsset") or self.raster_reveal.get("ink_asset") or str(self.reference_image_asset),
+        "colorAsset": self.raster_reveal.get("colorAsset") or self.raster_reveal.get("color_asset"),
         "x": round(draw_x, 1),
         "y": round(draw_y, 1),
         "width": round(draw_w, 1),
         "height": round(draw_h, 1),
         "strokes": raster_paths,
     }
+
+    # Keep generated artwork text-free, then add readable teaching labels in
+    # the renderer. Four sparse margin labels plus the scene title satisfy the
+    # instructional contract without baking pseudo-text into the local image.
+    plan_items = self.annotation_items(4)
+    fallback_labels = self.direct_callout_labels()
+    while len(plan_items) < 4:
+        label = fallback_labels[len(plan_items)] if len(plan_items) < len(fallback_labels) else f"重点{len(plan_items) + 1}"
+        plan_items.append(("side_label", label, self.beat_id_for(len(plan_items))))
+    note_size = max(38, int(self.body_size * 1.20))
+    note_width = self.width * 0.15
+    left_x = self.width * 0.045
+    right_x = self.width - note_width - self.width * 0.045
+    label_positions = [
+        (left_x, draw_y + draw_h * 0.20),
+        (right_x, draw_y + draw_h * 0.30),
+        (left_x, draw_y + draw_h * 0.62),
+        (right_x, draw_y + draw_h * 0.72),
+    ]
+    for index, ((annotation_type, label, beat_id), (label_x, label_y)) in enumerate(zip(plan_items[:4], label_positions)):
+        label_start = window_start + round((window_end - window_start) * (index + 1) / 5)
+        color = self.semantic_annotation_color(annotation_type, label, [self.blue, self.violet, self.green, self.red][index])
+        self.add_text(
+            label, label_x, label_y, note_size, color,
+            label_start, max(18, round(self.fps * 0.65)), note_width,
+            emphasis=True, max_chars=9, beat_id=beat_id,
+        )
     return min(self.duration - 8, int(math.ceil(window_end + 6)))
 
 

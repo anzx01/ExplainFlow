@@ -45,6 +45,11 @@ COOKING_TERMS = (
 
 BLANCHING_TERMS = ("blanch", "boiling water", "boil water", "parboil", "焯水", "汆", "煮水", "开水")
 
+DOUGH_TERMS = ("dough", "flour", "knead", "kneading", "mixing flour", "add water", "water into flour", "dough ball", "揉面", "和面", "面团", "面粉")
+WRAPPER_TERMS = ("wrapper", "wrappers", "rolling pin", "roll out dough", "cut dough", "dough pieces", "dumpling skin", "擀皮", "擀面皮", "面皮", "剂子")
+WRAPPING_TERMS = ("wrap dumpling", "wrapping dumpling", "wrapping a chinese dumpling", "fold dumpling", "pinch pleats", "pleats", "filling in wrapper", "包饺子", "捏褶", "包制")
+BOILING_TERMS = ("boil dumplings", "boiling dumplings", "dumplings floating", "pot of boiling water", "下锅", "煮饺子", "浮起")
+
 STIR_FRY_TERMS = (
     "wok", "skillet", "stir-fry", "stir fry", "simmer", "thicken", "sauce",
     "炒", "煸", "爆香", "烧", "勾芡", "收汁", "底料",

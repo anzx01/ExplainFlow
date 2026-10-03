@@ -5,10 +5,10 @@ _WHITEBOARD_TSX_TEMPLATE = r'''
 import React from "react";
 import { AbsoluteFill, Audio, Easing, Img, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 
-const HAND_WIDTH = 260;
-const HAND_HEIGHT = 289;
-const PEN_TIP_X = 15;
-const PEN_TIP_Y = 78;
+const HAND_WIDTH = 282;
+const HAND_HEIGHT = 454;
+const PEN_TIP_X = 0;
+const PEN_TIP_Y = 0;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
 const BOARD_BACKGROUND = "#F7F7F2";
@@ -17,14 +17,14 @@ const BACKGROUND_MUSIC_VOLUME = __BACKGROUND_MUSIC_VOLUME__;
 const FONT_FAMILY = "'STXingkai', '华文行楷', KaiTi, STKaiti, 'Kaiti SC', cursive";
 
 type Point = { x: number; y: number };
-type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string; contractElementId?: string };
+type DrawOp = { id: string; kind: "text" | "path"; startFrame: number; endFrame: number; points: Point[]; pace?: "glyph" | "ease"; beatId?: string; contractElementId?: string; phase?: "ink" | "color" };
 type RectRegion = { x: number; y: number; width: number; height: number };
 type RenderElementSpec = { id: string; sequence: number; parallelGroup?: string | null; startFrame: number; endFrame: number; region: RectRegion; laterRegions: RectRegion[]; protectedRegions: RectRegion[] };
 type TextSpec = { opId: string; text: string; x: number; y: number; fontSize: number; color: string; maxWidth: number; markerStrokeWidth?: number; markerFillOpacity?: number };
 type GlyphPathSpec = { opId: string; sourceOpId: string; d: string; color: string; strokeWidth: number; dashLength: number; fontOutline: boolean; markerFillOpacity?: number };
 type StrokeSpec = { opId: string; role: string; d: string; color: string; strokeWidth: number; dashLength: number };
-type RasterStrokeSpec = { opId: string; d: string; revealWidth: number; dashLength: number };
-type RasterRevealSpec = { asset: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[]; renderMode?: "trace" | "direct"; fit?: "contain" | "cover"; directAppearFrame?: number };
+type RasterStrokeSpec = { opId: string; colorOpId?: string; d: string; revealWidth: number; dashLength: number; colorStartFrame?: number; colorEndFrame?: number };
+type RasterRevealSpec = { asset: string; inkAsset?: string; colorAsset?: string; x: number; y: number; width: number; height: number; strokes: RasterStrokeSpec[]; renderMode?: "trace" | "direct"; fit?: "contain" | "cover"; directAppearFrame?: number };
 type AudioSegmentSpec = { id: string; index?: number; startFrame: number; endFrame: number; duration: number; audioStartFrame?: number; audioEndFrame?: number; audioSequenceDuration?: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
 type SceneSpec = {
   title: string;
@@ -138,7 +138,7 @@ const HandPen = ({ tipX, tipY, visible }: { tipX: number; tipY: number; visible:
       zIndex: 20,
     }}
   >
-    <Img src={staticFile("hand-real-pen.png")} style={{ width: HAND_WIDTH, height: HAND_HEIGHT }} />
+    <Img src={staticFile("hand-srt-drawing.png")} style={{ width: HAND_WIDTH, height: HAND_HEIGHT }} />
   </div>
 );
 
@@ -276,7 +276,7 @@ const DrawStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: StrokeSpec; o
   );
 };
 
-const RasterMaskStroke = ({ spec, op }: { spec: RasterStrokeSpec; op: DrawOp }) => {
+const RasterMaskStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: RasterStrokeSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
@@ -290,6 +290,31 @@ const RasterMaskStroke = ({ spec, op }: { spec: RasterStrokeSpec; op: DrawOp }) 
       strokeLinejoin="round"
       strokeDasharray={length}
       strokeDashoffset={length * (1 - progress)}
+      mask={maskIdForOp(scene, op) ? `url(#${maskIdForOp(scene, op)})` : undefined}
+    />
+  );
+};
+
+const RasterColorMaskStroke = ({ scene, spec, op, fallbackStart }: { scene: SceneSpec; spec: RasterStrokeSpec; op: DrawOp; fallbackStart: number }) => {
+  const frame = useCurrentFrame();
+  const progress = spec.colorOpId
+    ? progressForOp(frame, op)
+    : interpolate(frame, [spec.colorStartFrame ?? fallbackStart, Math.max((spec.colorStartFrame ?? fallbackStart) + 1, spec.colorEndFrame ?? fallbackStart + 18)], [0, 1], {
+        extrapolateLeft: "clamp", extrapolateRight: "clamp",
+        easing: Easing.bezier(0.2, 0.8, 0.2, 1),
+      });
+  const length = spec.dashLength;
+  return (
+    <path
+      d={spec.d}
+      fill="none"
+      stroke="white"
+      strokeWidth={Math.max(42, spec.revealWidth * 4.5)}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      strokeDasharray={length}
+      strokeDashoffset={length * (1 - progress)}
+      mask={maskIdForOp(scene, op) ? `url(#${maskIdForOp(scene, op)})` : undefined}
     />
   );
 };
@@ -300,15 +325,21 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
   if (!reveal || !scene.referenceImageAsset) return null;
   if (reveal.renderMode === "direct") return null;
   const maskId = `raster-reveal-mask-${sceneIndex}`;
-  const referenceImageAsset = scene.referenceImageAsset;
+  const referenceImageAsset = reveal.inkAsset ?? scene.referenceImageAsset;
+  const colorAsset = reveal.colorAsset ?? referenceImageAsset;
   const coverageStart = reveal.strokes.reduce((latest, stroke) => {
     const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
     return op ? Math.max(latest, op.endFrame) : latest;
   }, 0);
-  const finalCoverageOpacity = interpolate(frame, [coverageStart, coverageStart + 8], [0, 1], {
+  const colorEnd = reveal.strokes.reduce((latest, stroke) => {
+    const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
+    return Math.max(latest, colorOp?.endFrame ?? stroke.colorEndFrame ?? coverageStart + 18);
+  }, coverageStart + 18);
+  const finalCoverageOpacity = interpolate(frame, [colorEnd, colorEnd + 8], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
+  const colorMaskId = `raster-color-mask-${sceneIndex}`;
   return (
     <g>
       <defs>
@@ -316,7 +347,14 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
           <rect x="0" y="0" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} fill="black" />
           {reveal.strokes.map((stroke) => {
             const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
-            return op ? <RasterMaskStroke key={stroke.opId} spec={stroke} op={op} /> : null;
+            return op ? <RasterMaskStroke key={stroke.opId} scene={scene} spec={stroke} op={op} /> : null;
+          })}
+        </mask>
+        <mask id={colorMaskId} maskUnits="userSpaceOnUse">
+          <rect x="0" y="0" width={VIDEO_WIDTH} height={VIDEO_HEIGHT} fill="black" />
+          {reveal.strokes.map((stroke) => {
+            const op = scene.drawOps.find((drawOp) => drawOp.id === (stroke.colorOpId ?? stroke.opId));
+            return op ? <RasterColorMaskStroke key={`color-${stroke.opId}`} scene={scene} spec={stroke} op={op} fallbackStart={coverageStart} /> : null;
           })}
         </mask>
       </defs>
@@ -330,6 +368,15 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
         mask={`url(#${maskId})`}
         opacity={1 - finalCoverageOpacity}
       />
+      <image
+        href={staticFile(colorAsset)}
+        x={reveal.x}
+        y={reveal.y}
+        width={reveal.width}
+        height={reveal.height}
+        preserveAspectRatio="none"
+        mask={`url(#${colorMaskId})`}
+      />
     </g>
   );
 };
@@ -338,7 +385,7 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
-  const referenceImageAsset = scene.referenceImageAsset;
+  const referenceImageAsset = reveal.colorAsset ?? scene.referenceImageAsset;
   if (reveal.renderMode === "direct") {
     const appearFrame = reveal.directAppearFrame ?? 0;
     const opacity = interpolate(frame, [appearFrame, appearFrame + 10], [0, 1], {
@@ -366,7 +413,11 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
     const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
     return op ? Math.max(latest, op.endFrame) : latest;
   }, 0);
-  const opacity = interpolate(frame, [coverageStart, coverageStart + 8], [0, 1], {
+  const colorEnd = reveal.strokes.reduce((latest, stroke) => {
+    const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
+    return Math.max(latest, colorOp?.endFrame ?? stroke.colorEndFrame ?? coverageStart + 18);
+  }, coverageStart + 18);
+  const opacity = interpolate(frame, [colorEnd, colorEnd + 8], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -461,8 +512,15 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
   const orderedDrawOps = [...drawOps].sort((a, b) => a.startFrame - b.startFrame);
   const backgroundColor = sceneBackground(scene);
   const showHand = scene.handUsage !== "none" && scene.boardMode !== "chalkboard" && scene.visualStyle !== "math_chalkboard";
-  const getActiveDrawOp = (frame: number) =>
-    orderedDrawOps.find((op) => frame >= op.startFrame && frame <= op.endFrame);
+  // The pen should only appear while it is drawing a real path. Text glyphs
+  // are rendered stroke-by-stroke, but showing the hand on a glyph baseline
+  // makes it look detached from the illustrated object.
+  const getActiveDrawOp = (frame: number) => {
+    const activePaths = orderedDrawOps.filter((op) => op.kind === "path" && frame >= op.startFrame && frame <= op.endFrame);
+    return activePaths.find((op) => op.phase === "color")
+      ?? activePaths.find((op) => op.phase === "ink")
+      ?? activePaths[0];
+  };
   const getPenPosition = (frame: number) => {
     const active = getActiveDrawOp(frame);
     if (active) {
@@ -470,8 +528,9 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
       const point = pointOnPolyline(active.points, progress);
       return { x: point.x, y: point.y, visible: true };
     }
-    const previous = [...orderedDrawOps].reverse().find((op) => op.endFrame < frame);
-    const next = orderedDrawOps.find((op) => op.startFrame > frame);
+    const pathOps = orderedDrawOps.filter((op) => op.kind === "path");
+    const previous = [...pathOps].reverse().find((op) => op.endFrame < frame);
+    const next = pathOps.find((op) => op.startFrame > frame);
     if (previous && next) {
       const gap = next.startFrame - previous.endFrame;
       if (gap > 0 && gap <= 26 && frame >= previous.endFrame && frame <= next.startFrame) {

@@ -119,7 +119,7 @@ export const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
   40,
   Number(process.env.REMOTION_DIRECT_IMAGE_STROKE_THRESHOLD ?? 280),
 );
-export const HAND_ASSET = "hand-real-pen.png";
+export const HAND_ASSET = "hand-srt-drawing.png";
 export const MIN_RENDER_OUTPUT_BYTES = Math.max(1024, Number(process.env.RENDER_QA_MIN_BYTES ?? 50000) || 50000);
 export const MIN_RENDER_FRAME_STDDEV = Math.max(0.5, Number(process.env.RENDER_QA_MIN_FRAME_STDDEV ?? 2.5) || 2.5);
 export const SCENE_PREROLL_FRAMES = Math.max(0, Math.min(90, Number(process.env.SCENE_PREROLL_FRAMES ?? 0) || 0));
