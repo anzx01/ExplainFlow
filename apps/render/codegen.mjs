@@ -55,9 +55,25 @@ export function generatedTsxRendersSegmentAudio(code, source) {
   if (generatedTsxRendersLiteralAudioSource(code, source)) return true;
   if (!codeContainsAudioSource(code, source)) return false;
   const codeText = String(code || "");
-  return (
-    /(?:audioSegments|audio_segments|segments)\s*(?:\?\?)?[\s\S]{0,900}\.map\s*\([\s\S]{0,1200}<\s*Audio\b[\s\S]{0,260}(?:segment|seg|audio)\.(?:audioUrl|audio_url)/i.test(codeText) ||
-    /(?:segment|seg|audio)\.(?:audioUrl|audio_url)[\s\S]{0,260}<\s*\/\s*Sequence\s*>/i.test(codeText)
+  // A segment is covered only when its URL is actually used by an Audio tag.
+  // A Sequence containing `{null}` is intentionally emitted for generated
+  // scene audio that was stripped before the fallback track is injected.
+  return /(?:audioSegments|audio_segments|segments)\s*(?:\?\?)?[\s\S]{0,900}\.map\s*\([\s\S]{0,1200}<\s*Audio\b[\s\S]{0,260}(?:segment|seg|audio)\.(?:audioUrl|audio_url)/i.test(codeText);
+}
+
+export function stripGeneratedSceneAudio(code) {
+  return String(code || "")
+    .replaceAll("<Audio src={segment.audioUrl} />", "{null}")
+    .replaceAll("<Audio src={segment.audioUrl} volume={1} />", "{null}")
+    .replaceAll("return scene.audioUrl ? <Audio src={scene.audioUrl} /> : null;", "return null;")
+    .replaceAll("return scene.audioUrl ? <Audio src={scene.audioUrl} volume={1} /> : null;", "return null;")
+    .replaceAll("return scene.audioUrl ?  : null;", "return null;");
+}
+
+function ensureReferenceImagesVisible(code) {
+  return String(code || "").replace(
+    /interpolate\(frame, \[colorEnd, colorEnd \+ 8\], \[0, 1\],/g,
+    "interpolate(frame, [0, colorEnd + 8], [0.82, 1],",
   );
 }
 
@@ -79,20 +95,21 @@ export function generatedTsxRendersBackgroundSource(code, source) {
   return audioTags.some((tag) => /\b(?:BACKGROUND_MUSIC|backgroundMusic|musicUrl|music_url|music)\b/.test(tag));
 }
 
-export function storyboardSceneDurationFrames(scene) {
+export function storyboardSceneDurationFrames(scene, { includeBreathingRoom = false } = {}) {
   const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
   const estimateFrames = Math.ceil(Number(scene?.duration_estimate ?? 0) * FPS);
   const segmentFrames = Array.isArray(scene?.audioSegments ?? scene?.audio_segments)
     ? Math.max(0, ...(scene?.audioSegments ?? scene?.audio_segments).map((seg) => Number(seg?.endFrame ?? 0)))
     : 0;
-  return Math.max(FPS * 8, timingFrames, estimateFrames, segmentFrames);
+  const planned = Math.max(timingFrames, estimateFrames, segmentFrames);
+  return includeBreathingRoom ? Math.max(FPS * 2, planned) : Math.max(0, planned);
 }
 
 export function collectMissingVoiceTracks(storyboard, generatedTsx) {
   const tracks = [];
   let sceneOffset = 0;
   for (const [sceneIndex, scene] of (storyboard?.scenes ?? []).entries()) {
-    const sceneDuration = storyboardSceneDurationFrames(scene);
+    const sceneDuration = storyboardSceneDurationFrames(scene, { includeBreathingRoom: true });
     const segments = scene?.audioSegments ?? scene?.audio_segments ?? [];
     const segmentTracks = [];
     const sceneAudioUrl = scene?.audioUrl ?? scene?.audio_url;
@@ -220,13 +237,19 @@ export function writeGeneratedProject(jobId, generated, storyboard, options = {}
 
   const componentPath = join(projectDir, "GeneratedVideo.tsx");
   const entryPath = join(projectDir, "index.tsx");
-  const extraVoiceTracks = collectMissingVoiceTracks(storyboard, generated.tsx);
+  // Scene audio is stripped from the generated component below. Calculate
+  // fallback tracks from that stripped source so every TTS segment remains
+  // rendered by the wrapper entrypoint.
+  const strippedTsx = ensureReferenceImagesVisible(stripGeneratedSceneAudio(generated.tsx));
+  // The component is stripped of all generated scene audio, so derive the
+  // wrapper tracks against an empty source and inject every storyboard segment.
+  const extraVoiceTracks = collectMissingVoiceTracks(storyboard, "");
   const backgroundMusicUrl =
     options.backgroundMusicUrl && !generatedTsxRendersBackgroundSource(generated.tsx, options.backgroundMusicUrl)
       ? String(options.backgroundMusicUrl) : null;
   const backgroundMusicVolume = clampNumber(options.backgroundMusicVolume, 0, 0.5, 0.12);
 
-  writeFileSync(componentPath, generated.tsx, "utf8");
+  writeFileSync(componentPath, strippedTsx, "utf8");
   writeFileSync(
     entryPath,
     `import React from "react";
@@ -243,7 +266,7 @@ const GeneratedVideoWithAudio: React.FC = () => {
       <GeneratedVideo />
       {EXTRA_VOICE_TRACKS.map((track) => (
         <Sequence key={track.id} from={track.from} durationInFrames={track.durationInFrames}>
-          <Audio src={track.src} />
+          <Audio src={track.src} volume={1} />
         </Sequence>
       ))}
       {BACKGROUND_MUSIC_URL ? <Audio src={BACKGROUND_MUSIC_URL} volume={BACKGROUND_MUSIC_VOLUME} loop /> : null}

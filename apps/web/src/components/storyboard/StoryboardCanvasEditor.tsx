@@ -164,7 +164,7 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
         {validation && <span className="text-xs text-[--fg-muted]">{validation}</span>}
       </div>
       {enginePreviewUrl && <video src={enginePreviewUrl} controls className="w-full max-w-[760px] rounded-lg border border-cyan-500/30 bg-black" />}
-      <div className="overflow-auto rounded-lg border border-[--border-default] bg-[#f5ebd7]">
+      <div className="h-28 overflow-hidden rounded-lg border border-[--border-default] bg-[#f5ebd7]">
         <Stage ref={stageRef} width={displayWidth} height={displayHeight} scaleX={scale} scaleY={scale} onMouseDown={(event) => { if (event.target === event.target.getStage()) setSelectedId(null); }}>
           <Layer>
             {image && <KonvaImage image={image} x={0} y={0} width={canvasWidth} height={canvasHeight} opacity={0.45} />}

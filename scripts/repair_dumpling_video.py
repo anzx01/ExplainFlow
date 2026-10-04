@@ -21,6 +21,41 @@ SCENES = [
         "large centered instructional food illustration of dough preparation: a paper flour bag and a ceramic bowl of white flour, a clear stream of water being poured into the flour, chopsticks mixing shaggy dough, two hands kneading, and one dough ball resting under a cloth; flour-to-dough transformation is the only main action; no noodles, no ramen, no soup, no eating, no finished dumplings, no pleated pastries, no readable text, no logo, no watermark",
     ),
     (
+        "roll_rope", "Roll the dough rope",
+        "Roll the dough into one long even rope.",
+        "close-up of two hands rolling one long cylindrical dough rope on a board; only one rope and hands; no knife, no rolling pin, no wrapper, no dumplings, no noodles, no text",
+    ),
+    (
+        "cut_pieces", "Cut equal dough pieces",
+        "Cut the rope into equal dough pieces.",
+        "close-up of one hand holding a knife touching one straight dough rope and cutting equal pieces on a board; clear knife contact; no rolling pin, no wrapper, no dumplings, no noodles, no text",
+    ),
+    (
+        "roll_wrapper", "Roll one wrapper",
+        "Flatten one dough piece into a round wrapper.",
+        "close-up of both hands using a wooden rolling pin on one dough piece to make one round wrapper; clear tool contact; no knife, no filling, no dumpling, no noodles, no text",
+    ),
+    (
+        "wrapping", "Fill and pinch",
+        "Place filling in the center, fold the wrapper, and pinch pleats along the edge.",
+        "close-up instructional action sequence: spoon places visible filling on a round wrapper, wrapper folds into a half moon, fingers pinch a row of pleats; one dumpling only; no noodles, no pot, no text",
+    ),
+    (
+        "boil_drop", "Boil and add water",
+        "Lower dumplings into boiling water, then add cold water once while they cook.",
+        "open pot of boiling water, slotted spoon actively lowers crescent-shaped pleated dumplings below water surface; bubbles and water line; no steamer, no buns, no noodles, no text",
+    ),
+    (
+        "boil_add_water", "Add cold water",
+        "Add cold water while the dumplings boil.",
+        "open pot with submerged pleated dumplings and bubbles, ladle pours a visible stream of cold water into the pot; no steamer, no buns, no noodles, no text",
+    ),
+    (
+        "boil_float_scoop", "Float and scoop out",
+        "When dumplings float and swell, scoop them out.",
+        "pleated crescent dumplings visibly floating and swelling in clear boiling water while a slotted spoon lifts them out; open pot, bubbles; no steamer, no buns, no noodles, no text",
+    ),
+    (
         "wrappers", "Make dumpling wrappers",
         "Cut the dough rope into equal pieces, then roll one piece into a round wrapper.",
         "large left-to-right three-stage instructional action strip for making Chinese dumpling wrappers, with three separate large panels and no overhead still-life flat lay: stage one shows two hands actively rolling a long dough rope on a wooden board, stage two shows a knife in contact with the rope actively cutting it into equal dough pieces, stage three shows both hands using a wooden rolling pin in contact with one dough piece to flatten it into a round wrapper; tool-to-dough contact and motion must be unmistakable in every stage; no noodles, no soup, no finished meal, no plated dumplings, no decorative ingredient spread, no readable text, no logo, no watermark",
@@ -114,7 +149,14 @@ def _compose_boiling_action_board(client: httpx.Client, topic: str) -> bytes:
 def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
     requested = {value.strip() for value in os.environ.get("EXPLAINFLOW_SCENES", "").split(",") if value.strip()}
-    selected_scenes = [item for item in SCENES if not requested or item[0] in requested]
+    # The action-level scenes replace the old three-panel wrapper/boiling boards.
+    selected_scenes = []
+    seen_ids = set()
+    for item in SCENES:
+        if item[0] in {"wrappers", "boiling", "roll_rope", "boil_add_water"} or item[0] in seen_ids or (requested and item[0] not in requested):
+            continue
+        selected_scenes.append(item)
+        seen_ids.add(item[0])
     storyboard = {
         "topic": "How to make Chinese dumplings: flour to boiling",
         "total_duration_estimate": 15 * len(selected_scenes),
@@ -127,10 +169,21 @@ def main() -> int:
         fixture_suffix = "-v3.png" if (OUT / "ingredients-v3.png").exists() and requested == {"ingredients"} else "-v2.png"
         wrapper_fixture = OUT / ("wrappers-final-1024-board.png" if (OUT / "wrappers-final-1024-board.png").exists() else "wrappers-v4.png")
         boiling_fixture = OUT / ("boiling-final-1024-board.png" if (OUT / "boiling-final-1024-board.png").exists() else "boiling-v4.png")
-        if fixture_mode and all((OUT / f"{item['id']}{fixture_suffix}").exists() or (item["id"] == "wrappers" and wrapper_fixture.exists()) or (item["id"] == "boiling" and boiling_fixture.exists()) for item in storyboard["scenes"]):
+        action_fixtures = {
+            "roll_rope": OUT / "roll_rope-realref.png",
+            "cut_pieces": OUT / "cut_pieces.png",
+            "roll_wrapper": OUT / "roll_wrapper-v2.png",
+            "wrapping": OUT / "wrapping-v2.png",
+            # Combined boil scene uses the authored three-stage board for
+            # lowering and adding water; the final scene isolates floating.
+            "boil_drop": OUT / "boiling-final-1024-board.png",
+            "boil_add_water": OUT / "boil_add_water.png",
+            "boil_float_scoop": OUT / "boil_float_scoop-final-1024.png",
+        }
+        if fixture_mode and all((item["id"] in action_fixtures and action_fixtures[item["id"]].exists()) or (OUT / f"{item['id']}{fixture_suffix}").exists() or (item["id"] == "wrappers" and wrapper_fixture.exists()) or (item["id"] == "boiling" and boiling_fixture.exists()) for item in storyboard["scenes"]):
             image_payload = {"images": {}, "diagnostics": {}}
             for item in storyboard["scenes"]:
-                source = wrapper_fixture if item["id"] == "wrappers" and wrapper_fixture.exists() else boiling_fixture if item["id"] == "boiling" and boiling_fixture.exists() else (OUT / f"{item['id']}{fixture_suffix}")
+                source = action_fixtures.get(item["id"]) if item["id"] in action_fixtures and action_fixtures[item["id"]].exists() else wrapper_fixture if item["id"] == "wrappers" and wrapper_fixture.exists() else boiling_fixture if item["id"] == "boiling" and boiling_fixture.exists() else (OUT / f"{item['id']}{fixture_suffix}")
                 encoded = base64.b64encode(source.read_bytes()).decode("ascii")
                 image_payload["images"][item["id"]] = encoded
                 image_payload["diagnostics"][item["id"]] = {"ok": True, "source": f"local-{source.stem}-fixture"}
@@ -177,8 +230,9 @@ def main() -> int:
             time.sleep(3)
     report = {"jobId": job_id, "status": status, "imageDiagnostics": image_payload["diagnostics"]}
     (OUT / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({"jobId": job_id, "status": status.get("status"), "qaOk": status.get("qa", {}).get("ok"), "duration": status.get("actualDurationSeconds")}, ensure_ascii=False))
-    return 0 if status.get("status") == "done" and status.get("qa", {}).get("ok") else 1
+    qa = status.get("qa") or {}
+    print(json.dumps({"jobId": job_id, "status": status.get("status"), "qaOk": qa.get("ok"), "duration": status.get("actualDurationSeconds")}, ensure_ascii=False))
+    return 0 if status.get("status") == "done" and qa.get("ok") else 1
 
 
 if __name__ == "__main__":

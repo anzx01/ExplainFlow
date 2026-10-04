@@ -417,7 +417,7 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
     const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
     return Math.max(latest, colorOp?.endFrame ?? stroke.colorEndFrame ?? coverageStart + 18);
   }, coverageStart + 18);
-  const opacity = interpolate(frame, [colorEnd, colorEnd + 8], [0, 1], {
+  const opacity = interpolate(frame, [0, colorEnd + 8], [0.82, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
@@ -470,14 +470,14 @@ const SceneAudio = ({ scene }: { scene: SceneSpec }) => {
         {segments.map((segment) =>
           segment.audioUrl ? (
             <Sequence key={segment.id} from={segment.audioStartFrame ?? segment.startFrame} durationInFrames={segment.audioSequenceDuration ?? Math.max(1, segment.endFrame - (segment.audioStartFrame ?? segment.startFrame))} layout="none">
-              <Audio src={segment.audioUrl} />
+              <Audio src={segment.audioUrl} volume={1} />
             </Sequence>
           ) : null,
         )}
       </>
     );
   }
-  return scene.audioUrl ? <Audio src={scene.audioUrl} /> : null;
+  return scene.audioUrl ? <Audio src={scene.audioUrl} volume={1} /> : null;
 };
 
 const SceneTransitionWipe = ({ scene }: { scene: SceneSpec }) => {

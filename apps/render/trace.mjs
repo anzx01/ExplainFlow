@@ -150,11 +150,24 @@ export async function traceRasterRevealImage(imageBuffer) {
   };
 }
 
-export async function makeTransparentLineArtAsset(imageBuffer) {
-  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
+async function makeHanddrawnMaster(imageBuffer) {
+  return sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
+    .modulate({ saturation: 0.58, brightness: 1.08 })
+    .blur(0.45)
+    .png({ palette: true, colours: 16, dither: 0 })
+    .toBuffer();
+}
+
+export async function makeTransparentLineArtAsset(imageBuffer) {
+  const master = await makeHanddrawnMaster(imageBuffer);
+  const { data, info } = await sharp(master, { failOn: "none" })
+    .rotate()
     .flatten({ background: "#ffffff" })
+    .greyscale()
+    .normalise()
+    .linear(1.12, -18)
     .raw()
     .toBuffer({ resolveWithObject: true });
   const { width, height, channels } = info;
@@ -186,7 +199,10 @@ export async function makeTransparentLineArtAsset(imageBuffer) {
 }
 
 async function makeTransparentColorAsset(imageBuffer) {
-  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
+  // Normalize photographic references into one restrained whiteboard plate:
+  // low-detail, flat colors, and no photographic grain competing with the ink.
+  const stylizedBuffer = await makeHanddrawnMaster(imageBuffer);
+  const { data, info } = await sharp(stylizedBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
     .flatten({ background: "#ffffff" })
@@ -205,7 +221,10 @@ async function makeTransparentColorAsset(imageBuffer) {
     const darkAlpha = clamp(Math.round((220 - luminance) * 5.0), 0, 255);
     const colorAlpha = clamp(Math.round((backgroundDistance - 18) * 4.5 + Math.max(0, chroma - 20) * 1.2), 0, 255);
     const paperLike = backgroundDistance < 22 || (luminance > 242 && chroma < 24);
-    const alpha = paperLike ? 0 : Math.max(darkAlpha, colorAlpha);
+    // Keep ink exclusively in the ink asset. The color plate must contain
+    // chromatic pixels only so the drawn line and the fill share one source
+    // image without a second, darker copy of the stroke.
+    const alpha = paperLike ? 0 : colorAlpha;
     rgba[target] = r;
     rgba[target + 1] = g;
     rgba[target + 2] = b;
@@ -220,16 +239,17 @@ async function makeTransparentColorAsset(imageBuffer) {
 export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, options = {}) {
   const assetDir = join(PUBLIC_GENERATED_DIR, jobId);
   mkdirSync(assetDir, { recursive: true });
-  const transparentAsset = await makeTransparentLineArtAsset(imageBuffer);
+  const handdrawnMaster = await makeHanddrawnMaster(imageBuffer);
+  const transparentAsset = await makeTransparentLineArtAsset(handdrawnMaster);
   const assetBuffer = transparentAsset.buffer;
   const sceneId = scene?.id ?? "scene";
   const safeSceneId = safeAssetSegment(sceneId, "scene");
   const masterFilename = `${safeSceneId}-master.png`;
   const filename = `${safeSceneId}.png`;
   const colorFilename = `${safeSceneId}-color.png`;
-  writeFileSync(join(assetDir, masterFilename), imageBuffer);
+  writeFileSync(join(assetDir, masterFilename), handdrawnMaster);
   writeFileSync(join(assetDir, filename), assetBuffer);
-  const colorAssetData = await makeTransparentColorAsset(imageBuffer);
+  const colorAssetData = await makeTransparentColorAsset(handdrawnMaster);
   writeFileSync(join(assetDir, colorFilename), colorAssetData.buffer);
   const trace = await traceRasterRevealImage(assetBuffer);
   if (trace.strokes.length < 6) {
@@ -248,7 +268,7 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
       colorAsset,
       width: transparentAsset.width,
       height: transparentAsset.height,
-      sourceHash: createHash("sha256").update(imageBuffer).digest("hex"),
+      sourceHash: createHash("sha256").update(handdrawnMaster).digest("hex"),
       layers: renderMode === "direct" ? ["color"] : ["ink", "color"],
       observedContentBounds: transparentAsset.bounds,
       cropConfidence: transparentAsset.bounds ? 1 : 0,

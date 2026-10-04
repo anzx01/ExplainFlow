@@ -8,7 +8,7 @@
 import http from "http";
 import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from "fs";
 import { basename, join } from "path";
-import { sendJson, serveStaticFile, serveMediaFile } from "./http-utils.mjs";
+import { sendJson, serveMediaFile } from "./http-utils.mjs";
 import { randomUUID } from "crypto";
 import {
   AUDIO_DIR,
@@ -128,7 +128,9 @@ const server = http.createServer(async (req, res) => {
       const forceRender = Boolean(payload.forceRender ?? payload.force_render);
       const snapshot = buildProjectSnapshot(storyboard, renderOptions);
       const cachedJob = forceRender ? null : Object.values(jobs).find((job) =>
-        job?.status === "done" &&
+        // A render can have a usable MP4 even when non-media QA warnings or
+        // contract checks mark the job failed. Reuse that artifact unless the
+        // caller explicitly asks for forceRender.
         job?.snapshot?.stages?.render === snapshot.stages.render &&
         job?.outputPath && existsSync(job.outputPath),
       );
@@ -232,10 +234,12 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  // GET /audio/:filename
-  if (req.method === "GET" && url.pathname.startsWith("/audio/")) {
+  // GET|HEAD /audio/:filename
+  if ((req.method === "GET" || req.method === "HEAD") && url.pathname.startsWith("/audio/")) {
     const filename = basename(url.pathname.slice(7));
-    serveStaticFile(res, join(AUDIO_DIR, filename), "audio/mpeg");
+    // Remotion/browser audio loading may issue a byte-range request. Use the
+    // media handler so cached TTS files behave like downloadable media.
+    serveMediaFile(req, res, join(AUDIO_DIR, filename), "audio/mpeg");
     return;
   }
 

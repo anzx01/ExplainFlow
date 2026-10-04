@@ -158,7 +158,7 @@ function SceneEditor({
 }) {
   const isBusy = (action: string) => busyAction === `${scene.id}:${action}`;
   return (
-    <div className="h-full flex flex-col overflow-y-auto p-5 space-y-5">
+    <div className="relative h-full min-h-0 flex flex-col overflow-hidden p-3 pb-20 space-y-2">
       <StoryboardCanvasEditor scene={scene} onUpdate={(updates) => onUpdate?.(updates)} />
       <AssetContractPanel scene={scene} />
       <div>
@@ -187,7 +187,7 @@ function SceneEditor({
         </h3>
         <textarea
           value={scene.narration}
-          rows={6}
+          rows={3}
           onChange={(e) => onUpdate?.({ narration: e.target.value })}
           className="w-full rounded-lg bg-[--bg-base] border border-[--border-default] text-[--fg-default] text-sm p-3 resize-none focus:outline-none focus:border-purple-500 transition-colors leading-relaxed"
         />
@@ -201,7 +201,7 @@ function SceneEditor({
           {scene.animations.map((anim, i) => (
             <div
               key={i}
-              className="p-3 rounded-lg bg-[--bg-base] border border-[--border-default] space-y-1"
+              className="p-2 rounded-lg bg-[--bg-base] border border-[--border-default] space-y-1"
             >
               <div className="flex items-center gap-2">
                 <AnimationTag anim={anim} />
@@ -237,7 +237,7 @@ function SceneEditor({
         </div>
       )}
 
-      <div className="space-y-2">
+      <div className="absolute inset-x-0 bottom-0 z-20 space-y-1 border-t border-[--border-subtle] bg-[--bg-elevated] px-3 py-2">
         <button
           onClick={() => onRegenerateImage?.(scene)}
           disabled={Boolean(busyAction)}
@@ -372,7 +372,7 @@ export function StoryboardView({
       </div>
 
       {/* Edit panel */}
-      <div className="w-[820px] max-w-[58vw] flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] overflow-hidden">
+      <div className="w-[820px] max-w-[58vw] min-h-0 flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] overflow-hidden">
         <div className="px-4 py-3 border-b border-[--border-subtle]">
           <p className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider">场景编辑</p>
         </div>

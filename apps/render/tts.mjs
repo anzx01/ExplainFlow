@@ -89,13 +89,15 @@ export function sceneBeatSpecs(scene) {
   const beats = visualBeats.length > 0
     ? visualBeats
     : [{ id: "beat_0", draw_intent: scene.image_description || scene.title || "", narration: scene.narration || scene.title || "", required_labels: [], duration_estimate: scene.duration_estimate || 8 }];
-  const sceneBudget = Math.max(5, Number(scene?.duration_estimate ?? 0) || 0);
+  const sceneBudget = Math.max(2, Number(scene?.duration_estimate ?? 0) || 0);
   const sceneNarration = cleanNarrationText(scene.narration || scene.title || "");
   const distributedSceneNarration = distributeNarrationAcrossBeats(sceneNarration, beats.length);
   return beats.map((beat, index) => {
     const beatNarration = cleanNarrationText(beat?.narration || "");
     const rawText = cleanNarrationText(beatNarration || distributedSceneNarration[index] || sceneNarration || scene.title || beat?.draw_intent || "");
-    const beatEstimate = Math.max(1, estimateNarrationSeconds(rawText) + 0.8, Number(beat?.duration_estimate ?? beat?.duration ?? sceneBudget / Math.max(1, beats.length)) || 6);
+    const narratedEstimate = estimateNarrationSeconds(rawText) + 0.8;
+    const requestedEstimate = Number(beat?.duration_estimate ?? beat?.duration ?? 0);
+    const beatEstimate = Math.max(1, narratedEstimate, Math.min(requestedEstimate || narratedEstimate, narratedEstimate + 1.2));
     const maxChars = Math.max(120, Math.min(260, Math.floor(Math.max(beatEstimate, 8) * 9.5)));
     const text = trimNarrationToChars(rawText, maxChars);
     return { id: String(beat?.id || `beat_${index}`), index, text, drawIntent: String(beat?.draw_intent || beat?.drawIntent || scene.title || "").trim(), durationEstimate: beatEstimate };
@@ -201,8 +203,8 @@ export async function injectAudio(storyboard, voice) {
         const audioDurationFrames = Math.max(1, Math.ceil(actualAudioDurationSeconds * FPS));
         const estimateFrames = Math.ceil(beat.durationEstimate * FPS);
         const audioStartFrame = cursor;
-        const minimumFrames = Math.max(FPS * 3, estimateFrames);
-        const durationFrames = Math.max(minimumFrames, audioDurationFrames + 14);
+        const minimumFrames = Math.max(FPS * 1.5, Math.min(estimateFrames, audioDurationFrames + Math.round(FPS * 0.7)));
+        const durationFrames = Math.max(minimumFrames, audioDurationFrames + Math.round(FPS * 0.25));
         const startFrame = cursor;
         const endFrame = startFrame + durationFrames;
         cursor = endFrame;
@@ -216,7 +218,7 @@ export async function injectAudio(storyboard, voice) {
       });
 
       const lastAudioEndFrame = audioSegments.reduce((maxFrame, seg) => Math.max(maxFrame, Number(seg.audioEndFrame ?? seg.endFrame ?? 0) || 0), 0);
-      const durationFrames = Math.max(cursor, lastAudioEndFrame + Math.round(FPS * 0.65), FPS * 8);
+      const durationFrames = Math.max(cursor, lastAudioEndFrame + Math.round(FPS * 0.25), FPS * 2);
       const fallbackAudio = audioSegments.find((seg) => seg.audioUrl)?.audioUrl ?? null;
       if (!fallbackAudio) throw new Error(`缺少场景音频：${scene.id || `scene_${sceneIndex}`}`);
       const failedSegments = segmentResults.filter((r) => r.status === "rejected");

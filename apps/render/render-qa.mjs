@@ -52,9 +52,26 @@ function collectStoryboardQaChecks(storyboard) {
     const sceneId = scene?.id ?? `scene_${sceneIndex}`;
     const width = Number(scene?.canvasWidth ?? scene?.canvas_width ?? 1920);
     const height = Number(scene?.canvasHeight ?? scene?.canvas_height ?? 1080);
-    const durationMs = Number(scene?.duration_estimate ?? 0) * 1000;
+    // TTS injection can extend a scene beyond the planner's initial estimate.
+    // Validate render elements against the compiled timing plan/audio timeline
+    // when available, otherwise valid renders are rejected as over-duration.
+    const estimateMs = Number(scene?.duration_estimate ?? 0) * 1000;
+    const timingFrames = Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0);
+    const segmentFrames = Math.max(0, ...(scene?.audioSegments ?? scene?.audio_segments ?? []).map((segment) => Number(segment?.endFrame ?? 0) || 0));
+    const compiledMs = Math.max(
+      estimateMs,
+      timingFrames > 0 ? timingFrames / 30 * 1000 : 0,
+      segmentFrames > 0 ? segmentFrames / 30 * 1000 : 0,
+    );
     const elements = [...(scene?.renderElements ?? scene?.render_elements ?? [])]
       .sort((a, b) => Number(a?.sequence ?? 0) - Number(b?.sequence ?? 0));
+    const maxElementEndMs = elements.reduce((max, element) => {
+      const reveal = element?.reveal ?? {};
+      const start = Number(reveal?.startMs ?? reveal?.start_ms ?? 0) || 0;
+      const duration = Number(reveal?.durationMs ?? reveal?.duration_ms ?? 0) || 0;
+      return Math.max(max, start + duration);
+    }, 0);
+    const durationMs = Math.max(compiledMs, maxElementEndMs + 500);
     let previousSequence = 0;
     let previousEnd = 0;
     let previousParallel = null;

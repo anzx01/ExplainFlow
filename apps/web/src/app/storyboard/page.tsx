@@ -508,7 +508,7 @@ export default function StoryboardPage() {
       </header>
 
       {/* Content */}
-      <div className="flex-1 overflow-hidden">
+      <div className="flex-1 min-h-0 overflow-hidden">
         <StoryboardView
           storyboard={storyboard}
           videoUrl={videoUrl}
