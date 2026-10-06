@@ -151,12 +151,37 @@ export async function traceRasterRevealImage(imageBuffer) {
 }
 
 async function makeHanddrawnMaster(imageBuffer) {
-  return sharp(imageBuffer, { failOn: "none" })
+  // Keep the generated reference as the single source for both line art and
+  // color. The old palette reduction made detailed references collapse into
+  // flat geometric icons before tracing even started.
+  const normalized = await sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
-    .modulate({ saturation: 0.58, brightness: 1.08 })
-    .blur(0.45)
-    .png({ palette: true, colours: 16, dither: 0 })
+    .modulate({ saturation: 0.78, brightness: 1.03 })
+    .sharpen({ sigma: 0.55, m1: 0.7, m2: 2.5 })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+
+  // Generated references often contain a large blank border. Trim only the
+  // near-white border, then restore a small white margin so the subject grows
+  // on the board without touching the canvas edge.
+  const trimmed = await sharp(normalized, { failOn: "none" })
+    .trim({ background: "#ffffff", threshold: 12 })
+    .toBuffer();
+  const metadata = await sharp(trimmed).metadata();
+  const width = Number(metadata.width ?? RASTER_REVEAL_ASSET_MAX_SIZE);
+  const height = Number(metadata.height ?? RASTER_REVEAL_ASSET_MAX_SIZE);
+  const side = Math.max(width, height);
+  const margin = Math.max(12, Math.round(side * 0.08));
+  return sharp(trimmed)
+    .extend({
+      top: Math.round((side - height) / 2) + margin,
+      bottom: Math.ceil((side - height) / 2) + margin,
+      left: Math.round((side - width) / 2) + margin,
+      right: Math.ceil((side - width) / 2) + margin,
+      background: "#ffffff",
+    })
+    .png({ compressionLevel: 9 })
     .toBuffer();
 }
 
@@ -252,20 +277,24 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
   const colorAssetData = await makeTransparentColorAsset(handdrawnMaster);
   writeFileSync(join(assetDir, colorFilename), colorAssetData.buffer);
   const trace = await traceRasterRevealImage(assetBuffer);
-  if (trace.strokes.length < 6) {
-    throw new Error(`raster reveal produced too few path(s): ${trace.strokes.length}`);
-  }
+  // A generated reference is still valuable when its line-art skeleton is too
+  // sparse to animate. Keep the complete normalized plate and render it
+  // directly instead of discarding the image and falling back to text-only SVG.
+  const hasEnoughTracePaths = trace.strokes.length >= 6;
   const asset = `generated/${jobId}/${filename}`;
   const masterAsset = `generated/${jobId}/${masterFilename}`;
   const colorAsset = `generated/${jobId}/${colorFilename}`;
   const forceTrace = options.forceTrace === true;
-  const renderMode = forceTrace || !sceneShouldDirectRender(scene, trace) ? "trace" : "direct";
+  const renderMode = !hasEnoughTracePaths
+    ? "direct"
+    : (forceTrace || !sceneShouldDirectRender(scene, trace) ? "trace" : "direct");
+  const directAsset = masterAsset;
   return {
     assetContract: {
       mode: renderMode === "direct" ? "full" : "trace",
       masterAsset,
       inkAsset: asset,
-      colorAsset,
+      colorAsset: renderMode === "direct" ? directAsset : colorAsset,
       width: transparentAsset.width,
       height: transparentAsset.height,
       sourceHash: createHash("sha256").update(handdrawnMaster).digest("hex"),
@@ -274,9 +303,11 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
       cropConfidence: transparentAsset.bounds ? 1 : 0,
       stage: "render-assets",
     },
-    referenceImageAsset: asset,
+    referenceImageAsset: renderMode === "direct" ? directAsset : asset,
     rasterReveal: {
-      asset, inkAsset: asset, colorAsset, renderMode,
+      asset: renderMode === "direct" ? directAsset : asset,
+      inkAsset: asset,
+      colorAsset: renderMode === "direct" ? directAsset : colorAsset,
       imageWidth: transparentAsset.width, imageHeight: transparentAsset.height,
       transparentBackground: true,
       traceWidth: trace.traceWidth, traceHeight: trace.traceHeight,

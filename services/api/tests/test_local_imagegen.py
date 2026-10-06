@@ -46,6 +46,27 @@ def test_local_scene_prompt_keeps_action_before_style_noise(monkeypatch):
     assert "dense infographic" not in prompt
 
 
+def test_local_scene_prompt_keeps_topic_specific_visual_subject():
+    request = SceneImageRequest(
+        "attention", "看短视频的坏处", "注意力碎片化",
+        "a text-free educational illustration with one large central subject and generous margins",
+    )
+    prompt = _build_local_prompt(request)
+    assert "smartphone" in prompt
+    assert "scattered attention" in prompt
+    assert "generic geometric icons" in prompt
+
+
+def test_local_scene_prompt_changes_subject_by_short_video_scene():
+    request = SceneImageRequest(
+        "sleep", "看短视频的坏处", "睡眠与情绪",
+        "a text-free educational illustration with one large central subject and generous margins",
+    )
+    prompt = _build_local_prompt(request)
+    assert "tired person in bed" in prompt
+    assert "no brain network" in prompt
+
+
 def test_local_seed_is_stable_and_prompt_specific():
     assert _local_seed("one") == _local_seed("one")
     assert _local_seed("one") != _local_seed("two")

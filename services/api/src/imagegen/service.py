@@ -177,7 +177,11 @@ def _build_local_prompt(req: SceneImageRequest) -> str:
         description = _normalize_image_description(req.image_description)
         if len(description) > 520:
             description = description[:520].rsplit(" ", 1)[0]
-    style = "single isolated realistic instructional reference photo, close-up action view, natural object colors, clear tool-to-object contact, simple uncluttered background, plain unlabeled image"
+    topic_hint = _topic_visual_hint(req)
+    if topic_hint:
+        description = f"{topic_hint}. {description}"
+    context = f"Topic subject: {req.topic}. Scene: {req.title}."
+    style = "rich editorial realistic instructional hand-drawn illustration rendered as a colored whiteboard scene, 3-5 large meaningful subject-specific objects, close-up readable action view, natural subject colors, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image"
     exclusions = "No captions, logos, or watermarks."
     action_exclusions = {
         "roll_rope": " No rolling pin, knife, dough ball, wrapper, bowl, or other food.",
@@ -190,11 +194,47 @@ def _build_local_prompt(req: SceneImageRequest) -> str:
     exclusions += action_exclusions.get(stage, "")
     if stage in {"dough_prep", "wrappers", "roll_rope", "cut_pieces", "roll_wrapper", "wrapping", "boiling", "boil_drop", "boil_add_water", "boil_float_scoop"}:
         exclusions += " No steamer, steamed buns, baozi, mantou, noodles, soup, or plated meal."
-    return f"{description} {style}. {exclusions}"
+    return f"{description} {context} {style}. Preserve the concrete topic subject and scene action; do not replace it with generic geometric icons. {exclusions}"
 
 
 def _local_seed(prompt: str) -> int:
     return int.from_bytes(hashlib.sha256(prompt.encode("utf-8")).digest()[:4], "big") & 0x7FFFFFFF
+
+
+def _topic_visual_hint(req: SceneImageRequest) -> str:
+    """Give local image generation a concrete subject for common explainers."""
+    blob = f"{req.topic} {req.title} {req.image_description}".lower()
+    scene_hints = [
+        (("停不下来", "滑动", "手机", "swipe", "scroll"),
+         "one person holding a smartphone in close-up, thumb actively swiping a vertical short-video feed with three distinct colorful video thumbnails and a visible loop arrow; show the compulsive action clearly, with no brain, clock, or checklist"),
+        (("奖励", "大脑", "回路", "dopamine", "reward", "brain"),
+         "one large hand-drawn brain connected to a smartphone by a three-node reward loop, with small notification sparks and one highlighted reward pulse; show the brain and loop as the clear central subject, no sleep scene or checklist"),
+        (("注意力", "碎片", "专注", "attention", "fragment"),
+         "a person trying to read one open book while a smartphone with colorful short-video cards pulls the gaze in several directions, showing scattered attention and one clean focus beam splitting into fragments; show the attention conflict as the central action, no brain diagram or bed"),
+        (("睡眠", "入睡", "熬夜", "sleep", "bed", "night"),
+         "a tired person in bed at night holding a glowing smartphone, a bedside clock showing late night, moon and dim room objects, with the phone light interrupting sleep; show the sleep disruption clearly, no brain network or checklist"),
+        (("情绪", "焦虑", "心情", "mood", "emotion", "anxious"),
+         "one person surrounded by a simple sequence of changing mood faces from calm to anxious after watching a smartphone, with the phone and emotional change as the central subject; no sleep clock or checklist"),
+        (("主动", "管理", "设置", "替代", "练习", "checklist", "control"),
+         "a hand placing a smartphone face down beside a clear three-item habit checklist and a small timer, with a green check path showing deliberate control; make the action of managing use unmistakable, no abstract geometric icon-only diagram"),
+    ]
+    for terms, hint in scene_hints:
+        if any(term in blob for term in terms):
+            return hint
+    hints = [
+        (("短视频", "注意力", "奖励回路", "睡眠", "情绪", "信息茧房"),
+         "a person using a smartphone with short-video cards, a simple brain reward loop, scattered attention fragments, a small sleep clock and mood symbols, shown as one connected educational scene"),
+        (("打扫", "房间", "整理"),
+         "a person tidying a room with large visible zones for sorting, cleaning, and putting objects away"),
+        (("饺子", "dumpling", "dough"),
+         "hands preparing dumplings with flour, dough, wrappers, filling, pleats, and a cooking pot"),
+        (("麻婆豆腐", "豆腐", "mapo tofu"),
+         "a wok of mapo tofu with white tofu cubes, red chili sauce, minced meat, green garnish, and visible steam"),
+    ]
+    for terms, hint in hints:
+        if any(term in blob for term in terms):
+            return hint
+    return ""
 
 
 def _asset_contract_metadata(req: SceneImageRequest, image_bytes: bytes, prompt: str) -> dict:

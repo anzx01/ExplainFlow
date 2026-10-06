@@ -20,6 +20,8 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
   const shapeRefs = useRef<Record<string, Konva.Rect | null>>({});
   const canvasWidth = scene.canvasWidth ?? 1920;
   const canvasHeight = scene.canvasHeight ?? 1080;
+  // Keep the complete canvas inside the compact editor instead of clipping
+  // the lower half of the interactive Konva stage.
   const displayWidth = 760;
   const scale = displayWidth / canvasWidth;
   const displayHeight = Math.round(canvasHeight * scale);
@@ -151,8 +153,8 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
+    <div className="space-y-1">
+      <div className="flex flex-wrap items-center gap-1">
         <button onClick={addElement} className="px-2.5 py-1.5 rounded border border-[--border-default] text-xs">新增区域</button>
         <button onClick={removeSelected} disabled={!selectedId} className="px-2.5 py-1.5 rounded border border-red-500/40 text-red-300 text-xs disabled:opacity-40">删除区域</button>
         <button onClick={() => moveSelected(-1)} disabled={!selectedId} className="px-2.5 py-1.5 rounded border border-[--border-default] text-xs disabled:opacity-40">前移</button>
@@ -164,7 +166,7 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
         {validation && <span className="text-xs text-[--fg-muted]">{validation}</span>}
       </div>
       {enginePreviewUrl && <video src={enginePreviewUrl} controls className="w-full max-w-[760px] rounded-lg border border-cyan-500/30 bg-black" />}
-      <div className="h-28 overflow-hidden rounded-lg border border-[--border-default] bg-[#f5ebd7]">
+      <div className="h-[27rem] flex items-center justify-center overflow-hidden rounded-lg border border-[--border-default] bg-[#f5ebd7]">
         <Stage ref={stageRef} width={displayWidth} height={displayHeight} scaleX={scale} scaleY={scale} onMouseDown={(event) => { if (event.target === event.target.getStage()) setSelectedId(null); }}>
           <Layer>
             {image && <KonvaImage image={image} x={0} y={0} width={canvasWidth} height={canvasHeight} opacity={0.45} />}
@@ -202,7 +204,7 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
       </div>
       <div className="space-y-2">
         {elements.map((element) => (
-          <div key={`${element.id}-timing`} className={`grid grid-cols-[38px_1fr_90px_90px_110px] gap-2 items-center rounded border p-2 ${selectedId === element.id ? "border-purple-500" : "border-[--border-default]"}`}>
+          <div key={`${element.id}-timing`} className={`grid grid-cols-[28px_1fr_70px_70px_82px] gap-1 items-center rounded border p-1 ${selectedId === element.id ? "border-purple-500" : "border-[--border-default]"}`}>
             <button onClick={() => setSelectedId(element.id)} className="text-xs font-mono">{element.sequence}</button>
             <input value={element.subtitle ?? ""} onChange={(event) => updateElement(element.id, { subtitle: event.target.value })} placeholder="对应字幕/旁白" className="min-w-0 bg-[--bg-base] border border-[--border-default] rounded px-2 py-1 text-xs" />
             <input type="number" value={element.reveal.startMs} onChange={(event) => updateReveal(element.id, { startMs: Math.max(0, Number(event.target.value)) })} title="开始毫秒" className="bg-[--bg-base] border border-[--border-default] rounded px-2 py-1 text-xs" />

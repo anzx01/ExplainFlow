@@ -2,7 +2,7 @@ import json
 import logging
 import re
 
-from src.core.llm import chat_json, check_llm_connection
+from src.core.llm import LLMUnavailableError, chat_json, check_llm_connection
 from .models import (
     ConceptEdge,
     ConceptNode,
@@ -18,6 +18,7 @@ from .brief_parse import (
     _as_str_list,
     _clean,
     _contains_any_text,
+    _fallback_brief,
     _looks_corrupted_text,
     _request_blob,
 )
@@ -241,20 +242,33 @@ def _ensure_graph_quality(graph: ExplainGraph, req: GenerateGraphRequest, brief:
 
 
 async def generate_explain_graph(req: GenerateGraphRequest) -> ExplainGraph:
-    await check_llm_connection()
-    brief = await enhance_prompt(req)
+    try:
+        await check_llm_connection()
+        brief = await enhance_prompt(req)
+    except LLMUnavailableError as exc:
+        # Keep the editor usable during a short provider outage. The fallback
+        # is deterministic and does not trigger any image, audio, or render work.
+        logger.warning("LLM unavailable while building teaching brief; using local graph fallback: %s", exc)
+        brief = _fallback_brief(req)
+        if _is_problem_solving_framework_request(req):
+            return _problem_solving_framework_graph(req, brief)
+        return _ensure_graph_quality(_fallback_graph_from_brief(req, brief), req, brief)
     if _is_problem_solving_framework_request(req):
         graph = _problem_solving_framework_graph(req, brief)
         logger.info("Graph generated from problem-solving framework fallback: %d nodes, %d edges", len(graph.nodes), len(graph.edges))
         return graph
 
     logger.info("Generating explain graph for: %s", req.prompt[:50])
-    raw = await chat_json(
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _brief_context(req, brief)},
-        ]
-    )
+    try:
+        raw = await chat_json(
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _brief_context(req, brief)},
+            ]
+        )
+    except LLMUnavailableError as exc:
+        logger.warning("LLM unavailable while building explain graph; using local graph fallback: %s", exc)
+        return _ensure_graph_quality(_fallback_graph_from_brief(req, brief), req, brief)
 
     nodes: list[ConceptNode] = []
     for i, node in enumerate(raw.get("nodes", [])):

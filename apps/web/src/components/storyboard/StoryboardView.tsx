@@ -158,16 +158,16 @@ function SceneEditor({
 }) {
   const isBusy = (action: string) => busyAction === `${scene.id}:${action}`;
   return (
-    <div className="relative h-full min-h-0 flex flex-col overflow-hidden p-3 pb-20 space-y-2">
-      <StoryboardCanvasEditor scene={scene} onUpdate={(updates) => onUpdate?.(updates)} />
-      <AssetContractPanel scene={scene} />
+    <div className="relative h-full min-h-0 flex flex-col overflow-hidden p-2 space-y-1">
+      <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden scrollbar-none space-y-1">
+        <StoryboardCanvasEditor scene={scene} onUpdate={(updates) => onUpdate?.(updates)} />
       <div>
-        <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+        <h3 className="text-[11px] font-semibold text-[--fg-muted] uppercase tracking-wider mb-0.5">
           场景标题
         </h3>
-        <p className="text-sm font-medium text-[--fg-default]">{scene.title}</p>
+        <p className="text-xs font-medium text-[--fg-default] truncate">{scene.title}</p>
         {(scene.board_mode || scene.hand_usage || scene.video_style || scene.visual_style || scene.pen_style) && (
-          <p className="mt-2 text-xs text-[--fg-muted] font-mono">
+          <p className="mt-0.5 text-[10px] text-[--fg-muted] font-mono truncate">
             {[
               scene.board_mode,
               scene.hand_usage,
@@ -182,34 +182,31 @@ function SceneEditor({
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+        <h3 className="text-[11px] font-semibold text-[--fg-muted] uppercase tracking-wider mb-0.5">
           旁白文案
         </h3>
         <textarea
           value={scene.narration}
-          rows={3}
+          rows={2}
           onChange={(e) => onUpdate?.({ narration: e.target.value })}
-          className="w-full rounded-lg bg-[--bg-base] border border-[--border-default] text-[--fg-default] text-sm p-3 resize-none focus:outline-none focus:border-purple-500 transition-colors leading-relaxed"
+          className="w-full h-14 rounded-md bg-[--bg-base] border border-[--border-default] text-xs p-2 resize-none focus:outline-none focus:border-purple-500 transition-colors leading-snug"
         />
       </div>
 
       <div>
-        <h3 className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider mb-2">
+        <h3 className="text-[11px] font-semibold text-[--fg-muted] uppercase tracking-wider mb-0.5">
           动画指令
         </h3>
-        <div className="space-y-2">
+        <div className="space-y-1">
           {scene.animations.map((anim, i) => (
             <div
               key={i}
-              className="p-2 rounded-lg bg-[--bg-base] border border-[--border-default] space-y-1"
+              className="px-2 py-1 rounded-md bg-[--bg-base] border border-[--border-default] flex items-center gap-2 min-h-8"
             >
               <div className="flex items-center gap-2">
                 <AnimationTag anim={anim} />
               </div>
-              <p className="text-xs text-[--fg-default] font-mono">{anim.content}</p>
-              {anim.latex && (
-                <p className="text-xs text-cyan-400 font-mono">{anim.latex}</p>
-              )}
+              <p className="text-[11px] text-[--fg-default] font-mono truncate">{anim.content}</p>
             </div>
           ))}
         </div>
@@ -236,13 +233,14 @@ function SceneEditor({
           <audio src={scene.audioUrl} controls className="w-full h-9" />
         </div>
       )}
+      </div>
 
-      <div className="absolute inset-x-0 bottom-0 z-20 space-y-1 border-t border-[--border-subtle] bg-[--bg-elevated] px-3 py-2">
+      <div className="z-20 flex flex-shrink-0 gap-1 border-t border-[--border-subtle] bg-[--bg-elevated] px-2 py-1.5">
         <button
           onClick={() => onRegenerateImage?.(scene)}
           disabled={Boolean(busyAction)}
           title="调用图像生成，替换本场参考图"
-          className="w-full h-9 rounded-md border border-purple-500/50 hover:border-purple-500 disabled:opacity-50 text-sm text-purple-300 transition-colors"
+          className="flex-1 h-8 rounded-md border border-purple-500/50 hover:border-purple-500 disabled:opacity-50 text-xs text-purple-300 transition-colors truncate"
         >
           {isBusy("image") ? "生成图片中..." : "重新生成本场图片"}
         </button>
@@ -250,7 +248,7 @@ function SceneEditor({
           onClick={() => onRegenerateAudio?.(scene)}
           disabled={Boolean(busyAction)}
           title="合成本场旁白，供预听和微调文案"
-          className="w-full h-9 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-sm text-[--fg-muted] hover:text-[--fg-default] transition-colors"
+          className="flex-1 h-8 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-xs text-[--fg-muted] hover:text-[--fg-default] transition-colors truncate"
         >
           {isBusy("audio") ? "配音生成中..." : "重新配音本场"}
         </button>
@@ -258,7 +256,7 @@ function SceneEditor({
           onClick={() => onRepairCallouts?.(scene)}
           disabled={Boolean(busyAction)}
           title="收紧标签数量并改用短标注策略"
-          className="w-full h-9 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-sm text-[--fg-muted] hover:text-[--fg-default] transition-colors"
+          className="flex-1 h-8 rounded-md border border-[--border-default] hover:border-[--border-subtle] disabled:opacity-50 text-xs text-[--fg-muted] hover:text-[--fg-default] transition-colors truncate"
         >
           修复标注位置
         </button>
@@ -372,11 +370,12 @@ export function StoryboardView({
       </div>
 
       {/* Edit panel */}
-      <div className="w-[820px] max-w-[58vw] min-h-0 flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] overflow-hidden">
-        <div className="px-4 py-3 border-b border-[--border-subtle]">
+      <div className="w-[820px] max-w-[58vw] min-h-0 flex-shrink-0 bg-[--bg-elevated] border-l border-[--border-subtle] flex flex-col overflow-hidden">
+        <div className="flex-shrink-0 px-4 py-2 border-b border-[--border-subtle]">
           <p className="text-xs font-semibold text-[--fg-muted] uppercase tracking-wider">场景编辑</p>
         </div>
         {selectedScene && (
+          <div className="flex-1 min-h-0 overflow-hidden">
           <SceneEditor
             scene={selectedScene}
             onUpdate={(updates) => onSceneUpdate?.(selectedScene.id, updates)}
@@ -385,6 +384,7 @@ export function StoryboardView({
             onRepairCallouts={onRepairSceneCallouts}
             busyAction={busySceneAction}
           />
+          </div>
         )}
       </div>
     </div>

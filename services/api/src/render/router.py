@@ -116,6 +116,11 @@ async def list_background_music() -> BackgroundMusicLibrary:
             return BackgroundMusicLibrary(**resp.json())
     except HTTPException:
         raise
+    except httpx.ConnectError as e:
+        raise HTTPException(
+            status_code=503,
+            detail="Render server is still starting; music library is not ready",
+        ) from e
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # Image generation. Local Flux is the default; Ark remains opt-in.
     imagegen_provider: str = Field(default="local", env="IMAGEGEN_PROVIDER")
-    local_imagegen_runtime: str = Field(default=r"D:\ck\stable-diffusion-cpp-bin\vulkan\sd-cli.exe", env="LOCAL_IMAGEGEN_RUNTIME")
+    local_imagegen_runtime: str = Field(default=r"D:\ck\04-第三方库与二进制依赖\stable-diffusion-cpp-bin\vulkan\sd-cli.exe", env="LOCAL_IMAGEGEN_RUNTIME")
     local_imagegen_model: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\gguf\flux1-schnell-Q5_K_S.gguf", env="LOCAL_IMAGEGEN_MODEL")
     local_imagegen_vae: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\extracted\vae\diffusion_pytorch_model.safetensors", env="LOCAL_IMAGEGEN_VAE")
     local_imagegen_clip_l: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\extracted\clip\clip-text-model.safetensors", env="LOCAL_IMAGEGEN_CLIP_L")

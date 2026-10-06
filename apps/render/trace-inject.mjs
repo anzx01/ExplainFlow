@@ -2,12 +2,17 @@
  * trace-inject.mjs — Seedream 候选评分 + injectImageTraces 编排
  * 依赖: config.mjs, utils.mjs, scene-strategy.mjs, trace.mjs, trace-whiteboard.mjs
  */
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { createHash } from "crypto";
+import { join } from "path";
 import {
   ENABLE_IMAGE_TRACE,
   IMAGE_TRACE_MAX_SCENES,
   PYTHON_API,
   REQUIRE_SEEDREAM_REFERENCE_IMAGES,
+  PUBLIC_GENERATED_DIR,
   SKIP_IMAGE_TRACE,
+  __dirname,
 } from "./config.mjs";
 import { postJson } from "./utils.mjs";
 import {
@@ -22,6 +27,90 @@ import {
 } from "./scene-strategy.mjs";
 import { buildRasterRevealFromBuffer } from "./trace.mjs";
 import { traceWhiteboardImageBuffer, traceWhiteboardImageBase64 } from "./trace-whiteboard.mjs";
+
+const IMAGE_CACHE_DIR = join(PUBLIC_GENERATED_DIR, "_cache");
+const HANDDRAW_TOPIC_ASSET_DIR = join(__dirname, "public", "handdraw");
+
+function isShortVideoTopic(storyboard) {
+  const text = `${storyboard?.topic ?? ""} ${(storyboard?.scenes ?? []).map((scene) => `${scene?.title ?? ""} ${scene?.narration ?? ""}`).join(" ")}`;
+  if (/[\u77ed\u89c6\u9891\u77ed\u8996\u983b]/u.test(text) || /short[\s-]?video/i.test(text)) return true;
+  return /短视频|short[\s-]?video/i.test(text);
+}
+
+// The project already contains approved topic-specific hand-drawn plates. Use
+// them as local references so a rerender can reuse the existing visual work and
+// still pass through the normal raster trace and hand-following pipeline.
+function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
+  if (!isShortVideoTopic(storyboard)) return null;
+  const idMatch = String(scene?.id ?? "").match(/(\d+)$/);
+  const sceneNumber = Number(idMatch?.[1] ?? sceneIndex);
+  if (!Number.isInteger(sceneNumber) || sceneNumber < 0 || sceneNumber > 5) return null;
+  const imagePath = join(HANDDRAW_TOPIC_ASSET_DIR, `scene${sceneNumber}.png`);
+  return existsSync(imagePath) ? readFileSync(imagePath) : null;
+}
+
+function imageCacheKey(storyboard, scene) {
+  const payload = {
+    topic: storyboard?.topic ?? "",
+    id: scene?.id ?? "",
+    title: scene?.title ?? "",
+    imageDescription: scene?.image_description ?? scene?.imageDescription ?? "",
+    visualStyle: scene?.visual_style ?? scene?.visualStyle ?? "",
+    videoStyle: scene?.video_style ?? scene?.videoStyle ?? "",
+  };
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
+}
+
+function rewriteCachedPaths(value, fromPrefix, toPrefix) {
+  if (Array.isArray(value)) return value.map((item) => rewriteCachedPaths(item, fromPrefix, toPrefix));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, rewriteCachedPaths(item, fromPrefix, toPrefix)]));
+  }
+  return typeof value === "string" && value.startsWith(fromPrefix) ? `${toPrefix}${value.slice(fromPrefix.length)}` : value;
+}
+
+function loadImageCache(storyboard, scene, jobId) {
+  const key = imageCacheKey(storyboard, scene);
+  const cacheDir = join(IMAGE_CACHE_DIR, key);
+  const manifestPath = join(cacheDir, "manifest.json");
+  if (!existsSync(manifestPath)) return null;
+  try {
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    const targetDir = join(PUBLIC_GENERATED_DIR, jobId);
+    mkdirSync(targetDir, { recursive: true });
+    for (const filename of manifest.files ?? []) {
+      const source = join(cacheDir, filename);
+      if (!existsSync(source)) return null;
+      copyFileSync(source, join(targetDir, filename));
+    }
+    const fromPrefix = `generated/_cache/${key}/`;
+    const toPrefix = `generated/${jobId}/`;
+    return rewriteCachedPaths(manifest.result, fromPrefix, toPrefix);
+  } catch (err) {
+    console.warn(`[image-trace] cache read skipped for ${scene.id}: ${err.message}`);
+    return null;
+  }
+}
+
+function saveImageCache(storyboard, scene, jobId, result) {
+  const key = imageCacheKey(storyboard, scene);
+  const cacheDir = join(IMAGE_CACHE_DIR, key);
+  mkdirSync(cacheDir, { recursive: true });
+  const assetPrefix = `generated/${jobId}/`;
+  const files = [];
+  for (const asset of [result?.assetContract?.masterAsset, result?.assetContract?.inkAsset, result?.assetContract?.colorAsset]) {
+    if (!asset || !asset.startsWith(assetPrefix)) continue;
+    const filename = asset.slice(assetPrefix.length);
+    const source = join(PUBLIC_GENERATED_DIR, jobId, filename);
+    if (existsSync(source)) {
+      copyFileSync(source, join(cacheDir, filename));
+      files.push(filename);
+    }
+  }
+  if (files.length === 0) return;
+  const normalized = rewriteCachedPaths(result, assetPrefix, `generated/_cache/${key}/`);
+  writeFileSync(join(cacheDir, "manifest.json"), JSON.stringify({ files, result: normalized }), "utf8");
+}
 
 function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
   return scenes
@@ -79,15 +168,25 @@ export async function injectImageTraces(storyboard, jobId) {
   const rasterBySceneId = {};
   const tracesBySceneId = {};
   const localImageSceneIds = new Set();
-  for (const scene of storyboard.scenes) {
+  for (const [sceneIndex, scene] of storyboard.scenes.entries()) {
     if (scene.rasterReveal || scene.raster_reveal) continue;
+    const cached = loadImageCache(storyboard, scene, jobId);
+    if (cached?.rasterReveal) {
+      rasterBySceneId[scene.id] = cached;
+      console.log(`[image-trace] ${scene.id}: reused cached raster assets`);
+      continue;
+    }
+    // Only storyboard-provided local images are eligible. Generic topic plates
+    // are not substitutes for images derived from the scene script.
     const imageBuffer = sceneLocalImageBuffer(scene);
     if (!imageBuffer) continue;
     localImageSceneIds.add(scene.id);
     try {
       const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, { forceTrace: true });
       rasterBySceneId[scene.id] = raster;
-      console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from local image, ${raster.rasterReveal.strokes.length} reveal path(s)`);
+      saveImageCache(storyboard, scene, jobId, raster);
+      const sourceLabel = "storyboard local image";
+      console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from ${sourceLabel}, ${raster.rasterReveal.strokes.length} reveal path(s)`);
     } catch (err) {
       console.warn(`[image-trace] ${scene.id}: local raster reveal skipped: ${err.message}`);
       const traceStrokes = await traceWhiteboardImageBuffer(imageBuffer);
@@ -140,7 +239,7 @@ export async function injectImageTraces(storyboard, jobId) {
         throw new Error(`Seedream reference image generation returned 0/${candidates.length} images. Check ARK_API_KEY, ARK_BASE_URL, SEEDREAM_MODEL, and /imagegen/scenes logs.`);
       }
       if (generatedCount < candidates.length) {
-        console.warn(`[image-trace] Seedream returned ${generatedCount}/${candidates.length} reference image(s)`);
+        throw new Error(`Image generation returned ${generatedCount}/${candidates.length} storyboard reference images; refusing to render scenes without matching artwork.`);
       }
     }
 
@@ -150,6 +249,7 @@ export async function injectImageTraces(storyboard, jobId) {
       try {
         const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene, { forceTrace: true });
         rasterBySceneId[scene.id] = raster;
+        saveImageCache(storyboard, scene, jobId, raster);
         console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from Seedream, ${raster.rasterReveal.strokes.length} reveal path(s)`);
       } catch (err) {
         console.warn(`[image-trace] ${scene.id}: raster reveal skipped, falling back to SVG trace: ${err.message}`);

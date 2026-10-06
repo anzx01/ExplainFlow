@@ -128,10 +128,10 @@ const server = http.createServer(async (req, res) => {
       const forceRender = Boolean(payload.forceRender ?? payload.force_render);
       const snapshot = buildProjectSnapshot(storyboard, renderOptions);
       const cachedJob = forceRender ? null : Object.values(jobs).find((job) =>
-        // A render can have a usable MP4 even when non-media QA warnings or
-        // contract checks mark the job failed. Reuse that artifact unless the
-        // caller explicitly asks for forceRender.
+        // Only reuse a render that passed the complete media and visual QA.
+        // Failed renders must go through image injection and rendering again.
         job?.snapshot?.stages?.render === snapshot.stages.render &&
+        job?.qa?.ok === true &&
         job?.outputPath && existsSync(job.outputPath),
       );
       if (cachedJob) {

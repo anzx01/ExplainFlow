@@ -26,6 +26,24 @@ class LLMResponseParseError(RuntimeError):
     """Raised when the LLM response cannot be parsed."""
 
 
+def _exception_summary(exc: Exception) -> str:
+    """Return useful provider diagnostics without exposing credentials."""
+    status_code = getattr(exc, "status_code", None)
+    request_id = getattr(exc, "request_id", None)
+    message = str(exc).strip() or exc.__class__.__name__
+    if settings.openai_api_key:
+        message = message.replace(settings.openai_api_key, "[redacted]")
+    if len(message) > 360:
+        message = message[:360] + "..."
+    parts = [exc.__class__.__name__]
+    if status_code is not None:
+        parts.append(f"status={status_code}")
+    if request_id:
+        parts.append(f"request_id={request_id}")
+    parts.append(message)
+    return " ".join(parts)
+
+
 def get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
@@ -37,7 +55,7 @@ def get_client() -> AsyncOpenAI:
 
 
 def _format_llm_unavailable(exc: Exception | str) -> str:
-    detail = str(exc).strip() if isinstance(exc, Exception) else str(exc).strip()
+    detail = _exception_summary(exc) if isinstance(exc, Exception) else str(exc).strip()
     if len(detail) > 240:
         detail = detail[:240] + "..."
     base = (
@@ -113,7 +131,15 @@ async def _call_with_retry(
             )
             await asyncio.sleep(delay)
 
-    raise LLMUnavailableError(_format_llm_unavailable(last_exc or "Unknown error"))
+    detail = _format_llm_unavailable(last_exc or "Unknown error")
+    logger.error(
+        "[LLM] request failed after %d attempt(s): model=%s base_url=%s error=%s",
+        (max_retries or 0) + 1,
+        settings.llm_model,
+        settings.openai_base_url,
+        _exception_summary(last_exc) if last_exc else "Unknown error",
+    )
+    raise LLMUnavailableError(detail)
 
 
 async def check_llm_connection(model: str | None = None, force: bool = False) -> dict:
@@ -149,7 +175,7 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
             ],
             response_format={"type": "json_object"},
             temperature=0,
-            max_tokens=20,
+            max_tokens=8,
         )
         content = resp.choices[0].message.content or "{}"
         data = json.loads(content)
@@ -157,8 +183,21 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
             raise RuntimeError(f"Unexpected health-check response: {content}")
 
     try:
-        await asyncio.wait_for(_ping(), timeout=settings.llm_preflight_timeout_s)
+        # A transient provider timeout should not abort a graph request before
+        # the real call has had a chance to retry.
+        await asyncio.wait_for(
+            _call_with_retry(_ping, max_retries=1, base_delay=0.5),
+            timeout=max(settings.llm_preflight_timeout_s, 15.0),
+        )
     except Exception as exc:
+        logger.error(
+            "[LLM] preflight failed: model=%s base_url=%s error=%s",
+            model or settings.llm_model,
+            settings.openai_base_url,
+            _exception_summary(exc),
+        )
+        if isinstance(exc, LLMUnavailableError):
+            raise
         raise LLMUnavailableError(_format_llm_unavailable(exc)) from exc
 
     _last_preflight_ok_at = time.monotonic()

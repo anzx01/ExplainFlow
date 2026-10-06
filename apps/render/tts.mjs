@@ -163,6 +163,32 @@ export async function assertStoryboardAudioComplete(storyboard) {
   if (missing.length > 0) throw new Error(`缺少音频，已停止渲染：${missing.slice(0, 8).join("; ")}`);
 }
 
+function reusableSceneAudio(scene) {
+  const segments = scene?.audioSegments ?? scene?.audio_segments;
+  if (!Array.isArray(segments) || segments.length === 0) return null;
+  const localSegments = segments.map((segment) => {
+    const src = segment?.audioUrl ?? segment?.audio_url;
+    const filename = audioFilenameFromUrl(src);
+    const filePath = filename ? join(AUDIO_DIR, filename) : null;
+    return filePath && existsSync(filePath) && statSync(filePath).size > 0 ? { segment, filePath } : null;
+  });
+  if (localSegments.some((item) => !item)) return null;
+  const durationFrames = Math.max(
+    Number(scene?.timingPlan?.durationFrames ?? scene?.timing_plan?.durationFrames ?? 0) || 0,
+    ...segments.map((segment) => Number(segment?.endFrame ?? segment?.end_frame ?? 0) || 0),
+    FPS * 2,
+  );
+  const firstAudioUrl = segments[0]?.audioUrl ?? segments[0]?.audio_url ?? scene?.audioUrl ?? scene?.audio_url ?? null;
+  console.log(`[tts] reusing ${segments.length} cached audio segment(s) for ${scene?.id ?? "scene"}`);
+  return {
+    ...scene,
+    audioUrl: scene?.audioUrl ?? scene?.audio_url ?? firstAudioUrl,
+    audioSegments: segments,
+    timingPlan: scene?.timingPlan ?? scene?.timing_plan ?? { fps: FPS, durationFrames, transitionFrames: 0, allowOverTarget: true, segments },
+    duration_estimate: durationFrames / FPS,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // injectAudio
 // ---------------------------------------------------------------------------
@@ -171,6 +197,8 @@ export async function injectAudio(storyboard, voice) {
   const voiceKey = normalizeVoiceKey(voice ?? "xiaoxiao");
   const sceneResults = await Promise.allSettled(
     storyboard.scenes.map(async (scene, sceneIndex) => {
+      const cachedSceneAudio = reusableSceneAudio(scene);
+      if (cachedSceneAudio) return cachedSceneAudio;
       const suppliedAudio = await persistSceneAudioDataUrl(scene, sceneIndex);
       if (suppliedAudio) {
         const audioDurationFrames = Math.max(1, Math.ceil(suppliedAudio.durationSeconds * FPS));

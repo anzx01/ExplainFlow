@@ -372,11 +372,23 @@ export default function StoryboardPage() {
 
   useEffect(() => {
     let active = true;
-    fetch(`${API}/render/music`)
-      .then(async (res) => {
-        if (!res.ok) throw new Error("music unavailable");
-        return (await res.json()) as { tracks?: BackgroundMusicTrack[] };
-      })
+    setMusicError(null);
+    const loadMusic = async () => {
+      let lastError: unknown = null;
+      for (let attempt = 0; attempt < 4; attempt += 1) {
+        try {
+          const res = await fetch(`${API}/render/music`, { cache: "no-store" });
+          if (!res.ok) throw new Error(`music unavailable (${res.status})`);
+          return (await res.json()) as { tracks?: BackgroundMusicTrack[] };
+        } catch (error) {
+          lastError = error;
+          if (attempt < 3) await new Promise((resolve) => setTimeout(resolve, 750 * (attempt + 1)));
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error("music unavailable");
+    };
+
+    loadMusic()
       .then((data) => {
         if (!active) return;
         const tracks = data.tracks ?? [];
@@ -397,7 +409,7 @@ export default function StoryboardPage() {
   return (
     <div className="flex flex-col h-screen bg-[--bg-base] text-[--fg-default] overflow-hidden">
       {/* Nav */}
-      <header className="flex items-center justify-between px-6 h-14 bg-[--bg-surface] border-b border-[--border-subtle] flex-shrink-0">
+      <header className="flex items-center justify-between gap-3 px-6 h-14 min-h-14 bg-[--bg-surface] border-b border-[--border-subtle] flex-shrink-0 overflow-hidden">
         <div className="flex items-center gap-4">
           <Link
             href="/studio"
@@ -412,7 +424,7 @@ export default function StoryboardPage() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex shrink-0 items-center gap-3 whitespace-nowrap">
           <Link
             href="/jobs"
             className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
