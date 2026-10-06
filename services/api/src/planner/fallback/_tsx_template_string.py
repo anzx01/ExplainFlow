@@ -223,6 +223,7 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
 
 const DrawGlyphPath = ({ scene, spec, op }: { scene: SceneSpec; spec: GlyphPathSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
+  if (frame <= op.startFrame) return null;
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
   const fillOpacity = spec.fontOutline
@@ -259,6 +260,7 @@ const GlyphText = ({ scene }: { scene: SceneSpec }) => (
 
 const DrawStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: StrokeSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
+  if (frame <= op.startFrame) return null;
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
   return (
@@ -278,6 +280,7 @@ const DrawStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: StrokeSpec; o
 
 const RasterMaskStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: RasterStrokeSpec; op: DrawOp }) => {
   const frame = useCurrentFrame();
+  if (frame <= op.startFrame) return null;
   const progress = progressForOp(frame, op);
   const length = spec.dashLength;
   return (
@@ -285,7 +288,7 @@ const RasterMaskStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: RasterS
       d={spec.d}
       fill="none"
       stroke="white"
-      strokeWidth={spec.revealWidth}
+      strokeWidth={Math.max(4, Math.min(spec.revealWidth, length * 0.6))}
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeDasharray={length}
@@ -297,6 +300,8 @@ const RasterMaskStroke = ({ scene, spec, op }: { scene: SceneSpec; spec: RasterS
 
 const RasterColorMaskStroke = ({ scene, spec, op, fallbackStart }: { scene: SceneSpec; spec: RasterStrokeSpec; op: DrawOp; fallbackStart: number }) => {
   const frame = useCurrentFrame();
+  const colorStartFrame = spec.colorOpId ? op.startFrame : (spec.colorStartFrame ?? fallbackStart);
+  if (frame <= colorStartFrame) return null;
   const progress = spec.colorOpId
     ? progressForOp(frame, op)
     : interpolate(frame, [spec.colorStartFrame ?? fallbackStart, Math.max((spec.colorStartFrame ?? fallbackStart) + 1, spec.colorEndFrame ?? fallbackStart + 18)], [0, 1], {
@@ -309,7 +314,7 @@ const RasterColorMaskStroke = ({ scene, spec, op, fallbackStart }: { scene: Scen
       d={spec.d}
       fill="none"
       stroke="white"
-      strokeWidth={Math.max(42, spec.revealWidth * 4.5)}
+      strokeWidth={Math.max(4, Math.min(spec.revealWidth, length * 0.6))}
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeDasharray={length}
@@ -331,14 +336,6 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
     const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
     return op ? Math.max(latest, op.endFrame) : latest;
   }, 0);
-  const colorEnd = reveal.strokes.reduce((latest, stroke) => {
-    const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
-    return Math.max(latest, colorOp?.endFrame ?? stroke.colorEndFrame ?? coverageStart + 18);
-  }, coverageStart + 18);
-  const finalCoverageOpacity = interpolate(frame, [colorEnd, colorEnd + 8], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
   const colorMaskId = `raster-color-mask-${sceneIndex}`;
   return (
     <g>
@@ -366,7 +363,7 @@ const RasterRevealImage = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex
         height={reveal.height}
         preserveAspectRatio="none"
         mask={`url(#${maskId})`}
-        opacity={1 - finalCoverageOpacity}
+        opacity={1}
       />
       <image
         href={staticFile(colorAsset)}
@@ -385,56 +382,43 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
   const frame = useCurrentFrame();
   const reveal = scene.rasterReveal;
   if (!reveal || !scene.referenceImageAsset) return null;
-  const referenceImageAsset = reveal.colorAsset ?? scene.referenceImageAsset;
-  if (reveal.renderMode === "direct") {
-    const appearFrame = reveal.directAppearFrame ?? 0;
-    const opacity = interpolate(frame, [appearFrame, appearFrame + 10], [0, 1], {
-      extrapolateLeft: "clamp",
-      extrapolateRight: "clamp",
-    });
-    return (
-      <Img
-        src={staticFile(referenceImageAsset)}
-        style={{
-          position: "absolute",
-          left: reveal.x,
-          top: reveal.y,
-          width: reveal.width,
-          height: reveal.height,
-          objectFit: reveal.fit === "cover" ? "cover" : "fill",
-          opacity,
-          pointerEvents: "none",
-          zIndex: 4,
-        }}
-      />
-    );
-  }
-  const coverageStart = reveal.strokes.reduce((latest, stroke) => {
-    const op = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
-    return op ? Math.max(latest, op.endFrame) : latest;
-  }, 0);
-  const colorEnd = reveal.strokes.reduce((latest, stroke) => {
-    const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
-    return Math.max(latest, colorOp?.endFrame ?? stroke.colorEndFrame ?? coverageStart + 18);
-  }, coverageStart + 18);
-  const opacity = interpolate(frame, [0, colorEnd + 8], [0.82, 1], {
+  const direct = reveal.renderMode === "direct";
+  const finishFrame = direct
+    ? reveal.directAppearFrame ?? 0
+    : reveal.strokes.reduce((latest, stroke) => {
+        const inkOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.opId);
+        const colorOp = scene.drawOps.find((drawOp) => drawOp.id === stroke.colorOpId);
+        return Math.max(latest, inkOp?.endFrame ?? 0, colorOp?.endFrame ?? 0);
+      }, 0);
+  const opacity = interpolate(frame, [finishFrame, finishFrame + (direct ? 10 : 8)], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
+  if (frame <= finishFrame || opacity <= 0) return null;
+  if (!direct && (!reveal.inkAsset || !reveal.colorAsset)) return null;
+  const assets = direct
+    ? [reveal.colorAsset ?? scene.referenceImageAsset]
+    : [reveal.inkAsset!, reveal.colorAsset!];
   return (
-    <Img
-      src={staticFile(referenceImageAsset)}
-      style={{
-        position: "absolute",
-        left: reveal.x,
-        top: reveal.y,
-        width: reveal.width,
-        height: reveal.height,
-        opacity,
-        pointerEvents: "none",
-        zIndex: 12,
-      }}
-    />
+    <>
+      {assets.map((asset) => (
+        <Img
+          key={asset}
+          src={staticFile(asset)}
+          style={{
+            position: "absolute",
+            left: reveal.x,
+            top: reveal.y,
+            width: reveal.width,
+            height: reveal.height,
+            objectFit: reveal.fit === "cover" ? "cover" : "fill",
+            opacity,
+            pointerEvents: "none",
+            zIndex: 11,
+          }}
+        />
+      ))}
+    </>
   );
 };
 

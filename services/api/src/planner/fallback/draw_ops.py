@@ -5,6 +5,14 @@ from ..models import Scene
 from .geometry import _polyline_length
 from ..storyboard_gen.normalizer import _clean_text
 
+
+def _draw_op_group_key(op: dict, index: int) -> str:
+    pair_id = op.get("pairedOpId")
+    if not pair_id:
+        return f"op:{index}"
+    return f"pair:{min(str(op.get('id') or ''), str(pair_id))}"
+
+
 def _retime_draw_ops_in_window(
     draw_ops: list[dict],
     start_frame: float,
@@ -13,37 +21,41 @@ def _retime_draw_ops_in_window(
 ) -> None:
     if not draw_ops:
         return
+    grouped: dict[str, list[tuple[int, dict]]] = {}
+    for index, op in enumerate(draw_ops):
+        grouped.setdefault(_draw_op_group_key(op, index), []).append((index, op))
     ordered = sorted(
-        enumerate(draw_ops),
-        # Put semantic paths ahead of title/label glyphs when they share a
-        # start time. This guarantees that a scene opens on its main object,
-        # while the hand remains attached to a real illustrated stroke.
-        key=lambda item: (
-            float(item[1].get("startFrame", 0)),
-            0 if item[1].get("kind") == "path" else 1,
-            item[0],
+        grouped.values(),
+        # Keep ink/color pairs atomic so retiming cannot make the fill lag the pen.
+        key=lambda group: (
+            min(float(op.get("startFrame", 0)) for _, op in group),
+            0 if any(op.get("kind") == "path" for _, op in group) else 1,
+            min(index for index, _ in group),
         ),
     )
     spans = [
-        max(0.5, float(op.get("endFrame", 0)) - float(op.get("startFrame", 0)))
-        for _, op in ordered
+        max(0.5, max(float(op.get("endFrame", 0)) - float(op.get("startFrame", 0)) for _, op in group))
+        for group in ordered
     ]
     target_end = max(start_frame + 1.0, end_frame)
     target_span = max(1.0, target_end - start_frame)
     default_gap = 0.35 if len(ordered) > 80 else 0.65
     gap = min(default_gap, target_span * 0.18 / max(1, len(ordered) - 1))
     available = max(1.0, target_span - gap * max(0, len(ordered) - 1))
-    min_span = min(0.5, max(0.08, available / max(1, len(ordered)) * 0.8))
+    min_span = min(1.0, max(0.08, available / max(1, len(ordered)) * 0.8))
     scale = available / max(1.0, sum(spans))
     cursor = start_frame
-    for index, ((_, op), span) in enumerate(zip(ordered, spans)):
+    for index, (group, span) in enumerate(zip(ordered, spans)):
         safe_start = min(cursor, max(start_frame, target_end - min_span))
         next_end = target_end if index == len(ordered) - 1 else min(target_end, safe_start + max(min_span, span * scale))
-        op["startFrame"] = round(safe_start, 2)
-        op["endFrame"] = round(max(safe_start + min_span, next_end), 2)
-        if beat_id:
-            op["beatId"] = beat_id
-        cursor = op["endFrame"] + gap
+        op_start = round(safe_start, 2)
+        op_end = round(max(safe_start + min_span, next_end), 2)
+        for _, op in group:
+            op["startFrame"] = op_start
+            op["endFrame"] = op_end
+            if beat_id:
+                op["beatId"] = beat_id
+        cursor = op_end + gap
 
 
 def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
@@ -51,27 +63,31 @@ def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
 
 
 def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict]) -> list[list[dict]]:
-    ordered = sorted(
-        draw_ops,
-        key=lambda op: (
-            float(op.get("startFrame", 0)),
-            0 if op.get("kind") == "path" else 1,
-            str(op.get("id", "")),
+    grouped: dict[str, list[tuple[int, dict]]] = {}
+    for index, op in enumerate(draw_ops):
+        grouped.setdefault(_draw_op_group_key(op, index), []).append((index, op))
+    ordered_groups = sorted(
+        grouped.values(),
+        key=lambda group: (
+            min(float(op.get("startFrame", 0)) for _, op in group),
+            0 if any(op.get("kind") == "path" for _, op in group) else 1,
+            min(index for index, _ in group),
         ),
     )
-    buckets: list[list[dict]] = [[] for _ in segments]
+    buckets: list[list[list[dict]]] = [[] for _ in segments]
     segment_index_by_id = {
         str(segment.get("id") or f"beat_{index}"): index
         for index, segment in enumerate(segments)
     }
-    unassigned: list[dict] = []
-    for op in ordered:
-        existing_beat_id = str(op.get("beatId") or "")
+    unassigned: list[list[dict]] = []
+    for group in ordered_groups:
+        ops = [op for _, op in group]
+        existing_beat_id = next((str(op.get("beatId") or "") for op in ops if op.get("beatId")), "")
         segment_index = segment_index_by_id.get(existing_beat_id)
         if segment_index is None:
-            unassigned.append(op)
+            unassigned.append(ops)
         else:
-            buckets[segment_index].append(op)
+            buckets[segment_index].append(ops)
 
     weights = [max(1.0, float(segment.get("drawBudgetFrames") or segment.get("duration") or 1)) for segment in segments]
     total_weight = sum(weights) or float(len(segments))
@@ -93,17 +109,7 @@ def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict
     if cursor < len(unassigned):
         buckets[-1].extend(unassigned[cursor:])
 
-    return [
-        sorted(
-            bucket,
-            key=lambda op: (
-                float(op.get("startFrame", 0)),
-                0 if op.get("kind") == "path" else 1,
-                str(op.get("id", "")),
-            ),
-        )
-        for bucket in buckets
-    ]
+    return [[op for group in bucket for op in group] for bucket in buckets]
 
 
 def _draw_op_workload_frames(op: dict, text_by_op_id: dict[str, dict], fps: int) -> float:

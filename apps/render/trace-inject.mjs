@@ -116,7 +116,7 @@ function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
   return scenes
     .filter(
       (scene) =>
-        scene.image_description && shouldGenerateReferenceImage(scene) &&
+        (scene.image_description ?? scene.imageDescription) && shouldGenerateReferenceImage(scene) &&
         sceneHandUsage(scene) !== "none" && sceneBoardMode(scene) !== "chalkboard" &&
         sceneVisualStyle(scene) !== "math_chalkboard" &&
         !localImageSceneIds.has(scene.id) && !rasterBySceneId[scene.id] &&
@@ -158,6 +158,24 @@ function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
     .map((item) => item.scene);
 }
 
+export function descriptionForScene(storyboard, scene) {
+  const existing = String(scene.image_description ?? scene.imageDescription ?? "").trim();
+  if (existing) return existing;
+  const visualIntent = (scene.audioSegments ?? scene.audio_segments ?? [])
+    .map((segment) => segment.drawIntent ?? segment.draw_intent ?? segment.subtitleText ?? segment.subtitle_text)
+    .filter(Boolean)
+    .join("; ");
+  const narration = String(scene.narration ?? scene.subtitleText ?? scene.subtitle_text ?? "").trim();
+  const labels = [
+    ...(scene.diagram_plan?.required_labels ?? []),
+    ...(scene.diagramPlan?.requiredLabels ?? []),
+    ...(scene.annotation_plan ?? []).map((item) => item?.label),
+    ...(scene.annotationPlan ?? []).map((item) => item?.label),
+  ].filter(Boolean).join(", ");
+  const details = [visualIntent, narration, labels && `include these concepts: ${labels}`].filter(Boolean).join(". ");
+  return `Hand-drawn educational illustration for ${storyboard.topic ?? "the topic"}. Scene: ${scene.title ?? "key idea"}. ${details}. One clear central visual metaphor based on this scene, colored marker line art on a clean whiteboard, no readable text, no labels, no watermark.`;
+}
+
 export async function injectImageTraces(storyboard, jobId) {
   if (SKIP_IMAGE_TRACE) {
     console.log("[image-trace] SKIP_IMAGE_TRACE enabled, skipping trace generation");
@@ -197,7 +215,34 @@ export async function injectImageTraces(storyboard, jobId) {
     }
   }
 
-  const candidates = selectSeedreamCandidates(storyboard.scenes, localImageSceneIds, rasterBySceneId);
+  const imageStoryboard = {
+    ...storyboard,
+    scenes: storyboard.scenes.map((scene) => ({
+      ...scene,
+      image_description: descriptionForScene(storyboard, scene),
+      render_strategy: scene.render_strategy ?? scene.renderStrategy ?? "direct",
+    })),
+  };
+  const candidates = selectSeedreamCandidates(imageStoryboard.scenes, localImageSceneIds, rasterBySceneId);
+
+  const requiredReferenceScenes = imageStoryboard.scenes.filter((scene) => {
+    const mode = sceneBoardMode(scene);
+    const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
+    return (mode === "reference" || strategy === "direct" || strategy === "hybrid") &&
+      sceneHandUsage(scene) !== "none" && !sceneLocalImageBuffer(scene) &&
+      !localImageSceneIds.has(scene.id) && !rasterBySceneId[scene.id] &&
+      !scene.rasterReveal && !scene.raster_reveal;
+  });
+  if (candidates.length < requiredReferenceScenes.length) {
+    const candidateIds = new Set(candidates.map((scene) => scene.id));
+    const omitted = requiredReferenceScenes.filter((scene) => !candidateIds.has(scene.id));
+    if (omitted.length > 0) {
+      throw new Error(`Required reference artwork exceeds image generation capacity (${IMAGE_TRACE_MAX_SCENES}): ${omitted.map((scene) => scene.id).join(", ")}`);
+    }
+  }
+  if (requiredReferenceScenes.length > 0 && candidates.length === 0) {
+    throw new Error(`Required reference artwork has no generation candidates: ${requiredReferenceScenes.map((scene) => scene.id).join(", ")}`);
+  }
 
   if (candidates.length === 0 && Object.keys(rasterBySceneId).length === 0 && Object.keys(tracesBySceneId).length === 0) {
     return storyboard;
@@ -261,11 +306,14 @@ export async function injectImageTraces(storyboard, jobId) {
       }
     }
 
+    const missingCandidates = candidates.filter((scene) => !rasterBySceneId[scene.id] && !tracesBySceneId[scene.id]);
+    if (missingCandidates.length > 0) {
+      throw new Error(`Required scene artwork missing after image generation: ${missingCandidates.map((scene) => scene.id).join(", ")}`);
+    }
     if (Object.keys(tracesBySceneId).length === 0 && Object.keys(rasterBySceneId).length === 0) return storyboard;
     return mergeResults(rasterBySceneId, tracesBySceneId);
   } catch (err) {
-    console.warn(`[image-trace] Seedream trace skipped: ${err.message}`);
-    if (Object.keys(rasterBySceneId).length === 0 && Object.keys(tracesBySceneId).length === 0) return storyboard;
-    return mergeResults(rasterBySceneId, tracesBySceneId);
+    console.error(`[image-trace] required artwork generation failed: ${err.message}`);
+    throw err;
   }
 }

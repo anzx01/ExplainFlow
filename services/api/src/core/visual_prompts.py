@@ -62,7 +62,7 @@ def visual_teaching_rules_prompt(context: str = "general") -> str:
         lines.extend(
             [
                 "- Renderer must follow annotation_plan and bind every circle, box, arrow, bracket, tick, underline, ray, check, or crossout to a readable label or beat target.",
-                "- Renderer must preserve referenceImageAsset and render it with RasterRevealImage/RasterFinalOverlay or staticFile(referenceImageAsset).",
+                "- Renderer must preserve referenceImageAsset; trace mode reveals it only through progressive masks, while direct mode may show the full asset with a short opacity reveal.",
             ]
         )
     return "\n".join(line for line in lines if line.strip())

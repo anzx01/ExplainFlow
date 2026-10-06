@@ -101,7 +101,7 @@ export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IM
 export const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 export const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
-  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 150),
+  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 520),
 );
 export const RASTER_REVEAL_TRACE_WIDTH = Math.max(
   240,

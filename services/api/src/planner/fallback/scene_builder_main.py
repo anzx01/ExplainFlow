@@ -116,22 +116,18 @@ def _apply_render_contract(self) -> list[dict]:
         element_index = min(len(specs) - 1, op_index * len(specs) // max(1, len(unassigned)))
         op["contractElementId"] = specs[element_index]["id"]
 
-    element_by_id = {element.id: element for element in elements}
     for spec in specs:
         assigned = [op for op in self.draw_ops if op.get("contractElementId") == spec["id"]]
         if not assigned:
             continue
-        window = max(1, spec["endFrame"] - spec["startFrame"])
         raster_ink = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "ink"]
         raster_color = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "color"]
         other = [op for op in assigned if op.get("id") not in raster_op_ids]
         if raster_ink or raster_color:
-            element = element_by_id[spec["id"]]
-            weight_total = element.reveal.ink_weight + element.reveal.color_weight
-            ink_end = spec["startFrame"] + max(1, round(window * element.reveal.ink_weight / weight_total))
-            ink_end = min(spec["endFrame"] - (1 if window > 1 else 0), ink_end)
-            schedule_ops(raster_ink, spec["startFrame"], max(spec["startFrame"] + 1, ink_end))
-            schedule_ops(raster_color, max(spec["startFrame"] + 1, ink_end), spec["endFrame"])
+            # Paired line and color paths share one timeline so the visible
+            # fill stays attached to the pen instead of arriving in a second pass.
+            schedule_ops(raster_ink, spec["startFrame"], spec["endFrame"])
+            schedule_ops(raster_color, spec["startFrame"], spec["endFrame"])
         if other:
             schedule_ops(other, spec["startFrame"], spec["endFrame"])
     return specs

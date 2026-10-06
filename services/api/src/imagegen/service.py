@@ -130,6 +130,7 @@ def local_imagegen_status() -> dict:
         "t5xxl": Path(settings.local_imagegen_t5xxl),
     }
     missing = [name for name, path in paths.items() if not path.is_file()]
+    comfy_configured = bool(str(settings.comfyui_workflow or '').strip())
     return {
         "provider": settings.imagegen_provider,
         "available": not missing,
@@ -142,6 +143,11 @@ def local_imagegen_status() -> dict:
         "previewHeight": settings.local_imagegen_preview_height,
         "steps": settings.local_imagegen_steps,
         "backend": settings.local_imagegen_backend,
+        "comfyui": {
+            "baseUrl": settings.comfyui_base_url,
+            "workflowConfigured": comfy_configured,
+            "workflow": settings.comfyui_workflow,
+        },
     }
 
 

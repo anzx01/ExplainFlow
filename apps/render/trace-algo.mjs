@@ -172,6 +172,84 @@ export function traceSkeletonPaths(skeleton, width, height) {
   return paths;
 }
 
+export function joinConnectedPaths(paths, maxGap = 2.5) {
+  const endpoints = [];
+  for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
+    const path = paths[pathIndex];
+    for (const side of [0, 1]) {
+      const point = side === 0 ? path[0] : path[path.length - 1];
+      const neighbor = side === 0 ? path[1] : path[path.length - 2];
+      const dx = neighbor.x - point.x;
+      const dy = neighbor.y - point.y;
+      const magnitude = Math.hypot(dx, dy) || 1;
+      endpoints.push({
+        ref: pathIndex * 2 + side,
+        pathIndex,
+        x: point.x,
+        y: point.y,
+        dx: dx / magnitude,
+        dy: dy / magnitude,
+      });
+    }
+  }
+  const candidates = [];
+  const buckets = new Map();
+  for (const endpoint of endpoints) {
+    const cellX = Math.floor(endpoint.x / maxGap);
+    const cellY = Math.floor(endpoint.y / maxGap);
+    for (let offsetX = -1; offsetX <= 1; offsetX += 1) {
+      for (let offsetY = -1; offsetY <= 1; offsetY += 1) {
+        const nearby = buckets.get(`${cellX + offsetX},${cellY + offsetY}`) ?? [];
+        for (const other of nearby) {
+          if (endpoint.pathIndex === other.pathIndex) continue;
+          const distance = Math.hypot(endpoint.x - other.x, endpoint.y - other.y);
+          if (distance > maxGap) continue;
+          const alignment = endpoint.dx * other.dx + endpoint.dy * other.dy;
+          candidates.push({ left: endpoint.ref, right: other.ref, score: distance + 1.25 * (alignment + 1) });
+        }
+      }
+    }
+    const key = `${cellX},${cellY}`;
+    const sameCell = buckets.get(key) ?? [];
+    sameCell.push(endpoint);
+    buckets.set(key, sameCell);
+  }
+  candidates.sort((left, right) => left.score - right.score);
+  const continuation = new Map();
+  for (const candidate of candidates) {
+    if (continuation.has(candidate.left) || continuation.has(candidate.right)) continue;
+    continuation.set(candidate.left, candidate.right);
+    continuation.set(candidate.right, candidate.left);
+  }
+
+  const visited = new Set();
+  const joined = [];
+  const consume = (startEndpoint) => {
+    const result = [];
+    let endpoint = startEndpoint;
+    while (endpoint !== undefined) {
+      const pathIndex = Math.floor(endpoint / 2);
+      const side = endpoint % 2;
+      if (visited.has(pathIndex)) break;
+      visited.add(pathIndex);
+      const path = side === 0 ? paths[pathIndex] : [...paths[pathIndex]].reverse();
+      result.push(...(result.length ? path.slice(1) : path));
+      endpoint = continuation.get(pathIndex * 2 + (1 - side));
+    }
+    if (result.length > 1) joined.push(result);
+  };
+
+  for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
+    if (visited.has(pathIndex)) continue;
+    const start = pathIndex * 2;
+    if (!continuation.has(start)) consume(start);
+  }
+  for (let pathIndex = 0; pathIndex < paths.length; pathIndex += 1) {
+    if (!visited.has(pathIndex)) consume(pathIndex * 2);
+  }
+  return joined;
+}
+
 // ---------------------------------------------------------------------------
 // 路径简化
 // ---------------------------------------------------------------------------
@@ -226,7 +304,7 @@ export function estimateRevealWidth(mask, width, height, path) {
   }
   samples.sort((a, b) => a - b);
   const median = samples[Math.floor(samples.length / 2)] || 2;
-  const pixelWidth = clamp(median * 4 + 76, 72, 128);
+  const pixelWidth = clamp(median * 2 + 10, 14, 24);
   return Number((pixelWidth / Math.max(width, height)).toFixed(5));
 }
 

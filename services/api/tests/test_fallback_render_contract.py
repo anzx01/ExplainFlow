@@ -79,7 +79,45 @@ def test_raster_trace_partitions_regions_and_schedules_ink_then_color():
         color = ops[stroke["colorOpId"]]
         assert ink["phase"] == "ink"
         assert color["phase"] == "color"
-        assert ink["endFrame"] <= color["startFrame"]
+        assert ink["startFrame"] == color["startFrame"]
+        assert ink["endFrame"] == color["endFrame"]
+
+
+def test_raster_trace_keeps_all_strokes_and_pairs_color_with_pen_timing():
+    strokes = [
+        {
+            "points": [
+                {"x": 0.05 + (index % 10) * 0.09, "y": 0.05 + (index // 10) * 0.14},
+                {"x": 0.08 + (index % 10) * 0.09, "y": 0.08 + (index // 10) * 0.14},
+            ],
+            "revealWidth": 0.03,
+        }
+        for index in range(60)
+    ]
+    scene = Scene(
+        id="scene-raster-smooth", order=0, title="Raster", narration="Raster",
+        duration_estimate=10,
+        animations=[AnimationInstruction(type="whiteboard_draw", content="reference")],
+        referenceImageAsset="generated/job/scene.png",
+        rasterReveal={
+            "asset": "generated/job/scene.png", "inkAsset": "generated/job/scene-ink.png",
+            "colorAsset": "generated/job/scene-color.png", "imageWidth": 512,
+            "imageHeight": 512, "strokes": strokes,
+        },
+    )
+    spec = _build_fallback_scene_spec(scene, 0, 30, 1920, 1080)
+    raster_paths = spec["rasterReveal"]["strokes"]
+    ops = {op["id"]: op for op in spec["drawOps"]}
+
+    assert len(raster_paths) == 60
+    paired_spans = []
+    for stroke in raster_paths:
+        ink = ops[stroke["opId"]]
+        color = ops[stroke["colorOpId"]]
+        assert ink["startFrame"] == color["startFrame"]
+        assert ink["endFrame"] == color["endFrame"]
+        paired_spans.append(ink["endFrame"] - ink["startFrame"])
+    assert min(paired_spans) >= 1
 
 
 def test_raster_template_applies_contract_masks_and_cropped_hand_anchor():
@@ -99,8 +137,42 @@ def test_raster_template_applies_contract_masks_and_cropped_hand_anchor():
 
     assert "colorOpId" in tsx
     assert "mask={maskIdForOp(scene, op)" in tsx
+    assert "opacity={1}" in tsx
+    assert "finalCoverageOpacity" not in tsx
+    color_mask = tsx.split("const RasterColorMaskStroke", 1)[1].split("const RasterRevealImage", 1)[0]
+    assert "strokeWidth={Math.max(4, Math.min(spec.revealWidth, length * 0.6))}" in color_mask
+    assert "spec.revealWidth * 4.5" not in color_mask
     assert "const HAND_WIDTH = 282" in tsx
     assert "const PEN_TIP_X = 0" in tsx
+    assert "if (frame <= op.startFrame) return null;" in tsx
+    assert "const colorStartFrame = spec.colorOpId ? op.startFrame : (spec.colorStartFrame ?? fallbackStart);" in tsx
+
+
+def test_trace_raster_final_overlay_waits_for_all_strokes_and_uses_transparent_layers():
+    scene = Scene(
+        id="scene-trace-overlay", order=0, title="Trace", narration="Trace",
+        duration_estimate=5,
+        animations=[AnimationInstruction(type="whiteboard_draw", content="reference")],
+        referenceImageAsset="generated/job/scene.png",
+        rasterReveal={
+            "asset": "generated/job/scene.png", "inkAsset": "generated/job/scene-ink.png",
+            "colorAsset": "generated/job/scene-color.png", "renderMode": "trace",
+            "imageWidth": 512, "imageHeight": 512,
+            "strokes": [{"points": [{"x": 0.2, "y": 0.2}, {"x": 0.8, "y": 0.8}], "revealWidth": 0.03}],
+        },
+    )
+    storyboard = finalize_storyboard_contract(Storyboard(topic="trace", total_duration_estimate=5, scenes=[scene]))
+    tsx, _ = _build_fallback_remotion_tsx(storyboard, 30, 1920, 1080)
+
+    overlay = tsx.split("const RasterFinalOverlay", 1)[1].split("const AnimeDoodle", 1)[0]
+    assert 'const direct = reveal.renderMode === "direct";' in overlay
+    assert "inkOp?.endFrame ?? 0" in overlay
+    assert "colorOp?.endFrame ?? 0" in overlay
+    assert "[reveal.inkAsset!, reveal.colorAsset!]" in overlay
+    assert "[finishFrame, finishFrame + (direct ? 10 : 8)]" in overlay
+    assert "if (frame <= finishFrame || opacity <= 0) return null;" in overlay
+    assert "zIndex: 11" in overlay
+    assert "mask={`url(#${maskId})`}" in tsx
 
 
 def test_trace_asset_contract_requires_derivatives_and_preserves_metadata():

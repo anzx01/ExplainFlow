@@ -3,6 +3,8 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    # Local development uses the on-machine generator; production overrides
+    # IMAGEGEN_PROVIDER through its environment template.
     # CORS
     cors_allowed_origins: str = Field(
         default="http://localhost:3000,http://127.0.0.1:3000",
@@ -25,6 +27,9 @@ class Settings(BaseSettings):
 
     # Image generation. Local Flux is the default; Ark remains opt-in.
     imagegen_provider: str = Field(default="local", env="IMAGEGEN_PROVIDER")
+    comfyui_base_url: str = Field(default="http://127.0.0.1:8188", env="COMFYUI_BASE_URL")
+    comfyui_workflow: str = Field(default=r"", env="COMFYUI_WORKFLOW")
+    comfyui_timeout_s: float = Field(default=600, env="COMFYUI_TIMEOUT_S")
     local_imagegen_runtime: str = Field(default=r"D:\ck\04-第三方库与二进制依赖\stable-diffusion-cpp-bin\vulkan\sd-cli.exe", env="LOCAL_IMAGEGEN_RUNTIME")
     local_imagegen_model: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\gguf\flux1-schnell-Q5_K_S.gguf", env="LOCAL_IMAGEGEN_MODEL")
     local_imagegen_vae: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\extracted\vae\diffusion_pytorch_model.safetensors", env="LOCAL_IMAGEGEN_VAE")

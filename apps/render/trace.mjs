@@ -29,6 +29,7 @@ import {
   simplifyPolyline,
   sortRevealPaths,
   traceSkeletonPaths,
+  joinConnectedPaths,
   zhangSuenThin,
 } from "./trace-algo.mjs";
 
@@ -125,7 +126,7 @@ export async function traceRasterRevealImage(imageBuffer) {
   const skeleton = zhangSuenThin(cleanMask, width, height);
   let skeletonPixels = 0;
   for (const value of skeleton) { if (value) skeletonPixels += 1; }
-  const rawPaths = traceSkeletonPaths(skeleton, width, height)
+  const rawPaths = joinConnectedPaths(traceSkeletonPaths(skeleton, width, height))
     .map((path) => simplifyPolyline(path, 1.35))
     .filter((path) => path.length >= 2 && pathMetrics(path).length >= 4);
   const selected = sortRevealPaths(selectRevealPaths(rawPaths, RASTER_REVEAL_MAX_STROKES, width, height));

@@ -181,7 +181,7 @@ def build_raster_reveal(self, start: int) -> int:
         if len(points) < 2:
             continue
         normalized_width = raw_path.get("revealWidth") or raw_path.get("reveal_width") or 0.018
-        reveal_width = max(36.0, min(128.0, float(normalized_width) * max(draw_w, draw_h)))
+        reveal_width = max(18.0, min(32.0, float(normalized_width) * max(draw_w, draw_h)))
         if not contract_elements:
             append_prepared(points, reveal_width)
             continue
@@ -212,20 +212,16 @@ def build_raster_reveal(self, start: int) -> int:
 
     window_start = min(max(0, start), max(0, self.duration - 32))
     window_end = max(window_start + 12.0, self.duration - 24.0)
-    ink_window_end = window_start + (window_end - window_start) * (2.0 / 3.0)
     total_weight = sum(item["weight"] for item in prepared) or float(len(prepared))
     ink_cursor = float(window_start)
-    color_cursor = float(ink_window_end)
     raster_paths: list[dict] = []
     for index, item in enumerate(prepared):
         op_id = f"s{self.scene_index}_raster_{index}"
         color_op_id = f"{op_id}_color"
-        ink_span = max(0.45, (ink_window_end - window_start) * item["weight"] / total_weight)
-        color_span = max(0.35, (window_end - ink_window_end) * item["weight"] / total_weight)
-        ink_end = ink_window_end if index == len(prepared) - 1 else min(ink_window_end, ink_cursor + ink_span)
-        color_end = window_end if index == len(prepared) - 1 else min(window_end, color_cursor + color_span)
-        draw_op = {"id": op_id, "kind": "path", "phase": "ink", "startFrame": round(ink_cursor, 2), "endFrame": round(max(ink_cursor + 0.35, ink_end), 2), "points": item["points"]}
-        color_op = {"id": color_op_id, "kind": "path", "phase": "color", "startFrame": round(color_cursor, 2), "endFrame": round(max(color_cursor + 0.35, color_end), 2), "points": item["points"]}
+        ink_span = max(1.0, (window_end - window_start) * item["weight"] / total_weight)
+        ink_end = window_end if index == len(prepared) - 1 else min(window_end, ink_cursor + ink_span)
+        draw_op = {"id": op_id, "pairedOpId": color_op_id, "kind": "path", "phase": "ink", "startFrame": round(ink_cursor, 2), "endFrame": round(max(ink_cursor + 0.35, ink_end), 2), "points": item["points"]}
+        color_op = {"id": color_op_id, "pairedOpId": op_id, "kind": "path", "phase": "color", "startFrame": draw_op["startFrame"], "endFrame": draw_op["endFrame"], "points": item["points"]}
         if item.get("contractElementId"):
             draw_op["contractElementId"] = item["contractElementId"]
             color_op["contractElementId"] = item["contractElementId"]
@@ -233,7 +229,6 @@ def build_raster_reveal(self, start: int) -> int:
         self.draw_ops.append(color_op)
         raster_paths.append({"opId": op_id, "colorOpId": color_op_id, "d": _path_from_points(item["points"]), "revealWidth": item["revealWidth"], "dashLength": item["dashLength"]})
         ink_cursor = ink_end
-        color_cursor = color_end
 
     self.raster_reveal_spec = {
         "asset": str(self.reference_image_asset),
