@@ -79,7 +79,10 @@ async def generate_scene_images(req: GenerateImagesRequest) -> GenerateImagesRes
         )
         for scene in req.scenes
     ]
-    images, diagnostics = await generate_all_scene_images_with_diagnostics(requests)
+    try:
+        images, diagnostics = await generate_all_scene_images_with_diagnostics(requests)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return GenerateImagesResponse(images=images, diagnostics=diagnostics)
 
 
@@ -104,7 +107,10 @@ async def generate_action_board(req: GenerateActionBoardRequest) -> GenerateActi
         )
         for action in req.actions
     ]
-    image, diagnostics = await generate_action_board_with_diagnostics(
-        board_id=req.board_id, topic=req.topic, actions=requests, columns=req.columns,
-    )
+    try:
+        image, diagnostics = await generate_action_board_with_diagnostics(
+            board_id=req.board_id, topic=req.topic, actions=requests, columns=req.columns,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     return GenerateActionBoardResponse(image=image, diagnostics=diagnostics)

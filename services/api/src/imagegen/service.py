@@ -161,6 +161,7 @@ def _comfy_workflow(prompt: str, negative: str, *, seed: int, width: int, height
         "__EXPLAINFLOW_SEED__": seed,
         "__EXPLAINFLOW_WIDTH__": width,
         "__EXPLAINFLOW_HEIGHT__": height,
+        "__EXPLAINFLOW_STEPS__": max(1, min(50, int(settings.comfyui_steps))),
     })
     if not settings.comfyui_lora.strip():
         workflow.pop("8", None)
@@ -190,7 +191,9 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
         if separator and generated_negative.strip():
             negative = generated_negative.strip()
         response = await client.post("/prompt", json={"prompt": _comfy_workflow(positive.strip(), negative, seed=(_local_seed(prompt) + attempt * 104729) & 0x7FFFFFFF, width=width, height=height), "client_id": client_id})
-        response.raise_for_status()
+        if response.is_error:
+            detail = response.text.strip().replace("\n", " ")[:1200]
+            raise RuntimeError(f"ComfyUI rejected the workflow ({response.status_code}): {detail}")
         prompt_id = response.json().get("prompt_id")
         if not prompt_id:
             raise RuntimeError("ComfyUI did not return prompt_id")
@@ -210,6 +213,19 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
                         return result.content
             await asyncio.sleep(0.5)
     raise RuntimeError(f"ComfyUI generation timed out after {timeout:g}s")
+
+
+async def _check_comfyui_available() -> None:
+    """Fail fast when the configured ComfyUI endpoint is not running."""
+    base_url = settings.comfyui_base_url.rstrip("/")
+    try:
+        async with httpx.AsyncClient(base_url=base_url, timeout=2.0) as client:
+            response = await client.get("/system_stats")
+            response.raise_for_status()
+    except Exception as exc:
+        raise RuntimeError(
+            f"ComfyUI is unreachable at {base_url}; start ComfyUI or change COMFYUI_BASE_URL ({exc})"
+        ) from exc
 
 
 def local_imagegen_status() -> dict:
@@ -716,7 +732,10 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
             else:
                 raise RuntimeError(f"Unsupported IMAGEGEN_PROVIDER: {settings.imagegen_provider}")
             img_bytes = normalize_whiteboard_image(img_bytes)
-            quality = inspect_generated_image(img_bytes)
+            # OCR launches a separate Tesseract process and is useful for
+            # offline QA, but it needlessly serializes every generated scene.
+            # Keep the generation hot path focused on inexpensive pixel checks.
+            quality = inspect_generated_image(img_bytes, use_ocr=False)
             quality["attempt"] = attempt + 1
             quality["semantic"] = semantic
             quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, prompt, provider)
@@ -753,6 +772,8 @@ async def generate_all_scene_images(requests: list[SceneImageRequest]) -> dict[s
 
 
 async def generate_all_scene_images_with_diagnostics(requests: list[SceneImageRequest]) -> tuple[dict[str, str | None], dict[str, dict]]:
+    if str(settings.imagegen_provider or "").strip().lower() in {"comfy", "comfyui"}:
+        await _check_comfyui_available()
     async with httpx.AsyncClient() as client:
         results = []
         total = len(requests)

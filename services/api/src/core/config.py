@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     comfyui_lora: str = Field(default="", env="COMFYUI_LORA")
     comfyui_lora_strength: float = Field(default=0.8, env="COMFYUI_LORA_STRENGTH")
     comfyui_lora_trigger: str = Field(default="doodle, messy, stickfigure, crayola, crayons, colored chalk, scribble", env="COMFYUI_LORA_TRIGGER")
+    comfyui_steps: int = Field(default=12, env="COMFYUI_STEPS")
     comfyui_client_id: str = Field(default="explainflow", env="COMFYUI_CLIENT_ID")
     comfyui_checkpoint: str = Field(default="meinaPastelV5_bakedVAE.safetensors", env="COMFYUI_CHECKPOINT")
     comfyui_client_id: str = Field(default="explainflow", env="COMFYUI_CLIENT_ID")
