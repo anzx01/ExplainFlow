@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ACTIVE_PEN_STYLE_ID, ACTIVE_VIDEO_STYLE_ID, PEN_STYLE_OPTIONS, VIDEO_STYLE_OPTIONS } from "@/lib/constants";
-import type { PenStyleId, VideoStyleId } from "@/lib/types";
+import type { ImageGenerationMode, PenStyleId, VideoStyleId } from "@/lib/types";
 
 interface Props {
   onGenerate: (prompt: string, markdown: string, videoStyle: VideoStyleId, penStyle: PenStyleId) => void;
@@ -14,6 +14,8 @@ interface Props {
   onVideoStyleChange: (style: VideoStyleId) => void;
   penStyle: PenStyleId;
   onPenStyleChange: (style: PenStyleId) => void;
+  imageMode: ImageGenerationMode;
+  onImageModeChange: (mode: ImageGenerationMode) => void;
 }
 
 function durationLabel(seconds: number) {
@@ -32,6 +34,8 @@ export function LeftPanel({
   onVideoStyleChange,
   penStyle,
   onPenStyleChange,
+  imageMode,
+  onImageModeChange,
 }: Props) {
   const [prompt, setPrompt] = useState("");
   const [markdown, setMarkdown] = useState("");
@@ -99,6 +103,28 @@ export function LeftPanel({
               <span>1 分钟</span>
               <span>3 分钟</span>
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-[--fg-default]">图片生成模式</span>
+              <span className="text-[10px] text-[--fg-subtle]">本地模型</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              {([
+                ["sd15", "SD1.5", "快速出图、精准控制"],
+                ["flux", "Flux", "精美画质、风格感"],
+              ] as const).map(([id, label, fit]) => (
+                <button key={id} type="button" disabled={loading} onClick={() => onImageModeChange(id)}
+                  className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${imageMode === id ? "border-purple-500 bg-purple-500/10 text-[--fg-default]" : "border-[--border-default] bg-[--bg-elevated] text-[--fg-muted] hover:border-[--border-subtle]"}`}>
+                  <span className="block text-xs font-semibold">{label}</span>
+                  <span className="mt-0.5 block text-[11px] text-[--fg-subtle]">{fit}</span>
+                </button>
+              ))}
+            </div>
+            <p className="text-[11px] leading-relaxed text-[--fg-subtle]">
+              Flux 使用本地大模型，生成耗时和内存占用更高；需要快速批量出图时选 SD1.5。
+            </p>
           </div>
 
           <div className="space-y-2">

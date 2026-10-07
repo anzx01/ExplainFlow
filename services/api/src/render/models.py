@@ -25,7 +25,7 @@ class RenderQaResult(BaseModel):
 class RenderJobRequest(BaseModel):
     storyboard: Storyboard
     voice: str = "xiaoxiao"
-    resolution: str = "1080p"
+    resolution: str = "720p"
     subtitles_enabled: bool = False
     background_music_enabled: bool = False
     background_music_id: str | None = None

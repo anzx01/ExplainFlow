@@ -7,6 +7,7 @@ import { createHash } from "crypto";
 import { join } from "path";
 import {
   ENABLE_IMAGE_TRACE,
+  IMAGEGEN_REQUEST_TIMEOUT_MS,
   IMAGE_TRACE_MAX_SCENES,
   PYTHON_API,
   REQUIRE_SEEDREAM_REFERENCE_IMAGES,
@@ -14,7 +15,7 @@ import {
   SKIP_IMAGE_TRACE,
   __dirname,
 } from "./config.mjs";
-import { postJson } from "./utils.mjs";
+import { getJson, postJson } from "./utils.mjs";
 import {
   countPatternMatches,
   countSceneLabels,
@@ -30,6 +31,18 @@ import { traceWhiteboardImageBuffer, traceWhiteboardImageBase64 } from "./trace-
 
 const IMAGE_CACHE_DIR = join(PUBLIC_GENERATED_DIR, "_cache");
 const HANDDRAW_TOPIC_ASSET_DIR = join(__dirname, "public", "handdraw");
+
+export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs = 0) {
+  if (Number(overrideMs) > 0) return Number(overrideMs);
+  const provider = String(providerStatus?.provider ?? "local").trim().toLowerCase();
+  const local = provider === "local" || provider === "local_then_ark";
+  const localSeconds = local
+    ? Number(providerStatus?.timeoutSeconds ?? 600) * Math.max(1, Number(providerStatus?.maxAttempts ?? 3))
+    : 0;
+  const fallbackSeconds = provider === "local_then_ark" ? 120 : 0;
+  const providerSeconds = local ? localSeconds + fallbackSeconds : 180;
+  return Math.max(180000, Math.max(1, sceneCount) * providerSeconds * 1000 + 120000);
+}
 
 function isShortVideoTopic(storyboard) {
   const text = `${storyboard?.topic ?? ""} ${(storyboard?.scenes ?? []).map((scene) => `${scene?.title ?? ""} ${scene?.narration ?? ""}`).join(" ")}`;
@@ -266,7 +279,14 @@ export async function injectImageTraces(storyboard, jobId) {
   try {
     let response = { images: {} };
     if (candidates.length > 0) {
-      console.log(`[image-trace] Generating ${candidates.length} Seedream reference image(s)...`);
+      let providerStatus = {};
+      try {
+        providerStatus = await getJson(`${PYTHON_API}/imagegen/status`, 5000);
+      } catch (err) {
+        console.warn(`[image-trace] Could not read image provider status; using conservative local-generation timeout: ${err.message}`);
+      }
+      const timeoutMs = imagegenRequestTimeoutMs(providerStatus, candidates.length, IMAGEGEN_REQUEST_TIMEOUT_MS);
+      console.log(`[image-trace] Generating ${candidates.length} reference image(s) with ${providerStatus.provider ?? "configured"} provider (timeout ${Math.ceil(timeoutMs / 60000)} min)...`);
       response = await postJson(`${PYTHON_API}/imagegen/scenes`, {
         scenes: candidates.map((scene) => ({
           scene_id: scene.id, topic: storyboard.topic ?? "",
@@ -277,11 +297,15 @@ export async function injectImageTraces(storyboard, jobId) {
           visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
           pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
           quality: "final",
+          image_mode: String(storyboard.image_generation_mode ?? storyboard.imageGenerationMode ?? "sd15"),
         })),
-      }, 180000);
+      }, timeoutMs);
       const generatedCount = candidates.filter((scene) => response.images?.[scene.id]).length;
       if (REQUIRE_SEEDREAM_REFERENCE_IMAGES && generatedCount === 0) {
-        throw new Error(`Seedream reference image generation returned 0/${candidates.length} images. Check ARK_API_KEY, ARK_BASE_URL, SEEDREAM_MODEL, and /imagegen/scenes logs.`);
+        const diagnostics = Object.entries(response.diagnostics ?? {})
+          .map(([id, detail]) => `${id}: ${JSON.stringify(detail)}`)
+          .join("; ");
+        throw new Error(`Image generation returned 0/${candidates.length} images from the configured provider.${diagnostics ? ` Diagnostics: ${diagnostics}` : " Check /imagegen/status and /imagegen/scenes logs."}`);
       }
       if (generatedCount < candidates.length) {
         throw new Error(`Image generation returned ${generatedCount}/${candidates.length} storyboard reference images; refusing to render scenes without matching artwork.`);
@@ -295,7 +319,7 @@ export async function injectImageTraces(storyboard, jobId) {
         const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene, { forceTrace: true });
         rasterBySceneId[scene.id] = raster;
         saveImageCache(storyboard, scene, jobId, raster);
-        console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from Seedream, ${raster.rasterReveal.strokes.length} reveal path(s)`);
+        console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from configured image provider, ${raster.rasterReveal.strokes.length} reveal path(s)`);
       } catch (err) {
         console.warn(`[image-trace] ${scene.id}: raster reveal skipped, falling back to SVG trace: ${err.message}`);
         const traceStrokes = await traceWhiteboardImageBase64(imageBase64);

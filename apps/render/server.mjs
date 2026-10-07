@@ -6,10 +6,11 @@
  * Storyboard -> cached TTS audio -> validated Remotion TSX -> per-job bundle -> MP4.
  */
 import http from "http";
-import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync } from "fs";
+import { copyFileSync, createReadStream, existsSync, mkdirSync, statSync, writeFileSync, unlinkSync } from "fs";
 import { basename, join } from "path";
 import { sendJson, serveMediaFile } from "./http-utils.mjs";
 import { randomUUID } from "crypto";
+import { fileURLToPath } from "url";
 import {
   AUDIO_DIR,
   GENERATED_DIR,
@@ -295,6 +296,18 @@ const server = http.createServer(async (req, res) => {
 });
 
 process.on("SIGINT", () => process.exit(0));
+const pidFile = join(fileURLToPath(new URL("../../", import.meta.url)), ".explainflow-render.pid");
+try { writeFileSync(pidFile, String(process.pid), "utf8"); } catch { /* best effort */ }
+process.on("exit", () => { try { unlinkSync(pidFile); } catch {} });
+server.on("error", (error) => {
+  if (error?.code === "EADDRINUSE") {
+    console.error(`[render-server] 端口 ${PORT} 已被占用。请先运行 scripts\\stop.bat，或确认没有重复启动 ExplainFlow。`);
+    process.exitCode = 1;
+    return;
+  }
+  console.error("[render-server] 启动失败:", error);
+  process.exitCode = 1;
+});
 
 server.listen(PORT, () => {
   console.log(`[render-server] http://localhost:${PORT} (LLM Remotion mode)`);

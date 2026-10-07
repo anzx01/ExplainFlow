@@ -112,8 +112,8 @@ export interface Storyboard {
 }
 
 export const FPS = 30;
-export const WIDTH = 1920;
-export const HEIGHT = 1080;
+export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1280);
+export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 720);
 
 export const COLORS = {
   bg: "#FDFCF8",

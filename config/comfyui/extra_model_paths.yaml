@@ -1,0 +1,4 @@
+comfyui:
+  base_path: D:/ck/ComfyUI
+  checkpoints: E:/MYLLM/meinapastel-v5
+  loras: E:/MYLLM/loras

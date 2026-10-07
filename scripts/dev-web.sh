@@ -9,5 +9,5 @@ if [ ! -f ".env.local" ]; then
   cp .env.local.example .env.local
 fi
 
-echo "[info] Starting Next.js dev server on http://localhost:3000 ..."
-node_modules/.bin/next dev --turbopack 2>&1 | tee -a ../../logs/web.log
+echo "[info] Starting Next.js dev server on http://localhost:3010 ..."
+node_modules/.bin/next dev --turbopack --port 3010 2>&1 | tee -a ../../logs/web.log

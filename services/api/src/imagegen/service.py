@@ -2,10 +2,12 @@ import asyncio
 import base64
 import hashlib
 import io
+import json
 import logging
 import re
 import subprocess
 import tempfile
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,14 @@ from .prompts import (
 
 logger = logging.getLogger(__name__)
 _LOCAL_IMAGEGEN_LOCK = asyncio.Lock()
+_COOKING_CONTEXT_EN = re.compile(
+    r"\b(?:cook(?:ing)?|recipe|food|dish|ingredient|dumpling|noodle|tofu|wok|skillet|"
+    r"flour|dough|sauce|stir[- ]?fry|boil(?:ing)?|bake|fry|steam(?:er|ed|ing)?)\b",
+    re.IGNORECASE,
+)
+_COOKING_CONTEXT_ZH = tuple(
+    "\u996d\u83dc \u7f8e\u98df \u98df\u7269 \u83dc\u80b4 \u98df\u6750 \u83dc\u8c31 \u997a\u5b50 \u9762\u6761 \u8c46\u8150 \u9762\u7c89 \u9762\u56e2 \u7092\u9505 \u9505\u5177 \u7092\u83dc \u714e\u7092 \u716e\u6c34 \u84b8\u9505 \u70d8\u7119 \u70f9\u996a \u7096\u716e \u914d\u6599 \u9ebb\u5a46\u8c46\u8150".split()
+)
 
 
 @dataclass
@@ -49,6 +59,7 @@ class SceneImageRequest:
     visual_style: str = "teacher_whiteboard"
     pen_style: str = "marker"
     quality: str = "final"
+    image_mode: str | None = None
 
 
 def _canonical_video_style(value: str | None) -> str:
@@ -121,6 +132,86 @@ async def _call_seedream(prompt: str, client: httpx.AsyncClient) -> bytes:
     return img_resp.content
 
 
+def _replace_workflow_values(value, replacements: dict[str, str | int]):
+    if isinstance(value, dict):
+        return {key: _replace_workflow_values(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_workflow_values(item, replacements) for item in value]
+    return replacements.get(value, value) if isinstance(value, str) else value
+
+
+def _comfy_workflow(prompt: str, negative: str, *, seed: int, width: int, height: int) -> dict:
+    workflow_path = Path(settings.comfyui_workflow)
+    if not workflow_path.is_file():
+        raise RuntimeError(f"ComfyUI API workflow not found: {workflow_path}")
+    try:
+        template = json.loads(workflow_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"Could not load ComfyUI API workflow {workflow_path}: {exc}") from exc
+    if not isinstance(template, dict) or not template:
+        raise RuntimeError("ComfyUI API workflow must be a non-empty object")
+    if settings.comfyui_lora.strip() and settings.comfyui_lora_trigger.strip():
+        prompt = f"{settings.comfyui_lora_trigger}, {prompt}"
+    workflow = _replace_workflow_values(template, {
+        "__EXPLAINFLOW_PROMPT__": prompt,
+        "__EXPLAINFLOW_NEGATIVE__": negative,
+        "__EXPLAINFLOW_CHECKPOINT__": settings.comfyui_checkpoint,
+        "__EXPLAINFLOW_LORA__": settings.comfyui_lora,
+        "__EXPLAINFLOW_LORA_STRENGTH__": settings.comfyui_lora_strength,
+        "__EXPLAINFLOW_SEED__": seed,
+        "__EXPLAINFLOW_WIDTH__": width,
+        "__EXPLAINFLOW_HEIGHT__": height,
+    })
+    if not settings.comfyui_lora.strip():
+        workflow.pop("8", None)
+        for node in workflow.values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if not isinstance(inputs, dict):
+                continue
+            for key, value in list(inputs.items()):
+                if value == ["8", 0]:
+                    inputs[key] = ["1", 0]
+                elif value == ["8", 1]:
+                    inputs[key] = ["1", 1]
+    return workflow
+
+
+async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0) -> bytes:
+    preview = quality.strip().lower() == "preview"
+    width = settings.local_imagegen_preview_width if preview else settings.local_imagegen_width
+    height = settings.local_imagegen_preview_height if preview else settings.local_imagegen_height
+    negative = "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects"
+    timeout = max(5.0, float(settings.comfyui_timeout_s))
+    client_id = f"{settings.comfyui_client_id}-{uuid.uuid4().hex}"
+    async with httpx.AsyncClient(base_url=settings.comfyui_base_url.rstrip("/"), timeout=10.0) as client:
+        positive, separator, generated_negative = prompt.partition("Negative prompt:")
+        if separator and generated_negative.strip():
+            negative = generated_negative.strip()
+        response = await client.post("/prompt", json={"prompt": _comfy_workflow(positive.strip(), negative, seed=(_local_seed(prompt) + attempt * 104729) & 0x7FFFFFFF, width=width, height=height), "client_id": client_id})
+        response.raise_for_status()
+        prompt_id = response.json().get("prompt_id")
+        if not prompt_id:
+            raise RuntimeError("ComfyUI did not return prompt_id")
+        deadline = asyncio.get_running_loop().time() + timeout
+        while asyncio.get_running_loop().time() < deadline:
+            history = await client.get(f"/history/{prompt_id}")
+            if history.status_code == 200:
+                item = history.json().get(prompt_id, {})
+                if item.get("status", {}).get("status_str") == "error":
+                    raise RuntimeError(str(item.get("status", {}).get("messages", "ComfyUI workflow failed")))
+                outputs = item.get("outputs", {})
+                for node in outputs.values():
+                    for image in node.get("images", []):
+                        params = {"filename": image["filename"], "subfolder": image.get("subfolder", ""), "type": image.get("type", "output")}
+                        result = await client.get("/view", params=params)
+                        result.raise_for_status()
+                        return result.content
+            await asyncio.sleep(0.5)
+    raise RuntimeError(f"ComfyUI generation timed out after {timeout:g}s")
+
+
 def local_imagegen_status() -> dict:
     paths = {
         "runtime": Path(settings.local_imagegen_runtime),
@@ -129,24 +220,56 @@ def local_imagegen_status() -> dict:
         "clip_l": Path(settings.local_imagegen_clip_l),
         "t5xxl": Path(settings.local_imagegen_t5xxl),
     }
-    missing = [name for name, path in paths.items() if not path.is_file()]
-    comfy_configured = bool(str(settings.comfyui_workflow or '').strip())
+    provider = str(settings.imagegen_provider or "").strip().lower()
+    missing = [name for name, path in paths.items() if not path.is_file()] if provider.startswith("local") else []
+    comfy_workflow = Path(settings.comfyui_workflow) if str(settings.comfyui_workflow or '').strip() else None
+    comfy_configured = bool(comfy_workflow and comfy_workflow.is_file())
+    if provider in {"comfyui", "comfy"} and not comfy_configured:
+        missing.append("comfyui_workflow")
+    flux_missing = [name for name, path in paths.items() if not path.is_file()]
+    if settings.local_imagegen_lora.strip() and not (Path(settings.local_imagegen_lora_dir) / settings.local_imagegen_lora).is_file():
+        flux_missing.append("flux_lora")
     return {
         "provider": settings.imagegen_provider,
         "available": not missing,
         "missing": missing,
-        "runtime": str(paths["runtime"]),
-        "model": str(paths["model"]),
         "width": settings.local_imagegen_width,
         "height": settings.local_imagegen_height,
         "previewWidth": settings.local_imagegen_preview_width,
         "previewHeight": settings.local_imagegen_preview_height,
-        "steps": settings.local_imagegen_steps,
-        "backend": settings.local_imagegen_backend,
+        "timeoutSeconds": settings.comfyui_timeout_s if provider in {"comfy", "comfyui"} else settings.local_imagegen_timeout_s,
+        "maxAttempts": settings.local_imagegen_max_attempts if provider.startswith("local") else 1,
+        **({
+            "steps": settings.local_imagegen_steps,
+            "runtime": str(paths["runtime"]),
+            "model": str(paths["model"]),
+            "backend": settings.local_imagegen_backend,
+        } if provider.startswith("local") else {}),
         "comfyui": {
             "baseUrl": settings.comfyui_base_url,
             "workflowConfigured": comfy_configured,
             "workflow": settings.comfyui_workflow,
+            "checkpoint": settings.comfyui_checkpoint,
+        },
+        "modes": {
+            "sd15": {
+                "available": comfy_configured and bool(settings.comfyui_checkpoint),
+                "provider": "comfyui",
+                "checkpoint": settings.comfyui_checkpoint,
+                "lora": settings.comfyui_lora or None,
+            },
+            "flux": {
+                "available": not flux_missing,
+                "provider": "local",
+                "missing": flux_missing,
+                "model": str(paths["model"]),
+                "lora": settings.local_imagegen_lora or None,
+                "loraConfigured": bool(settings.local_imagegen_lora and (Path(settings.local_imagegen_lora_dir) / settings.local_imagegen_lora).is_file()),
+                "steps": settings.local_imagegen_steps,
+                "guidance": settings.local_imagegen_guidance,
+                "width": settings.local_imagegen_flux_width,
+                "height": settings.local_imagegen_flux_height,
+            },
         },
     }
 
@@ -158,10 +281,22 @@ def _local_prompt(prompt: str) -> str:
     return f"{positive}. Clean blank margins, no text, no logo, no watermark, no artist signature."
 
 
+def _flux_prompt_with_lora(prompt: str) -> str:
+    if not settings.local_imagegen_lora.strip():
+        return _local_prompt(prompt)
+    lora_path = Path(settings.local_imagegen_lora_dir) / settings.local_imagegen_lora
+    if not lora_path.is_file():
+        raise RuntimeError(f"Configured Flux LoRA does not exist: {lora_path}")
+    trigger = settings.local_imagegen_lora_trigger.strip()
+    lora_tag = f"<lora:{lora_path.stem}:{settings.local_imagegen_lora_strength:g}>"
+    return _local_prompt(f"{trigger}, {lora_tag}, {prompt}")
+
+
 def _build_local_prompt(req: SceneImageRequest) -> str:
-    """Build a short Flux prompt whose first tokens carry the actual action."""
-    stage = _cooking_stage(req)
-    stage_guidance = {
+    """Build a topic-agnostic local image prompt from storyboard intent."""
+    stage_guidance = ""
+    stage = None
+    legacy_stage_guidance = {
         "dough_prep": "Primary action: pour water into flour, mix it with hands or chopsticks, then knead one dough ball.",
         "wrappers": "Primary action sequence, left to right: roll one long dough rope, cut it into equal pieces with a knife, roll one piece into one round wrapper.",
         "roll_rope": "Primary action: two bare hands roll one straight long cylindrical dough rope directly on a board, palms touching the rope; no tool.",
@@ -243,7 +378,7 @@ def _topic_visual_hint(req: SceneImageRequest) -> str:
     return ""
 
 
-def _asset_contract_metadata(req: SceneImageRequest, image_bytes: bytes, prompt: str) -> dict:
+def _asset_contract_metadata(req: SceneImageRequest, image_bytes: bytes, prompt: str, provider: str | None = None) -> dict:
     image = Image.open(io.BytesIO(image_bytes))
     source_hash = hashlib.sha256(image_bytes).hexdigest()
     prompt_hash = hashlib.sha256(prompt.encode("utf-8")).hexdigest()
@@ -252,7 +387,8 @@ def _asset_contract_metadata(req: SceneImageRequest, image_bytes: bytes, prompt:
         "height": int(image.height),
         "sourceHash": source_hash,
         "promptHash": prompt_hash,
-        "provider": settings.imagegen_provider,
+        "provider": provider or settings.imagegen_provider,
+        "imageMode": req.image_mode or "default",
         "quality": req.quality,
         "stage": "generated",
     }
@@ -265,10 +401,10 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
     async with _LOCAL_IMAGEGEN_LOCK:
         with tempfile.TemporaryDirectory(prefix="explainflow-flux-") as tmp:
             output = Path(tmp) / "output.png"
-            local_prompt = _local_prompt(prompt)
+            local_prompt = _flux_prompt_with_lora(prompt)
             preview = quality.strip().lower() == "preview"
-            width = settings.local_imagegen_preview_width if preview else settings.local_imagegen_width
-            height = settings.local_imagegen_preview_height if preview else settings.local_imagegen_height
+            width = settings.local_imagegen_flux_preview_width if preview else settings.local_imagegen_flux_width
+            height = settings.local_imagegen_flux_preview_height if preview else settings.local_imagegen_flux_height
             command = [
                 settings.local_imagegen_runtime,
                 "--diffusion-model", settings.local_imagegen_model,
@@ -278,12 +414,15 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
                 "--prompt", local_prompt,
                 "--seed", str((_local_seed(local_prompt) + attempt * 104729) & 0x7FFFFFFF),
                 "--cfg-scale", "1.0",
+                "--guidance", str(settings.local_imagegen_guidance),
                 "--sampling-method", "euler",
                 "--steps", str(settings.local_imagegen_steps),
                 "--width", str(width),
                 "--height", str(height),
                 "--output", str(output),
             ]
+            if settings.local_imagegen_lora.strip():
+                command.extend(["--lora-model-dir", settings.local_imagegen_lora_dir])
             if settings.local_imagegen_backend.strip():
                 command.extend(["--backend", settings.local_imagegen_backend.strip()])
             if settings.local_imagegen_offload_to_cpu:
@@ -359,7 +498,11 @@ def _build_prompt(req: SceneImageRequest) -> str:
     else:
         suffix = STYLE_SUFFIX
         negative = NEGATIVE
-    domain_suffix, domain_negative = _domain_prompt_constraints(req)
+    # Keep image generation topic-agnostic. Domain-specific prompt packs (for
+    # example cooking-only constraints) made generic storyboards fail before
+    # the provider was called. The storyboard description is the source of
+    # truth; the renderer handles drawing annotations separately.
+    domain_suffix, domain_negative = "", ""
     image_description = _normalize_image_description(req.image_description)
     return (
         f"{image_description}. Topic context only, do not draw as text: {req.topic}. "
@@ -429,9 +572,44 @@ def _domain_prompt_constraints(req: SceneImageRequest) -> tuple[str, str]:
     return " ".join(constraints), ", ".join(negative)
 
 
+def _semantic_prompt_text(value: str) -> str:
+    """Normalize common Chinese storyboard terms to the English contract vocabulary.
+
+    The image prompt may be bilingual, but semantic QA must not depend on the
+    author choosing one language. Keeping this normalization in one place
+    also makes future stages easier to extend than duplicating ad-hoc checks.
+    """
+    text = str(value or "").lower()
+    aliases = {
+        "\u6210\u54c1": " finished ", "\u5b8c\u6210": " finished ", "\u505a\u597d": " finished ",
+        "\u88c5\u76d8": " serve ", "\u4e0a\u684c": " serve ", "\u51fa\u9505": " serve ",
+        "\u9762\u7c89": " flour ", "\u548c\u9762": " mixing dough ", "\u63c9\u9762": " knead dough ",
+        "\u9762\u56e2": " dough ball ", "\u6c34": " water ", "\u997a\u5b50": " dumplings ",
+        "\u6d6e\u8d77": " floating ", "\u51b7\u6c34": " cold water ", "\u52fa\u5b50": " ladle ",
+        "\u6f0f\u52fa": " slotted spoon ", "\u5305\u997a\u5b50": " wrapping dumpling ",
+        "\u9985\u6599": " filling ", "\u9762\u76ae": " wrapper ", "\u997a\u5b50\u76ae": " wrapper ", "\u8936\u76b1": " pleats ",
+        "\u64c0\u76ae": " rolling pin wrapper ", "\u5207\u5757": " cut pieces ",
+        "\u716e\u6c34": " boiling water ", "\u6cb8\u6c34": " boiling water ", "\u716e\u997a\u5b50": " boil dumplings ", "\u4e0b\u9505": " boil ", "\u7092": " stir fry ",
+        "\u98df\u6750": " ingredient ", "\u51c6\u5907": " prepare ", "\u5207\u83dc": " cut ",
+    }
+    for source, target in aliases.items():
+        text = text.replace(source, target)
+    return text
+
+
+def _has_cooking_context(text: str) -> bool:
+    return bool(_COOKING_CONTEXT_EN.search(text)) or any(term in text for term in _COOKING_CONTEXT_ZH)
+
+
 def _cooking_stage(req: SceneImageRequest) -> str | None:
     """Return a deterministic semantic stage used by prompt and QA diagnostics."""
-    blob = f"{req.topic} {req.title} {req.image_description}".lower()
+    blob = _semantic_prompt_text(f"{req.topic} {req.title} {req.image_description}")
+    # Cooking constraints are domain-specific. A generic storyboard can use
+    # words such as "finished" or "serve" without depicting food; do not let
+    # those words activate cooking QA unless the request has clear cooking
+    # context (dish, ingredients, cookware, recipe, etc.).
+    if not _has_cooking_context(blob):
+        return None
     action_scene = req.scene_id.strip().lower()
     for action in ("roll_rope", "cut_pieces", "roll_wrapper", "boil_drop", "boil_add_water", "boil_float_scoop"):
         if action_scene == action or action_scene.endswith(f"_{action}"):
@@ -450,9 +628,11 @@ def _cooking_stage(req: SceneImageRequest) -> str | None:
 
 
 def _semantic_prompt_diagnostics(req: SceneImageRequest) -> dict:
+    # Image generation is topic-agnostic. Keep this shape for API diagnostics,
+    # but never classify or reject a scene by a domain-specific vocabulary.
+    return {"stage": None, "requiredTerms": [], "forbiddenTerms": []}
+    """Legacy domain contract retained below only as unreachable documentation."""
     stage = _cooking_stage(req)
-    if not stage:
-        return {"stage": None, "requiredTerms": [], "forbiddenTerms": []}
     required = {
         "dough_prep": ["flour", "water", "dough", "mix"],
         "wrappers": ["dough", "rolling pin", "wrapper", "hands", "knife", "cut", "rolling"],
@@ -479,7 +659,7 @@ def _semantic_prompt_diagnostics(req: SceneImageRequest) -> dict:
         "boiling": ["noodles", "ramen", "eating noodles", "steamer", "steamed buns", "baozi", "bamboo steamer"],
         "finished_dish": ["raw flour", "empty pot"],
     }[stage]
-    prompt = req.image_description.lower()
+    prompt = _semantic_prompt_text(req.image_description)
     def positive_term(term: str) -> bool:
         for match in re.finditer(rf"\b{re.escape(term)}\b", prompt):
             prefix = prompt[max(0, match.start() - 96):match.start()]
@@ -488,9 +668,10 @@ def _semantic_prompt_diagnostics(req: SceneImageRequest) -> dict:
             return True
         return False
 
+    missing = [term for term in required if term not in prompt]
     return {
         "stage": stage,
-        "requiredTerms": [term for term in required if term not in prompt],
+        "requiredTerms": missing,
         "forbiddenTerms": [term for term in forbidden if positive_term(term)],
     }
 
@@ -498,20 +679,38 @@ def _semantic_prompt_diagnostics(req: SceneImageRequest) -> dict:
 async def generate_scene_image_result(req: SceneImageRequest, client: httpx.AsyncClient) -> tuple[str | None, dict]:
     prompt = _build_prompt(req)
     semantic = _semantic_prompt_diagnostics(req)
-    if semantic["requiredTerms"] or semantic["forbiddenTerms"]:
-        return None, {
-            "ok": False,
-            "attempts": [{"ok": False, "errors": ["semantic_prompt_incomplete"], "semantic": semantic}],
-            "selectedAttempt": None,
-            "semantic": semantic,
-        }
-    provider = settings.imagegen_provider.strip().lower()
+    requested_mode = str(req.image_mode or "").strip().lower()
+    if requested_mode == "flux":
+        missing = local_imagegen_status()["modes"]["flux"]["missing"]
+        if missing:
+            return None, {
+                "ok": False,
+                "attempts": [{"ok": False, "errors": ["image_mode_unavailable"], "message": f"Flux mode is missing local components: {', '.join(missing)}"}],
+                "selectedAttempt": None,
+                "imageMode": "flux",
+            }
+    elif requested_mode in {"sd15", "sd1.5", "sd-1.5"}:
+        modes = local_imagegen_status()["modes"]["sd15"]
+        if not modes["available"]:
+            return None, {
+                "ok": False,
+                "attempts": [{"ok": False, "errors": ["image_mode_unavailable"], "message": "SD1.5 mode requires a configured ComfyUI workflow and checkpoint"}],
+                "selectedAttempt": None,
+                "imageMode": "sd15",
+            }
+    provider = (
+        "local" if requested_mode == "flux" else
+        "comfyui" if requested_mode in {"sd15", "sd1.5", "sd-1.5"} else
+        settings.imagegen_provider.strip().lower()
+    )
     attempts: list[dict] = []
-    max_attempts = max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
+    max_attempts = 1 if requested_mode == "flux" else max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
     for attempt in range(max_attempts):
         try:
             if provider in {"local", "local_then_ark"}:
                 img_bytes = await _call_local_flux(prompt, quality=req.quality, attempt=attempt)
+            elif provider in {"comfyui", "comfy"}:
+                img_bytes = await _call_comfyui(prompt, quality=req.quality, attempt=attempt)
             elif provider in {"ark", "seedream", "volcengine"}:
                 img_bytes = await _call_seedream(prompt, client)
             else:
@@ -520,7 +719,7 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
             quality = inspect_generated_image(img_bytes)
             quality["attempt"] = attempt + 1
             quality["semantic"] = semantic
-            quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, prompt)
+            quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, prompt, provider)
             attempts.append(quality)
             if quality["ok"]:
                 logger.info("[imagegen] %s provider=%s bytes=%d attempt=%d", req.scene_id, provider, len(img_bytes), attempt + 1)
@@ -555,7 +754,21 @@ async def generate_all_scene_images(requests: list[SceneImageRequest]) -> dict[s
 
 async def generate_all_scene_images_with_diagnostics(requests: list[SceneImageRequest]) -> tuple[dict[str, str | None], dict[str, dict]]:
     async with httpx.AsyncClient() as client:
-        results = await asyncio.gather(*[generate_scene_image_result(r, client) for r in requests])
+        results = []
+        total = len(requests)
+        for index, request in enumerate(requests, start=1):
+            started = asyncio.get_running_loop().time()
+            logger.info(
+                "[imagegen] scene %d/%d started: %s provider=%s quality=%s",
+                index, total, request.scene_id, settings.imagegen_provider, request.quality,
+            )
+            result = await generate_scene_image_result(request, client)
+            results.append(result)
+            logger.info(
+                "[imagegen] scene %d/%d finished: %s ok=%s elapsed=%.1fs",
+                index, total, request.scene_id, bool(result[1].get("ok")),
+                asyncio.get_running_loop().time() - started,
+            )
     return (
         {req.scene_id: result[0] for req, result in zip(requests, results)},
         {req.scene_id: result[1] for req, result in zip(requests, results)},
@@ -625,6 +838,7 @@ async def generate_action_board_with_diagnostics(
         "sourceHash": hashlib.sha256(board).hexdigest(),
         "promptHash": hashlib.sha256("\n".join((action.image_description for action in actions)).encode("utf-8")).hexdigest(),
         "provider": settings.imagegen_provider,
+        "imageMode": actions[0].image_mode or "default",
         "quality": "final" if final_board else "preview",
         "stage": "composed",
     }

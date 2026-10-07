@@ -98,10 +98,14 @@ function validateStaticFileUsage(code) {
   for (const match of [...code.matchAll(/\bstaticFile\s*\(\s*["']([^"']+)["']\s*\)/g)]) {
     if (!allowedAsset.test(match[1])) throw new Error(`Generated TSX references disallowed static asset: ${match[1]}`);
   }
+  const controlledLocals = new Set(
+    [...code.matchAll(/(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*(?:scene|reveal)\.referenceImageAsset\b/g)]
+      .map((match) => match[1]),
+  );
   for (const match of [...code.matchAll(/\bstaticFile\s*\(([^)]*)\)/g)]) {
     const arg = match[1].trim();
     if (/^["']/.test(arg)) continue;
-    if (!/^(?:HAND_ASSET|referenceImageAsset|scene\.referenceImageAsset|reveal\.asset|colorAsset)$/.test(arg)) {
+    if (!/^(?:HAND_ASSET|referenceImageAsset|scene\.referenceImageAsset|reveal\.asset|colorAsset|asset)$/.test(arg) && !controlledLocals.has(arg)) {
       throw new Error(`Generated TSX uses uncontrolled staticFile() argument: ${arg}`);
     }
   }

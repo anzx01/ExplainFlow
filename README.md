@@ -87,9 +87,9 @@ ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3
 SEEDREAM_MODEL=doubao-seedream-5-0-260128
 
 TTS_VOICE=zh-CN-XiaoxiaoNeural
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+CORS_ALLOWED_ORIGINS=http://localhost:3010,http://127.0.0.1:3010
 API_HOST=0.0.0.0
-API_PORT=8000
+API_PORT=8010
 LOG_LEVEL=INFO
 ```
 
@@ -100,8 +100,9 @@ LOG_LEVEL=INFO
 前端只需要知道 API 服务和渲染服务地址：
 
 ```env
-NEXT_PUBLIC_API_URL=http://localhost:8000
-NEXT_PUBLIC_RENDER_URL=http://localhost:3001
+NEXT_PUBLIC_API_URL=http://localhost:8010
+NEXT_PUBLIC_RENDER_URL=http://localhost:3002
+PORT=3010
 ```
 
 ### `apps/render/.env`
@@ -109,8 +110,8 @@ NEXT_PUBLIC_RENDER_URL=http://localhost:3001
 渲染服务负责 TTS、Remotion bundle、MP4 渲染和下载。Chrome / Chromium / Edge、ffmpeg 和字体路径会自动探测，通常不用手写本机绝对路径：
 
 ```env
-RENDER_PORT=3001
-PYTHON_API_URL=http://localhost:8000
+RENDER_PORT=3002
+PYTHON_API_URL=http://localhost:8010
 
 # 通常留空，服务会自动探测 Playwright / Chrome / Chromium / Edge。
 # REMOTION_BROWSER_EXECUTABLE=/absolute/path/to/chrome-or-chromium
@@ -132,7 +133,7 @@ PYTHON_API_URL=http://localhost:8000
 
 ```powershell
 cd services/api
-uv run uvicorn main:app --host 127.0.0.1 --port 8000
+uv run uvicorn main:app --host 127.0.0.1 --port 8010
 ```
 
 启动渲染服务：

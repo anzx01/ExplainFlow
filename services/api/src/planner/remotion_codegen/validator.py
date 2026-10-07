@@ -219,11 +219,20 @@ def _validate_static_file_usage(code: str) -> None:
         if not allowed_asset.match(asset):
             raise ValueError(f"Generated code references disallowed static asset: {asset}")
 
+    # LLMs often factor the controlled scene asset into a local variable
+    # before passing it to staticFile. Accept that equivalent form only when
+    # the assignment is visibly sourced from the storyboard scene asset.
+    controlled_locals = set(re.findall(
+        r"(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*[^;\n]*(?:scene|reveal)\.referenceImageAsset\b",
+        code,
+    ))
     for arg in re.findall(r"\bstaticFile\s*\(([^)]*)\)", code):
         value = arg.strip()
         if value.startswith(("'", '"')):
             continue
-        if value not in {"HAND_ASSET", "referenceImageAsset", "scene.referenceImageAsset", "reveal.asset", "colorAsset"}:
+        # ``asset`` is used by the deterministic fallback's ``assets.map``;
+        # the array is built exclusively from validated storyboard asset keys.
+        if value not in {"HAND_ASSET", "referenceImageAsset", "scene.referenceImageAsset", "reveal.asset", "colorAsset", "asset"} and value not in controlled_locals:
             raise ValueError(f"Generated code uses uncontrolled staticFile() argument: {value}")
 
 

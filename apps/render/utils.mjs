@@ -61,7 +61,7 @@ export function postJson(url, payload, timeoutMs = 300000) {
         });
       },
     );
-    req.setTimeout(timeoutMs, () => req.destroy(new Error(`${url} timed out`)));
+    if (timeoutMs > 0) req.setTimeout(timeoutMs, () => req.destroy(new Error(`${url} timed out after ${Math.ceil(timeoutMs / 1000)}s`)));
     req.on("error", reject);
     req.write(body);
     req.end();

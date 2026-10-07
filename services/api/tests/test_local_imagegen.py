@@ -7,11 +7,12 @@ from PIL import Image, ImageDraw
 sys.path.insert(0, str(Path(__file__).parents[1]))
 
 from src.core.config import settings
-from src.imagegen.service import SceneImageRequest, _build_local_prompt, _local_prompt, _local_seed, _semantic_prompt_diagnostics, compose_action_board, local_imagegen_status
+from src.imagegen.service import SceneImageRequest, _build_local_prompt, _comfy_workflow, _flux_prompt_with_lora, _local_prompt, _local_seed, _semantic_prompt_diagnostics, compose_action_board, local_imagegen_status
 from src.imagegen.quality import inspect_generated_image, normalize_whiteboard_image
 
 
 def test_local_imagegen_status_reports_missing_components(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(settings, "imagegen_provider", "local")
     model = tmp_path / "model.gguf"
     model.write_bytes(b"model")
     monkeypatch.setattr(settings, "local_imagegen_runtime", str(tmp_path / "missing.exe"))
@@ -22,6 +23,8 @@ def test_local_imagegen_status_reports_missing_components(monkeypatch, tmp_path:
     status = local_imagegen_status()
     assert not status["available"]
     assert status["missing"] == ["runtime", "vae", "clip_l", "t5xxl"]
+    assert status["timeoutSeconds"] == settings.local_imagegen_timeout_s
+    assert status["maxAttempts"] == settings.local_imagegen_max_attempts
 
 
 def test_local_prompt_removes_cloud_negative_prompt_and_caps_length():
@@ -31,6 +34,20 @@ def test_local_prompt_removes_cloud_negative_prompt_and_caps_length():
     assert "Negative prompt" not in result
     assert "cloud-only" not in result
     assert "no artist signature" in result
+
+
+def test_flux_lora_adds_trigger_and_cli_lora_tag(monkeypatch, tmp_path: Path):
+    lora = tmp_path / "chalkboard-flux.safetensors"
+    lora.write_bytes(b"lora")
+    monkeypatch.setattr(settings, "local_imagegen_lora_dir", str(tmp_path))
+    monkeypatch.setattr(settings, "local_imagegen_lora", lora.name)
+    monkeypatch.setattr(settings, "local_imagegen_lora_strength", 0.65)
+    monkeypatch.setattr(settings, "local_imagegen_lora_trigger", "ChalkBoardDrawing")
+
+    prompt = _flux_prompt_with_lora("a text-free lesson drawing of a brain")
+
+    assert prompt.startswith("ChalkBoardDrawing, <lora:chalkboard-flux:0.65>,")
+    assert "a text-free lesson drawing of a brain" in prompt
 
 
 def test_local_scene_prompt_keeps_action_before_style_noise(monkeypatch):
@@ -70,6 +87,48 @@ def test_local_scene_prompt_changes_subject_by_short_video_scene():
 def test_local_seed_is_stable_and_prompt_specific():
     assert _local_seed("one") == _local_seed("one")
     assert _local_seed("one") != _local_seed("two")
+
+
+def test_comfy_workflow_applies_configured_lora_and_trigger(monkeypatch, tmp_path: Path):
+    workflow_path = tmp_path / "workflow.json"
+    workflow_path.write_text(
+        '{"1":{"class_type":"CheckpointLoaderSimple","inputs":{"ckpt_name":"__EXPLAINFLOW_CHECKPOINT__"}},'
+        '"8":{"class_type":"LoraLoader","inputs":{"lora_name":"__EXPLAINFLOW_LORA__",'
+        '"strength_model":"__EXPLAINFLOW_LORA_STRENGTH__","strength_clip":"__EXPLAINFLOW_LORA_STRENGTH__"}},'
+        '"2":{"class_type":"CLIPTextEncode","inputs":{"text":"__EXPLAINFLOW_PROMPT__","clip":["8",1]}},'
+        '"5":{"class_type":"KSampler","inputs":{"model":["8",0]}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "comfyui_workflow", str(workflow_path))
+    monkeypatch.setattr(settings, "comfyui_checkpoint", "base.safetensors")
+    monkeypatch.setattr(settings, "comfyui_lora", "doodle.safetensors")
+    monkeypatch.setattr(settings, "comfyui_lora_strength", 0.8)
+    monkeypatch.setattr(settings, "comfyui_lora_trigger", "doodle, crayons")
+
+    workflow = _comfy_workflow("a hand drawn apple", "text", seed=1, width=512, height=512)
+
+    assert workflow["8"]["inputs"]["lora_name"] == "doodle.safetensors"
+    assert workflow["8"]["inputs"]["strength_model"] == 0.8
+    assert workflow["2"]["inputs"]["text"].startswith("doodle, crayons,")
+    assert workflow["5"]["inputs"]["model"] == ["8", 0]
+
+
+def test_comfy_workflow_bypasses_lora_when_not_configured(monkeypatch, tmp_path: Path):
+    workflow_path = tmp_path / "workflow.json"
+    workflow_path.write_text(
+        '{"1":{"class_type":"CheckpointLoaderSimple","inputs":{}},'
+        '"8":{"class_type":"LoraLoader","inputs":{}},'
+        '"2":{"class_type":"CLIPTextEncode","inputs":{"text":"__EXPLAINFLOW_PROMPT__","clip":["8",1]}},'
+        '"5":{"class_type":"KSampler","inputs":{"model":["8",0]}}}',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(settings, "comfyui_workflow", str(workflow_path))
+    monkeypatch.setattr(settings, "comfyui_lora", "")
+    workflow = _comfy_workflow("plain prompt", "", seed=1, width=512, height=512)
+
+    assert "8" not in workflow
+    assert workflow["2"]["inputs"]["clip"] == ["1", 1]
+    assert workflow["5"]["inputs"]["model"] == ["1", 0]
 
 
 def test_cooking_semantic_prompt_contract_distinguishes_stages_and_negatives():
@@ -157,6 +216,41 @@ def test_negative_comma_list_does_not_trigger_forbidden_term():
         "boiling water, dumplings, submerged, slotted spoon; no steamer, round buns, baozi, mantou, noodles",
     )
     assert _semantic_prompt_diagnostics(request)["forbiddenTerms"] == []
+
+
+def test_finished_dish_semantics_accept_chinese_storyboard_terms():
+    request = SceneImageRequest(
+        "scene_1", "mapo tofu", "\u6210\u54c1\u88c5\u76d8",
+        "\u6210\u54c1\u9ebb\u5a46\u8c46\u8150\u88c5\u76d8\u4e0a\u684c\uff0c\u767d\u8272\u8c46\u8150\u5757\u3001\u7ea2\u6cb9\u548c\u8471\u82b1\u6e05\u6670\u53ef\u89c1",
+    )
+    diagnostics = _semantic_prompt_diagnostics(request)
+    assert diagnostics["stage"] == "finished_dish"
+    assert diagnostics["requiredTerms"] == []
+
+
+def test_non_cooking_finished_scene_does_not_activate_cooking_contract():
+    request = SceneImageRequest(
+        "scene_1", "attention", "Finished workflow",
+        "A finished workflow diagram with the final result highlighted",
+    )
+    diagnostics = _semantic_prompt_diagnostics(request)
+    assert diagnostics == {"stage": None, "requiredTerms": [], "forbiddenTerms": []}
+
+
+def test_chinese_cooking_actions_satisfy_stage_contracts():
+    prep = SceneImageRequest("prep", "dumplings", "", "\u9762\u7c89\u52a0\u6c34\uff0c\u548c\u9762\u5e76\u63c9\u6210\u9762\u56e2")
+    prep_diag = _semantic_prompt_diagnostics(prep)
+    assert prep_diag["stage"] == "dough_prep"
+    assert prep_diag["requiredTerms"] == []
+
+    boil = SceneImageRequest("boiling", "dumplings", "", "\u997a\u5b50\u5728\u6cb8\u6c34\u4e2d\u6d6e\u8d77\uff0c\u7528\u6f0f\u52fa\u634e\u51fa\uff0c\u52a0\u51b7\u6c34")
+    boil_diag = _semantic_prompt_diagnostics(boil)
+    assert boil_diag["stage"] == "boiling"
+    assert boil_diag["requiredTerms"] == []
+
+
+
+
 
 
 def _png(draw_fn=None) -> bytes:

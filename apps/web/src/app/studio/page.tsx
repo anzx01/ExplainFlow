@@ -1,12 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { LeftPanel } from "@/components/studio/LeftPanel";
 import { generateGraph, generateStoryboard } from "@/lib/api";
 import { ACTIVE_PEN_STYLE_ID, ACTIVE_VIDEO_STYLE_ID, penStyleLabel, videoStyleLabel } from "@/lib/constants";
-import type { PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
+import type { ImageGenerationMode, PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
 
 type GenerationStage = "idle" | "graph" | "storyboard";
 
@@ -19,6 +19,16 @@ export default function StudioPage() {
   const [targetDuration, setTargetDuration] = useState(120);
   const [videoStyle, setVideoStyle] = useState<VideoStyleId>(ACTIVE_VIDEO_STYLE_ID);
   const [penStyle, setPenStyle] = useState<PenStyleId>(ACTIVE_PEN_STYLE_ID);
+  const [imageMode, setImageMode] = useState<ImageGenerationMode>(() => {
+    return "sd15";
+  });
+  useEffect(() => {
+    setImageMode(window.localStorage.getItem("explainflow_image_mode") === "flux" ? "flux" : "sd15");
+  }, []);
+  const handleImageModeChange = (mode: ImageGenerationMode) => {
+    setImageMode(mode);
+    window.localStorage.setItem("explainflow_image_mode", mode);
+  };
 
   const handleDurationChange = (duration: number) => {
     setTargetDuration(duration);
@@ -63,7 +73,7 @@ export default function StudioPage() {
       setGenerationStage("storyboard");
       const requestedStyle = style === ACTIVE_VIDEO_STYLE_ID ? style : ACTIVE_VIDEO_STYLE_ID;
       const requestedPen = pen === ACTIVE_PEN_STYLE_ID ? pen : ACTIVE_PEN_STYLE_ID;
-      const sb = await generateStoryboard(g, targetDuration, requestedStyle, requestedPen);
+      const sb = await generateStoryboard(g, targetDuration, requestedStyle, requestedPen, imageMode);
       setStoryboard(sb);
       sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
       router.push("/storyboard");
@@ -75,6 +85,8 @@ export default function StudioPage() {
   };
 
   const isGenerating = generationStage !== "idle";
+  const generationProgress = generationStage === "graph" ? 28 : generationStage === "storyboard" ? 72 : 0;
+  const generationLabel = generationStage === "graph" ? "分析主题与知识结构" : generationStage === "storyboard" ? "生成分镜与旁白" : "准备生成";
 
   return (
     <div className="flex flex-col h-screen bg-[--bg-base] text-[--fg-default] overflow-hidden">
@@ -140,6 +152,8 @@ export default function StudioPage() {
             onVideoStyleChange={handleStyleChange}
             penStyle={penStyle}
             onPenStyleChange={handlePenStyleChange}
+            imageMode={imageMode}
+            onImageModeChange={handleImageModeChange}
           />
         </div>
 
@@ -168,6 +182,27 @@ export default function StudioPage() {
                     : "填写左侧内容后，系统会直接产出可编辑的分镜脚本。"}
                 </p>
               </div>
+              {isGenerating && (
+                <div className="space-y-2 text-left" aria-live="polite">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-[--fg-muted]">{generationLabel}</span>
+                    <span className="font-mono text-purple-300">{generationProgress}%</span>
+                  </div>
+                  <div
+                    className="h-2 w-full overflow-hidden rounded-full bg-[--bg-elevated]"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={generationProgress}
+                    aria-label={generationLabel}
+                  >
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-purple-500 to-pink-500 transition-[width] duration-500 ease-out"
+                      style={{ width: `${generationProgress}%` }}
+                    />
+                  </div>
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3 text-left">
                 <div className="rounded-lg border border-[--border-default] bg-[--bg-surface] p-3">
                   <p className="text-xs font-semibold text-[--fg-muted]">目标时长</p>

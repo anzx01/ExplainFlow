@@ -6,6 +6,12 @@ from .service import SceneImageRequest, generate_action_board_with_diagnostics, 
 router = APIRouter(prefix="/imagegen", tags=["imagegen"])
 
 
+@router.get("", include_in_schema=False)
+@router.get("/", include_in_schema=False)
+async def imagegen_root() -> dict:
+    return {"ok": True, "service": "imagegen", **local_imagegen_status()}
+
+
 @router.get("/status")
 async def imagegen_status() -> dict:
     return local_imagegen_status()
@@ -22,6 +28,7 @@ class SceneImageItem(BaseModel):
     visual_style: str = "teacher_whiteboard"
     pen_style: str = "marker"
     quality: str = "final"
+    image_mode: str | None = None
 
 
 class GenerateImagesRequest(BaseModel):
@@ -68,6 +75,7 @@ async def generate_scene_images(req: GenerateImagesRequest) -> GenerateImagesRes
             visual_style=scene.visual_style,
             pen_style=scene.pen_style,
             quality="preview" if scene.quality == "preview" else "final",
+            image_mode=scene.image_mode,
         )
         for scene in req.scenes
     ]

@@ -182,7 +182,7 @@ function collectStoryboardQaChecks(storyboard) {
     "reference_images", missingReferences.length === 0, missingReferences.length ? "warning" : "info",
     missingReferences.length ? `${missingReferences.length} direct/hybrid scene(s) have no reference image asset` : "Direct/hybrid scenes have reference image assets or local images",
     missingReferences.length ? { scenes: missingReferences.slice(0, 8) } : null,
-    missingReferences.length ? "Regenerate scene images or check Seedream credentials and /imagegen/scenes logs." : null,
+    missingReferences.length ? "Regenerate scene images or check the configured image provider and /imagegen/scenes logs." : null,
   ));
 
   const whiteboardScenes = scenes.filter((scene) => sceneVideoStyle(scene, storyboard) === ACTIVE_VIDEO_STYLE);

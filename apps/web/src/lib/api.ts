@@ -1,6 +1,6 @@
-import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId } from "./types";
+import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId, ImageGenerationMode } from "./types";
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -33,7 +33,8 @@ export async function generateStoryboard(
   graph: ExplainGraph,
   targetDuration = 120,
   videoStyle: VideoStyleId = "whiteboard",
-  penStyle: PenStyleId = "marker"
+  penStyle: PenStyleId = "marker",
+  imageMode: ImageGenerationMode = "sd15"
 ): Promise<Storyboard> {
   const data = await post<{ storyboard: Storyboard }>("/planner/storyboard", {
     graph,
@@ -41,7 +42,7 @@ export async function generateStoryboard(
     video_style: videoStyle,
     pen_style: penStyle,
   });
-  return data.storyboard;
+  return { ...data.storyboard, image_generation_mode: imageMode } as Storyboard;
 }
 
 export async function listJobs(): Promise<RenderJobSummary[]> {
@@ -66,7 +67,7 @@ export async function updateJobTopic(jobId: string, topic: string): Promise<void
   });
 }
 
-export async function generateSceneImage(storyboard: Storyboard, scene: Scene): Promise<string> {
+export async function generateSceneImage(storyboard: Storyboard, scene: Scene, imageMode: ImageGenerationMode = "sd15"): Promise<string> {
   const sceneId = scene.id;
   const data = await post<{ images: Record<string, string | null> }>("/imagegen/scenes", {
     scenes: [
@@ -81,6 +82,7 @@ export async function generateSceneImage(storyboard: Storyboard, scene: Scene): 
         visual_style: scene.visual_style || "teacher_whiteboard",
         pen_style: scene.pen_style || storyboard.pen_style || "marker",
         quality: "preview",
+        image_mode: imageMode,
       },
     ],
   });

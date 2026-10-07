@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { descriptionForScene } from "./trace-inject.mjs";
+import { descriptionForScene, imagegenRequestTimeoutMs } from "./trace-inject.mjs";
 import { joinConnectedPaths } from "./trace-algo.mjs";
+import { shouldGenerateReferenceImage } from "./scene-strategy.mjs";
 
 test("builds a scene-specific image description from visual intent and narration", () => {
   const description = descriptionForScene(
@@ -28,6 +29,41 @@ test("preserves an explicit storyboard image description", () => {
     descriptionForScene({ topic: "short video harms" }, { title: "Reward", image_description: expected }),
     expected,
   );
+});
+
+test("generates artwork for described whiteboard trace scenes", () => {
+  assert.equal(shouldGenerateReferenceImage({
+    image_description: "A phone, a distracted person, and a clock",
+    board_mode: "whiteboard",
+    hand_usage: "trace",
+    visual_style: "teacher_whiteboard",
+    video_style: "whiteboard",
+  }), true);
+  assert.equal(shouldGenerateReferenceImage({
+    image_description: "A chalkboard formula",
+    board_mode: "chalkboard",
+    hand_usage: "trace",
+    visual_style: "math_chalkboard",
+  }), false);
+});
+
+test("allows enough time for serial local image generation and retries", () => {
+  assert.equal(
+    imagegenRequestTimeoutMs({ provider: "local", timeoutSeconds: 600, maxAttempts: 3 }, 4),
+    7320000,
+  );
+});
+
+test("includes the local-then-Ark fallback window", () => {
+  assert.equal(
+    imagegenRequestTimeoutMs({ provider: "local_then_ark", timeoutSeconds: 600, maxAttempts: 2 }, 2),
+    2760000,
+  );
+});
+
+test("uses a bounded cloud-provider default and honors explicit timeout overrides", () => {
+  assert.equal(imagegenRequestTimeoutMs({ provider: "ark" }, 4), 840000);
+  assert.equal(imagegenRequestTimeoutMs({ provider: "local" }, 4, 90000), 90000);
 });
 
 test("joins skeleton segments at shared endpoints without dropping paths", () => {

@@ -4,27 +4,27 @@ title ExplainFlow
 
 echo ========================================
 echo   ExplainFlow Dev Start
-echo   API:    http://localhost:8000
-echo   Web:    http://localhost:3000
-echo   Render: http://localhost:3001
+echo   API:    http://localhost:8010
+echo   Web:    http://localhost:3010
+echo   Render: http://localhost:3002
 echo ========================================
 echo.
 
-for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":8000 " ^| findstr "LISTENING"') do taskkill /PID %%p /F >nul 2>&1
-for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":3000 " ^| findstr "LISTENING"') do taskkill /PID %%p /F >nul 2>&1
-for /f "tokens=5" %%p in ('netstat -ano 2^>nul ^| findstr ":3001 " ^| findstr "LISTENING"') do taskkill /PID %%p /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq EF-API" /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq EF-Web" /F >nul 2>&1
-taskkill /FI "WINDOWTITLE eq EF-Render" /F >nul 2>&1
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-explainflow-processes.ps1"
 timeout /t 1 /nobreak >nul
 
-start "EF-API" cmd /k "cd /d %~dp0..\services\api && uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
-timeout /t 2 /nobreak >nul
-start "EF-Web" cmd /k "cd /d %~dp0..\apps\web && node_modules\.bin\next dev --turbopack"
+start "EF-API" cmd /k "cd /d %~dp0..\services\api && uv run uvicorn main:app --host :: --port 8010 --reload"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-for-api.ps1" -Port 8010 -TimeoutSeconds 45
+if errorlevel 1 (
+  echo API did not become ready. Check the EF-API window for the startup error.
+  pause
+  exit /b 1
+)
+start "EF-Web" cmd /k "cd /d %~dp0..\apps\web && node_modules\.bin\next dev --turbopack --port 3010"
 start "EF-Render" cmd /k "cd /d %~dp0..\apps\render && node server.mjs"
 
-echo API     http://localhost:8000
-echo Web     http://localhost:3000
-echo Render  http://localhost:3001
+echo API     http://localhost:8010
+echo Web     http://localhost:3010
+echo Render  http://localhost:3002
 echo.
 pause

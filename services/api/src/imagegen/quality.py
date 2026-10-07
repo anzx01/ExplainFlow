@@ -93,9 +93,15 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
                 ocr_text = " ".join((result.stdout or "").split())[:200]
             except (OSError, subprocess.TimeoutExpired):
                 warnings.append("ocr_unavailable")
-        tokens = re.findall(r"[A-Za-z0-9]{3,}", ocr_text)
-        if tokens:
-            errors.append("readable_text_or_signature")
+        # Tesseract frequently hallucinates isolated short tokens from doodle
+        # strokes (for example ``4 3) Yh``). Treat text as a signature only
+        # when OCR has enough coherent evidence to indicate an actual label.
+        tokens = re.findall(r"[A-Za-z]{4,}|[A-Za-z0-9]{6,}", ocr_text)
+        if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens):
+            # OCR is advisory for generated illustrations. Tesseract often
+            # reads line intersections and texture as short pseudo-words;
+            # rejecting the image here can discard an otherwise valid scene.
+            warnings.append("possible_readable_text_or_signature")
     return {
         "ok": not errors,
         "errors": errors,

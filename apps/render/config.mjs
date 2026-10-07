@@ -67,10 +67,13 @@ function isInsidePath(child, parent) {
   return rel === "" || (!!rel && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel));
 }
 
-export const PORT = Number(process.env.RENDER_PORT ?? 3001);
+export const PORT = Number(process.env.RENDER_PORT ?? 3002);
 export const FPS = 30;
-export const WIDTH = 1920;
-export const HEIGHT = 1080;
+// 720p is sufficient for whiteboard teaching videos and keeps SVG rasterizing
+// and H.264 encoding practical on local hardware. Override for delivery with
+// REMOTION_WIDTH/REMOTION_HEIGHT when a larger master is required.
+export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1280);
+export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 720);
 export const OUTPUT_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_OUTPUT_DIR, join(ROOT_DIR, "outputs"));
 export const AUDIO_DIR = join(OUTPUT_DIR, "audio");
 export const MUSIC_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_MUSIC_DIR, join(OUTPUT_DIR, "music"));
@@ -78,18 +81,21 @@ export const JOBS_FILE = join(OUTPUT_DIR, "jobs.json");
 export const GENERATED_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_RENDER_GENERATED_DIR, join(__dirname, "generated"));
 export const PUBLIC_DIR = join(__dirname, "public");
 export const PUBLIC_GENERATED_DIR = join(PUBLIC_DIR, "generated");
-export const PYTHON_API = process.env.PYTHON_API_URL ?? "http://localhost:8000";
+// On Windows, localhost can resolve to a stale IPv4 listener while ExplainFlow
+// is served by the IPv6 dual-stack API process. Pin the project API explicitly.
+export const PYTHON_API = process.env.PYTHON_API_URL ?? "http://[::1]:8010";
+export const IMAGEGEN_REQUEST_TIMEOUT_MS = Number(process.env.REMOTION_IMAGEGEN_TIMEOUT_MS ?? 0);
 export const COMPOSITION_ID = "GeneratedVideo";
 export const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
-export const DEFAULT_RENDER_CONCURRENCY = Math.min(8, Math.max(4, availableParallelism() - 2));
+export const DEFAULT_RENDER_CONCURRENCY = 2;
 export const RENDER_CONCURRENCY = Number.isFinite(Number(process.env.REMOTION_CONCURRENCY))
   ? Math.max(1, Number(process.env.REMOTION_CONCURRENCY))
   : DEFAULT_RENDER_CONCURRENCY;
 export const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
   ? Math.max(1, Math.min(51, Number(process.env.REMOTION_CRF)))
-  : 8;
-export const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "slow";
-export const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv444p";
+  : 18;
+export const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "veryfast";
+export const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv420p";
 export const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
 export const SKIP_IMAGE_TRACE = process.env.SKIP_IMAGE_TRACE === "1";
 export const ENABLE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_SEEDREAM_REFERENCES !== "0";
@@ -101,15 +107,15 @@ export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IM
 export const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 export const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
-  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 520),
+  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 48),
 );
 export const RASTER_REVEAL_TRACE_WIDTH = Math.max(
   240,
-  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_WIDTH ?? 960),
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_WIDTH ?? 720),
 );
 export const RASTER_REVEAL_TRACE_HEIGHT = Math.max(
   180,
-  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_HEIGHT ?? 540),
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_HEIGHT ?? 405),
 );
 export const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
   640,

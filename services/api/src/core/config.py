@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     # IMAGEGEN_PROVIDER through its environment template.
     # CORS
     cors_allowed_origins: str = Field(
-        default="http://localhost:3000,http://127.0.0.1:3000",
+        default="http://localhost:3010,http://127.0.0.1:3010",
         env="CORS_ALLOWED_ORIGINS",
     )
 
@@ -26,10 +26,17 @@ class Settings(BaseSettings):
     llm_json_parse_retries: int = Field(default=2, env="LLM_JSON_PARSE_RETRIES")
 
     # Image generation. Local Flux is the default; Ark remains opt-in.
-    imagegen_provider: str = Field(default="local", env="IMAGEGEN_PROVIDER")
+    imagegen_provider: str = Field(default="comfyui", env="IMAGEGEN_PROVIDER")
     comfyui_base_url: str = Field(default="http://127.0.0.1:8188", env="COMFYUI_BASE_URL")
     comfyui_workflow: str = Field(default=r"", env="COMFYUI_WORKFLOW")
     comfyui_timeout_s: float = Field(default=600, env="COMFYUI_TIMEOUT_S")
+    comfyui_checkpoint: str = Field(default="meinaPastelV5_bakedVAE.safetensors", env="COMFYUI_CHECKPOINT")
+    comfyui_lora: str = Field(default="", env="COMFYUI_LORA")
+    comfyui_lora_strength: float = Field(default=0.8, env="COMFYUI_LORA_STRENGTH")
+    comfyui_lora_trigger: str = Field(default="doodle, messy, stickfigure, crayola, crayons, colored chalk, scribble", env="COMFYUI_LORA_TRIGGER")
+    comfyui_client_id: str = Field(default="explainflow", env="COMFYUI_CLIENT_ID")
+    comfyui_checkpoint: str = Field(default="meinaPastelV5_bakedVAE.safetensors", env="COMFYUI_CHECKPOINT")
+    comfyui_client_id: str = Field(default="explainflow", env="COMFYUI_CLIENT_ID")
     local_imagegen_runtime: str = Field(default=r"D:\ck\04-第三方库与二进制依赖\stable-diffusion-cpp-bin\vulkan\sd-cli.exe", env="LOCAL_IMAGEGEN_RUNTIME")
     local_imagegen_model: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\gguf\flux1-schnell-Q5_K_S.gguf", env="LOCAL_IMAGEGEN_MODEL")
     local_imagegen_vae: str = Field(default=r"E:\MYLLM\flux1-schnell-fp8\extracted\vae\diffusion_pytorch_model.safetensors", env="LOCAL_IMAGEGEN_VAE")
@@ -45,6 +52,15 @@ class Settings(BaseSettings):
     local_imagegen_preview_width: int = Field(default=512, env="LOCAL_IMAGEGEN_PREVIEW_WIDTH")
     local_imagegen_preview_height: int = Field(default=512, env="LOCAL_IMAGEGEN_PREVIEW_HEIGHT")
     local_imagegen_steps: int = Field(default=4, env="LOCAL_IMAGEGEN_STEPS")
+    local_imagegen_guidance: float = Field(default=3.5, env="LOCAL_IMAGEGEN_GUIDANCE")
+    local_imagegen_lora_dir: str = Field(default=r"E:\MYLLM\loras", env="LOCAL_IMAGEGEN_LORA_DIR")
+    local_imagegen_lora: str = Field(default="", env="LOCAL_IMAGEGEN_LORA")
+    local_imagegen_lora_strength: float = Field(default=0.65, env="LOCAL_IMAGEGEN_LORA_STRENGTH")
+    local_imagegen_lora_trigger: str = Field(default="ChalkBoardDrawing", env="LOCAL_IMAGEGEN_LORA_TRIGGER")
+    local_imagegen_flux_width: int = Field(default=768, env="LOCAL_IMAGEGEN_FLUX_WIDTH")
+    local_imagegen_flux_height: int = Field(default=768, env="LOCAL_IMAGEGEN_FLUX_HEIGHT")
+    local_imagegen_flux_preview_width: int = Field(default=512, env="LOCAL_IMAGEGEN_FLUX_PREVIEW_WIDTH")
+    local_imagegen_flux_preview_height: int = Field(default=512, env="LOCAL_IMAGEGEN_FLUX_PREVIEW_HEIGHT")
     local_imagegen_max_attempts: int = Field(default=3, env="LOCAL_IMAGEGEN_MAX_ATTEMPTS")
     local_imagegen_timeout_s: float = Field(default=600, env="LOCAL_IMAGEGEN_TIMEOUT_S")
 
@@ -58,7 +74,7 @@ class Settings(BaseSettings):
 
     # Server
     api_host: str = Field(default="0.0.0.0", env="API_HOST")
-    api_port: int = Field(default=8000, env="API_PORT")
+    api_port: int = Field(default=8010, env="API_PORT")
 
     # Logging
     log_level: str = Field(default="INFO", env="LOG_LEVEL")

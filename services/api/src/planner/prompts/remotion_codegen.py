@@ -76,6 +76,7 @@ Hard requirements:
 - Do not use default exports.
 - Use only imports from "react" and "remotion".
 - Do not import local files, component libraries, templates, CSS, npm packages, images, fonts, or helper modules. The asset exceptions are `staticFile("hand-real-pen.png")` for the hand and controlled job-local `staticFile(scene.referenceImageAsset)` when a storyboard scene includes rasterReveal/referenceImageAsset.
+- If you assign `scene.referenceImageAsset` or `reveal.referenceImageAsset` to a local variable first, that variable remains controlled; never pass arbitrary props, user input, or an unrelated variable to `staticFile()`.
 - Do not use CSS animations/transitions. All motion must use Remotion frame APIs: useCurrentFrame(), interpolate(), Easing, spring(), Sequence, AbsoluteFill.
 - The TSX must explicitly use useCurrentFrame(), Sequence, and at least one of interpolate() or spring().
 - Every scene must draw text and shapes over time. Define inline helper components such as HandText, DrawPath, SketchBubble, SketchArrow, or DiagramStroke inside the same TSX module.

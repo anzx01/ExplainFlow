@@ -40,6 +40,11 @@ app.include_router(narration_router)
 app.include_router(render_router)
 
 
+@app.get("/")
+async def root() -> dict:
+    return {"ok": True, "service": "explainflow-api", "health": "/health", "imagegen": "/imagegen/"}
+
+
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "version": "0.1.0"}

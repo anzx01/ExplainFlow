@@ -1,4 +1,5 @@
 import contextlib
+import os
 from collections.abc import AsyncIterator
 
 import httpx
@@ -21,7 +22,7 @@ from .engine_adapter import PREVIEW_DIR, engine_status, render_engine_preview
 
 router = APIRouter(prefix="/render", tags=["render"])
 
-RENDER_SERVER = "http://localhost:3001"
+RENDER_SERVER = os.getenv("RENDER_SERVER_URL", "http://localhost:3002")
 
 
 @router.get("/engine/status")

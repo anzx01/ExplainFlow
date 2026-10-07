@@ -160,6 +160,10 @@ export function shouldGenerateReferenceImage(scene) {
   const explicit = explicitRasterStrategy(scene);
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
+  // A storyboard image description is an explicit request for visual artwork.
+  // Whiteboard trace mode still needs the generated raster as its image layer;
+  // the hand and drawOps provide the reveal animation on top of it.
+  if (scene?.image_description ?? scene?.imageDescription) return true;
   if (explicit === "direct") return true;
   if (
     explicit === "trace" ||

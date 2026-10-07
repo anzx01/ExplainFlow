@@ -15,6 +15,7 @@ export type VideoStyleId =
   | "howto_demo";
 
 export type PenStyleId = "no_hand" | "pen" | "marker" | "fountain_pen";
+export type ImageGenerationMode = "sd15" | "flux";
 
 // ── Explain Graph ──────────────────────────────────────────────
 export type NodeType = "concept" | "formula" | "example" | "conclusion" | "process";
@@ -217,6 +218,7 @@ export interface Scene {
 }
 
 export interface Storyboard {
+  image_generation_mode?: ImageGenerationMode;
   topic: string;
   total_duration_estimate: number;
   scenes: Scene[];

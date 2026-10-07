@@ -4,12 +4,12 @@ import { useEffect, useState, useCallback } from "react";
 import Link from "next/link";
 import { StoryboardView } from "@/components/storyboard/StoryboardView";
 import { generateSceneImage, synthesizeSceneAudio } from "@/lib/api";
-import type { BackgroundMusicTrack, RenderJobStatus, Storyboard } from "@/lib/types";
+import type { BackgroundMusicTrack, ImageGenerationMode, RenderJobStatus, Storyboard } from "@/lib/types";
 import { elapsedSeconds, estimateRemainingSeconds, etaLabel } from "@/lib/renderEstimate";
 
 import { RENDER_URL, penStyleLabel, videoStyleLabel } from "@/lib/constants";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
 type RenderState = "idle" | "submitting" | "polling" | "done" | "failed";
 
@@ -90,7 +90,7 @@ function RenderButton({
         body: JSON.stringify({
           storyboard,
           voice: "xiaoxiao",
-          resolution: "1080p",
+          resolution: "720p",
           subtitles_enabled: subtitlesEnabled,
           background_music_enabled: backgroundMusicEnabled,
           background_music_id: backgroundMusicId,
@@ -266,6 +266,7 @@ export default function StoryboardPage() {
   const [selectedMusicId, setSelectedMusicId] = useState("");
   const [musicError, setMusicError] = useState<string | null>(null);
   const [sceneActionError, setSceneActionError] = useState<string | null>(null);
+  const [imageMode, setImageMode] = useState<ImageGenerationMode>("sd15");
   const [busySceneAction, setBusySceneAction] = useState<string | null>(null);
   const backgroundMusicVolume = 0.12;
 
@@ -276,6 +277,7 @@ export default function StoryboardPage() {
         const sb = JSON.parse(saved) as Storyboard;
         sb.topic = sb.topic.replace(/\x1b\[[0-9;]*m/g, "").trim();
         setStoryboard(sb);
+        setImageMode(sb.image_generation_mode === "flux" ? "flux" : "sd15");
       } catch {
         // ignore parse errors, keep demo
       }
@@ -313,7 +315,7 @@ export default function StoryboardPage() {
 
   const handleRegenerateSceneImage = async (scene: Storyboard["scenes"][number]) => {
     await withSceneAction(scene.id, "image", async () => {
-      const imageUrl = await generateSceneImage(storyboard, scene);
+      const imageUrl = await generateSceneImage(storyboard, scene, imageMode);
       persistStoryboard((current) => ({
         ...current,
         scenes: current.scenes.map((item) =>
