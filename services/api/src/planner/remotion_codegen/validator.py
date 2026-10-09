@@ -3,7 +3,7 @@ import re
 from ..models import Storyboard
 
 ALLOWED_IMPORTS = {"react", "remotion"}
-HAND_ASSET = "hand-srt-drawing.png"
+HAND_ASSET = "hand-real-pen.png"
 
 FORBIDDEN_CODE_TOKENS = (
     "from \"./",

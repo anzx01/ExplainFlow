@@ -12,7 +12,7 @@ interface Props {
 
 const TITLE_FRAMES = 80; // ~2.7s 标题卡
 
-function TitleCard({ topic }: { topic: string }) {
+function TitleCard({ topic, imageUrl }: { topic: string; imageUrl?: string | null }) {
   const frame = useCurrentFrame();
 
   const subtitleOpacity = interpolate(frame, [45, 65], [0, 1], {
@@ -27,6 +27,13 @@ function TitleCard({ topic }: { topic: string }) {
     extrapolateRight: "clamp",
   });
 
+  // 主题插图淡入
+  const imageOpacity = interpolate(frame, [0, 25], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.out(Easing.ease),
+  });
+
   return (
     <AbsoluteFill style={{ background: COLORS.bg }}>
       {/* 淡色网格线背景 */}
@@ -39,6 +46,35 @@ function TitleCard({ topic }: { topic: string }) {
         ))}
       </svg>
 
+      {/* 主题插图（如果有） */}
+      {imageUrl && (
+        <div
+          style={{
+            position: "absolute",
+            right: 140,
+            top: 180,
+            width: 520,
+            height: 520,
+            opacity: imageOpacity,
+            borderRadius: 16,
+            overflow: "hidden",
+            border: `3px solid ${COLORS.lineGray}`,
+            background: "#fff",
+          }}
+        >
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              backgroundImage: `url(${imageUrl})`,
+              backgroundSize: "cover",
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "center",
+            }}
+          />
+        </div>
+      )}
+
       {/* 主标题（手写逐字） */}
       <SketchText
         text={topic}
@@ -49,14 +85,14 @@ function TitleCard({ topic }: { topic: string }) {
         fontSize={120}
         color={COLORS.ink}
         bold
-        maxWidth={1640}
+        maxWidth={imageUrl ? 1080 : 1640}
       />
 
       {/* 下划线（标题写完后画） */}
       <SketchUnderline
         x={140}
         y={530}
-        width={Math.min(1640, topic.length * 68 + 60)}
+        width={Math.min(imageUrl ? 1080 : 1640, topic.length * 68 + 60)}
         startFrame={40}
         durationFrames={TITLE_FRAMES - 40}
         color={COLORS.blue}
@@ -87,7 +123,7 @@ export const WhiteboardVideo: React.FC<Props> = ({ storyboard }) => {
   return (
     <Series>
       <Series.Sequence durationInFrames={TITLE_FRAMES}>
-        <TitleCard topic={storyboard.topic} />
+        <TitleCard topic={storyboard.topic} imageUrl={storyboard.titleImageUrl} />
       </Series.Sequence>
 
       {storyboard.scenes.map((scene) => {

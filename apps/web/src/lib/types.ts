@@ -229,6 +229,7 @@ export interface Storyboard {
   palette_id?: string | null;
   style_fingerprint?: string | null;
   character_fingerprint?: string | null;
+  titleImageUrl?: string | null;  // 标题卡片的主题插图
 }
 
 // ── Render Jobs ─────────────────────────────────────────────────

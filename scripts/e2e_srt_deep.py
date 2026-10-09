@@ -106,7 +106,7 @@ def main() -> int:
     tsx = generated_tsx.read_text(encoding="utf-8") if generated_tsx.exists() else ""
     report["checks"]["pairedInkColor"] = '"phase":"ink"' in tsx and '"phase":"color"' in tsx and "colorOpId" in tsx
     report["checks"]["contractMaskedRaster"] = "mask={maskIdForOp(scene, op)" in tsx
-    report["checks"]["croppedHand"] = "const HAND_WIDTH = 282" in tsx and "const PEN_TIP_X = 0" in tsx
+    report["checks"]["croppedHand"] = "const HAND_WIDTH = 282" in tsx and "const PEN_TIP_X = 198" in tsx and "hand-real-pen.png" in tsx
     if tsx:
         (OUT / "compiled.tsx").write_text(tsx, encoding="utf-8")
 

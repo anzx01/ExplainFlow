@@ -58,12 +58,13 @@ function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
   const idMatch = String(scene?.id ?? "").match(/(\d+)$/);
   const sceneNumber = Number(idMatch?.[1] ?? sceneIndex);
   if (!Number.isInteger(sceneNumber) || sceneNumber < 0 || sceneNumber > 5) return null;
-  const imagePath = join(HANDDRAW_TOPIC_ASSET_DIR, `scene${sceneNumber}.png`);
+  const imagePath = join(HANDDRAW_TOPIC_ASSET_DIR, `semantic-scene${sceneNumber}.png`);
   return existsSync(imagePath) ? readFileSync(imagePath) : null;
 }
 
 function imageCacheKey(storyboard, scene) {
   const payload = {
+    renderAssetMode: "semantic-topic-plates-v5-clear-subjects",
     topic: storyboard?.topic ?? "",
     id: scene?.id ?? "",
     title: scene?.title ?? "",
@@ -72,6 +73,42 @@ function imageCacheKey(storyboard, scene) {
     videoStyle: scene?.video_style ?? scene?.videoStyle ?? "",
   };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
+}
+
+function shouldTraceReferenceScene(scene) {
+  const handUsage = sceneHandUsage(scene);
+  const boardMode = sceneBoardMode(scene);
+  const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").trim().toLowerCase();
+  const visualStyle = sceneVisualStyle(scene);
+  if (handUsage !== "trace") return false;
+  if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
+  return !/(direct|finished|static|present|photo|show|annotate)/i.test(strategy);
+}
+
+export function imageGenerationDescription(storyboard, scene) {
+  const base = descriptionForScene(storyboard, scene);
+  const intents = (scene.audioSegments ?? scene.audio_segments ?? [])
+    .map((segment) => segment.drawIntent ?? segment.draw_intent)
+    .filter(Boolean)
+    .join("; ");
+  const beats = (scene.visual_beats ?? scene.visualBeats ?? [])
+    .map((beat) => beat.draw_intent ?? beat.drawIntent ?? beat.narration)
+    .filter(Boolean)
+    .join("; ");
+  const context = [
+    `topic: ${storyboard?.topic ?? ""}`,
+    `scene title: ${scene?.title ?? ""}`,
+    `learning goal: ${scene?.learning_goal ?? scene?.learningGoal ?? ""}`,
+    intents && `visual action: ${intents}`,
+    beats && `visual beats: ${beats}`,
+  ].filter(Boolean).join(". ");
+  return [
+    "Create one unmistakable hand-drawn educational illustration",
+    context,
+    `main visual description: ${base}`,
+    "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; use one clear visual metaphor tied to the narration, with 2-5 large recognizable objects and their physical interaction",
+    "Do not substitute a generic face, abstract icon, decorative shapes, or an unrelated stock illustration; no readable text, labels, arrows, callouts, logos, or watermark",
+  ].join(". ");
 }
 
 function rewriteCachedPaths(value, fromPrefix, toPrefix) {
@@ -125,15 +162,15 @@ function saveImageCache(storyboard, scene, jobId, result) {
   writeFileSync(join(cacheDir, "manifest.json"), JSON.stringify({ files, result: normalized }), "utf8");
 }
 
-function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
-  return scenes
+export function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
+  const scored = scenes
     .filter(
       (scene) =>
         (scene.image_description ?? scene.imageDescription) && shouldGenerateReferenceImage(scene) &&
         sceneHandUsage(scene) !== "none" && sceneBoardMode(scene) !== "chalkboard" &&
         sceneVisualStyle(scene) !== "math_chalkboard" &&
         !localImageSceneIds.has(scene.id) && !rasterBySceneId[scene.id] &&
-        !scene.rasterReveal && !scene.raster_reveal && !scene.trace_strokes && !scene.traceStrokes,
+        !scene.rasterReveal && !scene.raster_reveal,
     )
     .map((scene, index) => {
       const text = `${scene.title ?? ""} ${scene.learning_goal ?? ""} ${scene.image_description ?? ""} ${
@@ -167,8 +204,21 @@ function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySceneId) {
       return { scene, index, score };
     })
     .sort((a, b) => b.score - a.score || a.index - b.index)
-    .slice(0, IMAGE_TRACE_MAX_SCENES)
-    .map((item) => item.scene);
+  // Explicit reference/hybrid scenes are contractual: the default cap only
+  // limits optional artwork so a low-latency setting cannot omit required art.
+  const required = scored.filter((item) => isRequiredReferenceScene(item.scene));
+  const optional = scored.filter((item) => !isRequiredReferenceScene(item.scene));
+  return [
+    ...required,
+    ...optional.slice(0, Math.max(0, IMAGE_TRACE_MAX_SCENES - required.length)),
+  ].map((item) => item.scene);
+}
+
+export function isRequiredReferenceScene(scene) {
+  const mode = sceneBoardMode(scene);
+  const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
+  return (mode === "reference" || strategy === "direct" || strategy === "hybrid") &&
+    sceneHandUsage(scene) !== "none" && !sceneLocalImageBuffer(scene);
 }
 
 export function descriptionForScene(storyboard, scene) {
@@ -207,16 +257,23 @@ export async function injectImageTraces(storyboard, jobId) {
       console.log(`[image-trace] ${scene.id}: reused cached raster assets`);
       continue;
     }
-    // Only storyboard-provided local images are eligible. Generic topic plates
-    // are not substitutes for images derived from the scene script.
-    const imageBuffer = sceneLocalImageBuffer(scene);
+    // Prefer the checked-in topic plates for the short-video explainer. These
+    // are authored, semantic line drawings and keep the render deterministic;
+    // sending the same scenes to a generic SD checkpoint produced unrelated
+    // anime artwork and then traced the wrong subject.
+    const topicImageBuffer = topicHanddrawImageBuffer(storyboard, scene, sceneIndex);
+    const imageBuffer = sceneLocalImageBuffer(scene) ?? topicImageBuffer;
     if (!imageBuffer) continue;
     localImageSceneIds.add(scene.id);
     try {
-      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, { forceTrace: true });
+      const traceScene = shouldTraceReferenceScene(scene);
+      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, {
+        forceTrace: traceScene,
+        forceDirect: !traceScene,
+      });
       rasterBySceneId[scene.id] = raster;
       saveImageCache(storyboard, scene, jobId, raster);
-      const sourceLabel = "storyboard local image";
+      const sourceLabel = sceneLocalImageBuffer(scene) ? "storyboard local image" : "checked-in topic plate";
       console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from ${sourceLabel}, ${raster.rasterReveal.strokes.length} reveal path(s)`);
     } catch (err) {
       console.warn(`[image-trace] ${scene.id}: local raster reveal skipped: ${err.message}`);
@@ -233,16 +290,18 @@ export async function injectImageTraces(storyboard, jobId) {
     scenes: storyboard.scenes.map((scene) => ({
       ...scene,
       image_description: descriptionForScene(storyboard, scene),
-      render_strategy: scene.render_strategy ?? scene.renderStrategy ?? "direct",
+      // Keep the original strategy absent when the storyboard did not set one.
+      // A synthetic default here would make every ordinary whiteboard scene
+      // look like a required direct-reference scene and defeat the scene cap.
+      ...(scene.render_strategy || scene.renderStrategy
+        ? { render_strategy: scene.render_strategy ?? scene.renderStrategy }
+        : {}),
     })),
   };
   const candidates = selectSeedreamCandidates(imageStoryboard.scenes, localImageSceneIds, rasterBySceneId);
 
   const requiredReferenceScenes = imageStoryboard.scenes.filter((scene) => {
-    const mode = sceneBoardMode(scene);
-    const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
-    return (mode === "reference" || strategy === "direct" || strategy === "hybrid") &&
-      sceneHandUsage(scene) !== "none" && !sceneLocalImageBuffer(scene) &&
+    return isRequiredReferenceScene(scene) &&
       !localImageSceneIds.has(scene.id) && !rasterBySceneId[scene.id] &&
       !scene.rasterReveal && !scene.raster_reveal;
   });
@@ -266,6 +325,12 @@ export async function injectImageTraces(storyboard, jobId) {
     scenes: storyboard.scenes.map((scene) => ({
       ...scene,
       ...(rasterResults[scene.id] ?? {}),
+      // WhiteboardScene renders the visible artwork from imageUrl. Keep the
+      // richer raster metadata as well, but promote the generated plate into
+      // the existing image slot so a successful asset cannot render blank.
+      ...(rasterResults[scene.id]?.referenceImageAsset
+        ? { imageUrl: rasterResults[scene.id].referenceImageAsset }
+        : {}),
       assetContract:
         rasterResults[scene.id]?.assetContract ??
         scene.assetContract ?? scene.asset_contract ?? null,
@@ -290,7 +355,7 @@ export async function injectImageTraces(storyboard, jobId) {
       response = await postJson(`${PYTHON_API}/imagegen/scenes`, {
         scenes: candidates.map((scene) => ({
           scene_id: scene.id, topic: storyboard.topic ?? "",
-          title: scene.title ?? "", image_description: scene.image_description,
+          title: scene.title ?? "", image_description: imageGenerationDescription(storyboard, scene),
           board_mode: scene.board_mode ?? scene.boardMode ?? "whiteboard",
           hand_usage: scene.hand_usage ?? scene.handUsage ?? "trace",
           video_style: String(scene.video_style ?? scene.videoStyle ?? "").trim().toLowerCase(),
@@ -316,7 +381,11 @@ export async function injectImageTraces(storyboard, jobId) {
       const imageBase64 = response.images?.[scene.id];
       if (!imageBase64) continue;
       try {
-        const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene, { forceTrace: true });
+        const traceScene = shouldTraceReferenceScene(scene);
+        const raster = await buildRasterRevealFromBuffer(Buffer.from(normalizeBase64Image(imageBase64), "base64"), jobId, scene, {
+          forceTrace: traceScene,
+          forceDirect: !traceScene,
+        });
         rasterBySceneId[scene.id] = raster;
         saveImageCache(storyboard, scene, jobId, raster);
         console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from configured image provider, ${raster.rasterReveal.strokes.length} reveal path(s)`);

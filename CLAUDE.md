@@ -62,7 +62,9 @@ Render Server (apps/render/server.mjs, :3001)
 | API 入口 / 路由注册 | `services/api/main.py` |
 | LLM 调用封装 | `services/api/src/core/llm.py` |
 | 概念图生成 | `services/api/src/explain/service.py` |
-| 分镜规划 | `services/api/src/planner/service.py` |
+| 分镜规划 | `services/api/src/planner/storyboard_gen/builder.py` |
+| 标题图片生成 | `services/api/src/planner/title_image.py` |
+| 图像生成服务 | `services/api/src/imagegen/service.py` |
 | TTS 合成 | `services/api/src/narration/service.py` |
 | 渲染服务器（HTTP + 作业管理） | `apps/render/server.mjs` |
 | Remotion 视频合成 | `apps/render/src/compositions/WhiteboardVideo.tsx` |
@@ -88,6 +90,15 @@ Python Pydantic 模型在各模块 `models.py`，与上述类型对应。`Scene`
 - `LLM_MAX_RETRIES` — LLM 调用最大重试次数，默认 3
 - `LLM_RETRY_BASE_DELAY_S` — 重试基础延迟（秒），默认 1.0
 - `CORS_ALLOWED_ORIGINS` — CORS 允许的 origin 列表（逗号分隔），默认 `http://localhost:3000,http://127.0.0.1:3000`
+- **图像生成配置（ComfyUI + LoRA）：**
+  - `IMAGEGEN_PROVIDER` — 默认 `comfyui`
+  - `COMFYUI_BASE_URL` — 默认 `http://127.0.0.1:8188`
+  - `COMFYUI_WORKFLOW` — ComfyUI 工作流文件路径
+  - `COMFYUI_CHECKPOINT` — SD 1.5 checkpoint，默认 `meinaPastelV5_bakedVAE.safetensors`
+  - `COMFYUI_LORA` — LoRA 文件名（推荐 `chalkboard-drawing-ce.safetensors`）
+  - `COMFYUI_LORA_STRENGTH` — LoRA 强度，默认 0.8
+  - `COMFYUI_LORA_TRIGGER` — LoRA 触发词（如 `chlkbrdCE style`）
+  - `COMFYUI_STEPS` — 采样步数，默认 12
 
 **`apps/web/.env.local`（从 `.env.local.example` 复制）：**
 - `NEXT_PUBLIC_API_URL` — 默认 `http://localhost:8000`
@@ -116,3 +127,31 @@ Python Pydantic 模型在各模块 `models.py`，与上述类型对应。`Scene`
 ```bash
 bash scripts/eval.sh   # 需要 services/api/.env 中有有效的 API Key
 ```
+
+## 图像生成与质量优化
+
+ExplainFlow 使用 ComfyUI + SD 1.5 + LoRA 生成教学风格的插图。详细配置请参考：
+
+- **[docs/VIDEO_QUALITY_IMPROVEMENTS.md](docs/VIDEO_QUALITY_IMPROVEMENTS.md)** — 视频质量改进方案（标题图片 + 图像简洁度）
+- **[docs/QUICK_SETUP_LORA.md](docs/QUICK_SETUP_LORA.md)** — LoRA 快速配置指南（三种可选风格）
+- **[docs/LORA_DOWNLOAD_GUIDE.md](docs/LORA_DOWNLOAD_GUIDE.md)** — LoRA 下载与安装指南
+- **[docs/IMAGE_GENERATION_GUIDE.md](docs/IMAGE_GENERATION_GUIDE.md)** — 图像生成详细指南
+
+**快速开始：**
+
+1. 下载推荐的 LoRA（Chalkboard Drawing - CE）：
+   ```powershell
+   .\scripts\download-loras.ps1
+   ```
+
+2. 配置 `services/api/.env`：
+   ```env
+   COMFYUI_LORA=chalkboard-drawing-ce.safetensors
+   COMFYUI_LORA_STRENGTH=0.8
+   COMFYUI_LORA_TRIGGER=chlkbrdCE style
+   ```
+
+3. 重启服务：
+   ```bash
+   scripts\stop.bat && scripts\start.bat
+   ```

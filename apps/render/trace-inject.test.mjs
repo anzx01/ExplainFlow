@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { descriptionForScene, imagegenRequestTimeoutMs } from "./trace-inject.mjs";
+import { descriptionForScene, imageGenerationDescription, imagegenRequestTimeoutMs, selectSeedreamCandidates } from "./trace-inject.mjs";
 import { joinConnectedPaths } from "./trace-algo.mjs";
 import { shouldGenerateReferenceImage } from "./scene-strategy.mjs";
 
@@ -31,6 +31,24 @@ test("preserves an explicit storyboard image description", () => {
   );
 });
 
+test("adds scene subject, action, and relationship constraints to image generation", () => {
+  const prompt = imageGenerationDescription(
+    { topic: "短视频成瘾" },
+    {
+      id: "scene_3",
+      title: "注意力被切碎",
+      narration: "人不断滑动手机，时间被短视频循环吞掉。",
+      learning_goal: "看见手机、人的动作和时间流失关系",
+      image_description: "A hand-drawn educational illustration with a person and a phone.",
+      audioSegments: [{ drawIntent: "show compulsive scrolling beside a clock" }],
+    },
+  );
+  assert.match(prompt, /手机|phone/i);
+  assert.match(prompt, /compulsive scrolling/);
+  assert.match(prompt, /cause\/effect|relationship/i);
+  assert.match(prompt, /generic face/i);
+});
+
 test("generates artwork for described whiteboard trace scenes", () => {
   assert.equal(shouldGenerateReferenceImage({
     image_description: "A phone, a distracted person, and a clock",
@@ -45,6 +63,49 @@ test("generates artwork for described whiteboard trace scenes", () => {
     hand_usage: "trace",
     visual_style: "math_chalkboard",
   }), false);
+});
+
+test("keeps whiteboard trace scenes eligible for subject artwork when they already have line strokes", () => {
+  const scene = {
+    id: "scene_0",
+    image_description: "A phone with a person compulsively scrolling and a clock",
+    board_mode: "whiteboard",
+    hand_usage: "trace",
+    visual_style: "teacher_whiteboard",
+    video_style: "whiteboard",
+    trace_strokes: [{ d: "M 0 0 L 10 10" }],
+  };
+
+  assert.equal(shouldGenerateReferenceImage(scene), true);
+  assert.deepEqual(selectSeedreamCandidates([scene], new Set(), {}), [scene]);
+});
+
+test("does not turn ordinary whiteboard scenes into required direct references", () => {
+  const scenes = Array.from({ length: 4 }, (_, index) => ({
+    id: `scene_${index}`,
+    title: `Scene ${index}`,
+    image_description: `A clear central subject illustration ${index}`,
+    board_mode: "whiteboard",
+    hand_usage: "trace",
+    video_style: "whiteboard",
+    visual_style: "teacher_whiteboard",
+  }));
+
+  assert.equal(selectSeedreamCandidates(scenes, new Set(), {}).length, 1);
+  assert.equal(scenes.every((scene) => !scene.render_strategy), true);
+});
+
+test("keeps all explicit reference scenes above the optional image cap", () => {
+  const scenes = [
+    { id: "scene_3", image_description: "A dense reference diagram", board_mode: "reference", hand_usage: "annotate" },
+    { id: "scene_4", image_description: "A finished subject plate", render_strategy: "direct", hand_usage: "trace" },
+    { id: "scene_0", image_description: "An optional whiteboard illustration", board_mode: "whiteboard", hand_usage: "trace", video_style: "whiteboard" },
+  ];
+
+  assert.deepEqual(
+    selectSeedreamCandidates(scenes, new Set(), {}).map((scene) => scene.id),
+    ["scene_3", "scene_4"],
+  );
 });
 
 test("allows enough time for serial local image generation and retries", () => {

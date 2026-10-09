@@ -161,13 +161,10 @@ export function shouldGenerateReferenceImage(scene) {
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
   if (explicit === "direct") return true;
-  if (
-    explicit === "trace" ||
-    (boardMode === "whiteboard" &&
-      handUsage === "trace" &&
-      ["", "teacher_whiteboard", "sharpie"].includes(visualStyle) &&
-      ["", "simple", "medium"].includes(String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase()))
-  ) {
+  // A trace scene can still need a generated subject plate. The trace mode
+  // controls how the image is revealed; it should not suppress image
+  // generation when the storyboard provides a scene description.
+  if (explicit === "trace" && !(scene?.image_description ?? scene?.imageDescription)) {
     return false;
   }
   if (["modern_minimal", "technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) {

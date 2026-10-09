@@ -143,7 +143,9 @@ def test_raster_template_applies_contract_masks_and_cropped_hand_anchor():
     assert "strokeWidth={Math.max(4, Math.min(spec.revealWidth, length * 0.6))}" in color_mask
     assert "spec.revealWidth * 4.5" not in color_mask
     assert "const HAND_WIDTH = 282" in tsx
-    assert "const PEN_TIP_X = 0" in tsx
+    assert 'staticFile("hand-real-pen.png")' in tsx
+    assert "const PEN_TIP_X = 198" in tsx
+    assert "const PEN_TIP_Y = 197" in tsx
     assert "if (frame <= op.startFrame) return null;" in tsx
     assert "const colorStartFrame = spec.colorOpId ? op.startFrame : (spec.colorStartFrame ?? fallbackStart);" in tsx
 

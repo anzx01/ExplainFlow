@@ -273,6 +273,29 @@ async function analyzeFrameNonBlank(framePath) {
   };
 }
 
+async function extractBestQaFrame(videoPath, durationSeconds, jobId, label, position) {
+  // Scene boundaries can briefly show only a title/subtitle before the main
+  // drawing starts. Probe around the target time and keep the most populated
+  // frame so QA measures the scene rather than a transition instant.
+  const offsetsSeconds = [-5, 0, 5];
+  const candidates = [];
+  for (const [index, offsetSeconds] of offsetsSeconds.entries()) {
+    const framePath = await extractQaFrame(
+      videoPath,
+      durationSeconds,
+      jobId,
+      `${label}-${index}`,
+      Math.max(0.01, Math.min(0.99, position + offsetSeconds / Math.max(1, durationSeconds))),
+    );
+    candidates.push({ path: framePath, ...(await analyzeFrameNonBlank(framePath)) });
+  }
+  candidates.sort((a, b) =>
+    (b.centerForegroundRatio - a.centerForegroundRatio) ||
+    (b.brightnessStdDev - a.brightnessStdDev),
+  );
+  return candidates[0];
+}
+
 // ---------------------------------------------------------------------------
 // Public export
 // ---------------------------------------------------------------------------
@@ -346,8 +369,10 @@ export async function runRenderQa(jobId, outputPath, storyboard, options = {}) {
       // producing a false blank-frame failure while the next scene is still
       // drawing its title. Sample just before that boundary instead.
       for (const [label, position] of [["opening", 0.03], ["middle", 0.47], ["ending", 0.97]]) {
-        const framePath = await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId, label, position);
-        samples.push({ label, path: framePath, ...(await analyzeFrameNonBlank(framePath)) });
+        const frame = label === "opening"
+          ? await extractQaFrame(outputPath, mediaInfo.durationSeconds, jobId, label, position).then(async (path) => ({ path, ...(await analyzeFrameNonBlank(path)) }))
+          : await extractBestQaFrame(outputPath, mediaInfo.durationSeconds, jobId, label, position);
+        samples.push({ label, ...frame });
       }
       const middle = samples.find((sample) => sample.label === "middle");
       const ending = samples.find((sample) => sample.label === "ending");

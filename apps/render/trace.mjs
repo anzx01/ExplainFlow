@@ -5,7 +5,7 @@
  * SVG 路径追踪 → trace-whiteboard.mjs
  * Seedream 候选评分 + injectImageTraces → trace-inject.mjs
  */
-import { mkdirSync, writeFileSync } from "fs";
+import { copyFileSync, mkdirSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 import { join } from "path";
 import sharp from "sharp";
@@ -158,6 +158,9 @@ async function makeHanddrawnMaster(imageBuffer) {
   const normalized = await sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
+    // Local hand-drawn plates may be transparent. Flatten before trimming and
+    // direct presentation so transparent RGB data cannot become a black box.
+    .flatten({ background: "#ffffff" })
     .modulate({ saturation: 0.78, brightness: 1.03 })
     .sharpen({ sigma: 0.55, m1: 0.7, m2: 2.5 })
     .png({ compressionLevel: 9 })
@@ -266,14 +269,56 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
   const assetDir = join(PUBLIC_GENERATED_DIR, jobId);
   mkdirSync(assetDir, { recursive: true });
   const handdrawnMaster = await makeHanddrawnMaster(imageBuffer);
-  const transparentAsset = await makeTransparentLineArtAsset(handdrawnMaster);
-  const assetBuffer = transparentAsset.buffer;
   const sceneId = scene?.id ?? "scene";
   const safeSceneId = safeAssetSegment(sceneId, "scene");
   const masterFilename = `${safeSceneId}-master.png`;
   const filename = `${safeSceneId}.png`;
   const colorFilename = `${safeSceneId}-color.png`;
-  writeFileSync(join(assetDir, masterFilename), handdrawnMaster);
+  const masterPath = join(assetDir, masterFilename);
+  writeFileSync(masterPath, handdrawnMaster);
+  const masterMetadata = await sharp(handdrawnMaster).metadata();
+  const masterWidth = Number(masterMetadata.width ?? RASTER_REVEAL_ASSET_MAX_SIZE);
+  const masterHeight = Number(masterMetadata.height ?? RASTER_REVEAL_ASSET_MAX_SIZE);
+  const masterAsset = `generated/${jobId}/${masterFilename}`;
+  const forceDirect = options.forceDirect === true;
+
+  // Direct presentation does not need transparent ink/color layers or a
+  // skeleton. Avoid the full-resolution per-pixel passes and path generation
+  // that made local whiteboard renders slow and memory hungry.
+  if (forceDirect) {
+    const asset = `generated/${jobId}/${filename}`;
+    copyFileSync(masterPath, join(assetDir, filename));
+    const sourceHash = createHash("sha256").update(handdrawnMaster).digest("hex");
+    return {
+      assetContract: {
+        mode: "full",
+        masterAsset,
+        colorAsset: masterAsset,
+        width: masterWidth,
+        height: masterHeight,
+        sourceHash,
+        layers: ["color"],
+        observedContentBounds: { x: 0, y: 0, width: masterWidth, height: masterHeight },
+        cropConfidence: 1,
+        stage: "render-assets",
+      },
+      referenceImageAsset: masterAsset,
+      rasterReveal: {
+        asset: masterAsset,
+        colorAsset: masterAsset,
+        imageWidth: masterWidth,
+        imageHeight: masterHeight,
+        transparentBackground: false,
+        strokes: [],
+        renderMode: "direct",
+        directAppearFrame: Number(options.directAppearFrame ?? 0),
+      },
+      trace_strokes: [],
+    };
+  }
+
+  const transparentAsset = await makeTransparentLineArtAsset(handdrawnMaster);
+  const assetBuffer = transparentAsset.buffer;
   writeFileSync(join(assetDir, filename), assetBuffer);
   const colorAssetData = await makeTransparentColorAsset(handdrawnMaster);
   writeFileSync(join(assetDir, colorFilename), colorAssetData.buffer);
@@ -283,12 +328,15 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
   // directly instead of discarding the image and falling back to text-only SVG.
   const hasEnoughTracePaths = trace.strokes.length >= 6;
   const asset = `generated/${jobId}/${filename}`;
-  const masterAsset = `generated/${jobId}/${masterFilename}`;
   const colorAsset = `generated/${jobId}/${colorFilename}`;
   const forceTrace = options.forceTrace === true;
-  const renderMode = !hasEnoughTracePaths
+  const renderMode = forceDirect
     ? "direct"
-    : (forceTrace || !sceneShouldDirectRender(scene, trace) ? "trace" : "direct");
+    : forceTrace && trace.strokes.length > 0
+    ? "trace"
+    : !hasEnoughTracePaths
+    ? "direct"
+    : (!sceneShouldDirectRender(scene, trace) ? "trace" : "direct");
   const directAsset = masterAsset;
   return {
     assetContract: {
@@ -315,6 +363,7 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
       maskCoverage: trace.maskCoverage, skeletonPixels: trace.skeletonPixels,
       strokeCount: trace.strokes.length,
       strokes: renderMode === "direct" ? [] : trace.strokes,
+      renderMode,
     },
     trace_strokes: renderMode === "direct" ? [] : trace.strokes.map((stroke) => stroke.points),
   };

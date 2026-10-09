@@ -41,6 +41,8 @@ from ..coverage.appender import _sanitize_storyboard_narration
 from ..prompts.storyboard import STORYBOARD_SYSTEM_PROMPT
 from ..render_contract import finalize_storyboard_contract
 
+from ..title_image import generate_title_image
+
 logger = logging.getLogger(__name__)
 
 
@@ -286,6 +288,19 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
     storyboard = _sanitize_storyboard_narration(storyboard)
     storyboard = finalize_storyboard_contract(storyboard)
+
+    # 生成标题图片（异步，不阻塞）
+    try:
+        title_image_url = await generate_title_image(
+            topic=graph.topic,
+            summary=graph.summary,
+            video_style=video_style
+        )
+        if title_image_url:
+            storyboard.title_image_url = title_image_url
+            logger.info(f"标题图片已添加: {title_image_url}")
+    except Exception as e:
+        logger.warning(f"标题图片生成失败，继续使用无图片版本: {e}")
 
     logger.info("Storyboard generated: %d scenes, %.1fs total", len(storyboard.scenes), storyboard.total_duration_estimate)
     return storyboard

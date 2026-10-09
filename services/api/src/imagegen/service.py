@@ -150,8 +150,12 @@ def _comfy_workflow(prompt: str, negative: str, *, seed: int, width: int, height
         raise RuntimeError(f"Could not load ComfyUI API workflow {workflow_path}: {exc}") from exc
     if not isinstance(template, dict) or not template:
         raise RuntimeError("ComfyUI API workflow must be a non-empty object")
+    # 添加简洁度强制前缀
+    simplicity_prefix = "simple illustration, minimal details, 3-5 main objects only, clean composition, "
     if settings.comfyui_lora.strip() and settings.comfyui_lora_trigger.strip():
-        prompt = f"{settings.comfyui_lora_trigger}, {prompt}"
+        prompt = f"{settings.comfyui_lora_trigger}, {simplicity_prefix}{prompt}"
+    else:
+        prompt = f"{simplicity_prefix}{prompt}"
     workflow = _replace_workflow_values(template, {
         "__EXPLAINFLOW_PROMPT__": prompt,
         "__EXPLAINFLOW_NEGATIVE__": negative,
@@ -183,7 +187,15 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
     preview = quality.strip().lower() == "preview"
     width = settings.local_imagegen_preview_width if preview else settings.local_imagegen_width
     height = settings.local_imagegen_preview_height if preview else settings.local_imagegen_height
-    negative = "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects"
+    # 强化负面提示：限制复杂度，确保简洁教学风格
+    negative = (
+        "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects, "
+        "overly detailed, too many elements, cluttered composition, busy background, complex patterns, "
+        "photorealistic details, fine textures, intricate shading, realistic rendering, "
+        "anime style details, hair strands, fabric folds, glossy highlights, "
+        "small objects, tiny icons, miniature details, dense infographic, "
+        "more than 5 main objects, crowded scene, overlapping elements"
+    )
     timeout = max(5.0, float(settings.comfyui_timeout_s))
     client_id = f"{settings.comfyui_client_id}-{uuid.uuid4().hex}"
     async with httpx.AsyncClient(base_url=settings.comfyui_base_url.rstrip("/"), timeout=10.0) as client:

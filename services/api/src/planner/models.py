@@ -169,6 +169,7 @@ class Storyboard(BaseModel):
     topic: str
     total_duration_estimate: float
     scenes: list[Scene] = Field(default_factory=list)
+    title_image_url: str | None = Field(default=None, alias="titleImageUrl")  # 标题卡片的主题插图
     video_style: str | None = None
     pen_style: str | None = None
     style_lock: str | None = Field(default=None, alias="styleLock")

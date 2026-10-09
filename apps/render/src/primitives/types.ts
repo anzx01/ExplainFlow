@@ -109,6 +109,7 @@ export interface Storyboard {
   topic: string;
   total_duration_estimate: number;
   scenes: Scene[];
+  titleImageUrl?: string | null;  // 标题卡片的主题插图
 }
 
 export const FPS = 30;

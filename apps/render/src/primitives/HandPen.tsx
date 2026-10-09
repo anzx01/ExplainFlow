@@ -9,7 +9,9 @@ interface Props {
 }
 
 const HAND_WIDTH = 282;
-const HAND_HEIGHT = 454;
+const HAND_HEIGHT = 282;
+const PEN_TIP_X = 198;
+const PEN_TIP_Y = 197;
 
 /**
  * The source hand is alpha-cropped during asset preparation. Its marker tip
@@ -23,8 +25,8 @@ export const HandPen: React.FC<Props> = ({tipX, tipY, scale = 1}) => {
     <div
       style={{
         position: "absolute",
-        left: tipX,
-        top: tipY,
+        left: tipX - PEN_TIP_X * scale,
+        top: tipY - PEN_TIP_Y * scale,
         width,
         height,
         pointerEvents: "none",
@@ -32,7 +34,7 @@ export const HandPen: React.FC<Props> = ({tipX, tipY, scale = 1}) => {
       }}
     >
       <Img
-        src={staticFile("hand-srt-drawing.png")}
+        src={staticFile("hand-real-pen.png")}
         style={{width, height, display: "block"}}
       />
     </div>

@@ -6,9 +6,11 @@ import React from "react";
 import { AbsoluteFill, Audio, Easing, Img, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 
 const HAND_WIDTH = 282;
-const HAND_HEIGHT = 454;
-const PEN_TIP_X = 0;
-const PEN_TIP_Y = 0;
+const HAND_HEIGHT = 282;
+// hand-real-pen.png is a compact transparent asset. These coordinates locate
+// the actual marker tip inside the square, so the tip stays on the raster path.
+const PEN_TIP_X = 198;
+const PEN_TIP_Y = 197;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
 const BOARD_BACKGROUND = "#F7F7F2";
@@ -138,7 +140,7 @@ const HandPen = ({ tipX, tipY, visible }: { tipX: number; tipY: number; visible:
       zIndex: 20,
     }}
   >
-    <Img src={staticFile("hand-srt-drawing.png")} style={{ width: HAND_WIDTH, height: HAND_HEIGHT }} />
+    <Img src={staticFile("hand-real-pen.png")} style={{ width: HAND_WIDTH, height: HAND_HEIGHT }} />
   </div>
 );
 

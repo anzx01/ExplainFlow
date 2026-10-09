@@ -103,7 +103,9 @@ export const REQUIRE_SEEDREAM_REFERENCE_IMAGES = process.env.REMOTION_REQUIRE_SE
 export const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDREAM_REFERENCE_MODE ?? "auto")
   .trim()
   .toLowerCase();
-export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 16));
+// Generate one representative plate by default. ComfyUI is the dominant
+// latency and VRAM cost; callers can raise this explicitly when needed.
+export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 1));
 export const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 export const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
@@ -125,7 +127,7 @@ export const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
   40,
   Number(process.env.REMOTION_DIRECT_IMAGE_STROKE_THRESHOLD ?? 280),
 );
-export const HAND_ASSET = "hand-srt-drawing.png";
+export const HAND_ASSET = "hand-real-pen.png";
 export const MIN_RENDER_OUTPUT_BYTES = Math.max(1024, Number(process.env.RENDER_QA_MIN_BYTES ?? 50000) || 50000);
 export const MIN_RENDER_FRAME_STDDEV = Math.max(0.5, Number(process.env.RENDER_QA_MIN_FRAME_STDDEV ?? 2.5) || 2.5);
 export const SCENE_PREROLL_FRAMES = Math.max(0, Math.min(90, Number(process.env.SCENE_PREROLL_FRAMES ?? 0) || 0));
