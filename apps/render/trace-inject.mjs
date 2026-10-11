@@ -32,6 +32,23 @@ import { traceWhiteboardImageBuffer, traceWhiteboardImageBase64 } from "./trace-
 const IMAGE_CACHE_DIR = join(PUBLIC_GENERATED_DIR, "_cache");
 const HANDDRAW_TOPIC_ASSET_DIR = join(__dirname, "public", "handdraw");
 
+function isShortVideoTopic(storyboard) {
+  const text = `${storyboard?.topic ?? ""} ${(storyboard?.scenes ?? []).map((scene) => `${scene?.title ?? ""} ${scene?.narration ?? ""}`).join(" ")}`;
+  return /短视频|short[\s-]?video/i.test(text);
+}
+
+function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
+  // Keep the checked-in plates available for diagnostics, but let the image
+  // provider create the final subject artwork. The plates are intentionally
+  // icon-like and are too sparse for the finished video.
+  if (!isShortVideoTopic(storyboard) || process.env.EXPLAINFLOW_USE_TOPIC_PLATES === "1") return null;
+  const idMatch = String(scene?.id ?? "").match(/(\d+)$/);
+  const sceneNumber = Number(idMatch?.[1] ?? sceneIndex);
+  if (!Number.isInteger(sceneNumber) || sceneNumber < 0 || sceneNumber > 5) return null;
+  const imagePath = join(HANDDRAW_TOPIC_ASSET_DIR, `semantic-scene${sceneNumber}.png`);
+  return existsSync(imagePath) ? readFileSync(imagePath) : null;
+}
+
 export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs = 0) {
   if (Number(overrideMs) > 0) return Number(overrideMs);
   const provider = String(providerStatus?.provider ?? "local").trim().toLowerCase();
@@ -44,33 +61,16 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
   return Math.max(180000, Math.max(1, sceneCount) * providerSeconds * 1000 + 120000);
 }
 
-function isShortVideoTopic(storyboard) {
-  const text = `${storyboard?.topic ?? ""} ${(storyboard?.scenes ?? []).map((scene) => `${scene?.title ?? ""} ${scene?.narration ?? ""}`).join(" ")}`;
-  if (/[\u77ed\u89c6\u9891\u77ed\u8996\u983b]/u.test(text) || /short[\s-]?video/i.test(text)) return true;
-  return /短视频|short[\s-]?video/i.test(text);
-}
-
-// The project already contains approved topic-specific hand-drawn plates. Use
-// them as local references so a rerender can reuse the existing visual work and
-// still pass through the normal raster trace and hand-following pipeline.
-function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
-  if (!isShortVideoTopic(storyboard)) return null;
-  const idMatch = String(scene?.id ?? "").match(/(\d+)$/);
-  const sceneNumber = Number(idMatch?.[1] ?? sceneIndex);
-  if (!Number.isInteger(sceneNumber) || sceneNumber < 0 || sceneNumber > 5) return null;
-  const imagePath = join(HANDDRAW_TOPIC_ASSET_DIR, `semantic-scene${sceneNumber}.png`);
-  return existsSync(imagePath) ? readFileSync(imagePath) : null;
-}
-
 function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "semantic-topic-plates-v5-clear-subjects",
+    renderAssetMode: "detailed-whiteboard-reference-v6",
     topic: storyboard?.topic ?? "",
     id: scene?.id ?? "",
     title: scene?.title ?? "",
     imageDescription: scene?.image_description ?? scene?.imageDescription ?? "",
     visualStyle: scene?.visual_style ?? scene?.visualStyle ?? "",
     videoStyle: scene?.video_style ?? scene?.videoStyle ?? "",
+    lineArtColorMode: storyboard?.line_art_color_mode ?? storyboard?.lineArtColorMode ?? "color",
   };
   return createHash("sha256").update(JSON.stringify(payload)).digest("hex").slice(0, 24);
 }
@@ -102,12 +102,14 @@ export function imageGenerationDescription(storyboard, scene) {
     intents && `visual action: ${intents}`,
     beats && `visual beats: ${beats}`,
   ].filter(Boolean).join(". ");
+  const monochrome = String(storyboard?.line_art_color_mode ?? storyboard?.lineArtColorMode ?? "color").toLowerCase() === "monochrome";
   return [
     "Create one unmistakable hand-drawn educational illustration",
     context,
     `main visual description: ${base}`,
-    "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; use one clear visual metaphor tied to the narration, with 2-5 large recognizable objects and their physical interaction",
-    "Do not substitute a generic face, abstract icon, decorative shapes, or an unrelated stock illustration; no readable text, labels, arrows, callouts, logos, or watermark",
+    "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; build a complete classroom whiteboard composition with 6-10 recognizable objects, clear foreground and background relationships, varied line detail, and one readable central action",
+    `Use detailed hand-drawn marker line art like a real teaching sketch: person, phone, clock, brain/reward symbols, arrows and surrounding objects should be structurally recognizable and connected; ${monochrome ? "use only black, charcoal gray and white, with no colored accents" : "use restrained purposeful color accents"}; avoid isolated icon tiles and avoid an empty canvas`,
+    "Do not use anime, manga, glossy digital illustration, photorealism, generic cute characters, abstract icon-only diagrams, or unrelated stock art; no readable text, labels, logos, watermark, or baked callout boxes",
   ].join(". ");
 }
 
@@ -217,7 +219,7 @@ export function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySce
 export function isRequiredReferenceScene(scene) {
   const mode = sceneBoardMode(scene);
   const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
-  return (mode === "reference" || strategy === "direct" || strategy === "hybrid") &&
+  return (mode === "reference" || strategy === "direct") &&
     sceneHandUsage(scene) !== "none" && !sceneLocalImageBuffer(scene);
 }
 
@@ -257,20 +259,13 @@ export async function injectImageTraces(storyboard, jobId) {
       console.log(`[image-trace] ${scene.id}: reused cached raster assets`);
       continue;
     }
-    // Prefer the checked-in topic plates for the short-video explainer. These
-    // are authored, semantic line drawings and keep the render deterministic;
-    // sending the same scenes to a generic SD checkpoint produced unrelated
-    // anime artwork and then traced the wrong subject.
-    const topicImageBuffer = topicHanddrawImageBuffer(storyboard, scene, sceneIndex);
-    const imageBuffer = sceneLocalImageBuffer(scene) ?? topicImageBuffer;
+    // Only storyboard-provided local images are eligible. A generic topic
+    // plate is not a substitute for artwork derived from the scene script.
+    const imageBuffer = sceneLocalImageBuffer(scene) ?? topicHanddrawImageBuffer(storyboard, scene, sceneIndex);
     if (!imageBuffer) continue;
     localImageSceneIds.add(scene.id);
     try {
-      const traceScene = shouldTraceReferenceScene(scene);
-      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, {
-        forceTrace: traceScene,
-        forceDirect: !traceScene,
-      });
+      const raster = await buildRasterRevealFromBuffer(imageBuffer, jobId, scene, { forceTrace: true });
       rasterBySceneId[scene.id] = raster;
       saveImageCache(storyboard, scene, jobId, raster);
       const sourceLabel = sceneLocalImageBuffer(scene) ? "storyboard local image" : "checked-in topic plate";
@@ -325,12 +320,10 @@ export async function injectImageTraces(storyboard, jobId) {
     scenes: storyboard.scenes.map((scene) => ({
       ...scene,
       ...(rasterResults[scene.id] ?? {}),
-      // WhiteboardScene renders the visible artwork from imageUrl. Keep the
-      // richer raster metadata as well, but promote the generated plate into
-      // the existing image slot so a successful asset cannot render blank.
-      ...(rasterResults[scene.id]?.referenceImageAsset
-        ? { imageUrl: rasterResults[scene.id].referenceImageAsset }
-        : {}),
+      // Keep reference artwork in the raster contract. `imageUrl` is reserved
+      // for an intentional storyboard thumbnail; promoting every generated
+      // plate here turns a whiteboard scene into a floating image card and
+      // leaves the actual board mostly empty.
       assetContract:
         rasterResults[scene.id]?.assetContract ??
         scene.assetContract ?? scene.asset_contract ?? null,

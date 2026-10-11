@@ -76,7 +76,9 @@ export function explicitRasterStrategy(scene) {
   if (!value) return null;
   if (/(direct|finished|static|reference|present|photo|show)/i.test(value)) return "direct";
   if (/(trace|progressive|draw|write|stroke|reveal|board)/i.test(value)) return "trace";
-  if (/(hybrid|mixed|annotation|callout)/i.test(value)) return "direct";
+  // Hybrid/annotation is still a whiteboard drawing workflow unless the
+  // storyboard explicitly asks for a finished/reference image.
+  if (/(hybrid|mixed|annotation|callout)/i.test(value)) return null;
   return null;
 }
 
@@ -107,10 +109,11 @@ export function sceneShouldDirectRender(scene, trace) {
   if (SEEDREAM_REFERENCE_RENDER_MODE === "trace") return false;
   if (SEEDREAM_REFERENCE_RENDER_MODE === "direct") return true;
   const videoStyle = sceneVideoStyle(scene);
-  if (sceneHandUsage(scene) === "annotate") return true;
+  if (sceneHandUsage(scene) === "annotate" && sceneVideoStyle(scene) !== "whiteboard") return true;
   if (sceneBoardMode(scene) === "reference" || sceneVisualStyle(scene) === "technical_reference") return true;
   if (sceneBoardMode(scene) === "clean_canvas" || sceneVisualStyle(scene) === "marketing_doodle") return true;
-  if (["technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) return true;
+  if (videoStyle === "whiteboard" || videoStyle === "sharpie") return false;
+  if (["technical_blueprint", "editorial", "playful"].includes(videoStyle)) return true;
   if (videoStyle === "modern_minimal" && sceneHandUsage(scene) !== "trace") return true;
   if (sceneBoardMode(scene) === "chalkboard" || sceneVisualStyle(scene) === "math_chalkboard") return false;
 
@@ -161,23 +164,27 @@ export function shouldGenerateReferenceImage(scene) {
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
   if (explicit === "direct") return true;
-  // A trace scene can still need a generated subject plate. The trace mode
-  // controls how the image is revealed; it should not suppress image
-  // generation when the storyboard provides a scene description.
-  if (explicit === "trace" && !(scene?.image_description ?? scene?.imageDescription)) {
+  if (
+    explicit === "trace" ||
+    (boardMode === "whiteboard" &&
+      handUsage === "trace" &&
+      ["", "teacher_whiteboard", "sharpie"].includes(visualStyle) &&
+      ["", "simple", "medium"].includes(String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase()))
+  ) {
     return false;
   }
-  if (["modern_minimal", "technical_blueprint", "editorial", "whiteboard", "playful", "sharpie"].includes(videoStyle)) {
-    return true;
-  }
-  if (ENABLE_SEEDREAM_REFERENCE_IMAGES && scene?.image_description) return true;
-  if (boardMode === "whiteboard" && visualStyle === "teacher_whiteboard" && handUsage === "trace") {
-    return explicit === "direct";
-  }
+  // Explicit reference contracts take precedence over the ordinary
+  // whiteboard default, even when their overall video style is whiteboard.
   if (boardMode === "reference" || boardMode === "clean_canvas") return true;
   if (visualStyle === "technical_reference" || visualStyle === "marketing_doodle") return true;
   const complexity = String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase();
   if (complexity === "dense" || complexity === "reference") return true;
+  if (videoStyle === "whiteboard" || videoStyle === "sharpie") return false;
+  if (["modern_minimal", "technical_blueprint", "editorial", "playful"].includes(videoStyle)) return true;
+  if (ENABLE_SEEDREAM_REFERENCE_IMAGES && scene?.image_description) return true;
+  if (boardMode === "whiteboard" && visualStyle === "teacher_whiteboard" && handUsage === "trace") {
+    return explicit === "direct";
+  }
   const text = sceneTextForStrategy(scene);
   const labelCount = countSceneLabels(scene);
   const wantsFinishedSubject = countPatternMatches(text, [

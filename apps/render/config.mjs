@@ -72,8 +72,8 @@ export const FPS = 30;
 // 720p is sufficient for whiteboard teaching videos and keeps SVG rasterizing
 // and H.264 encoding practical on local hardware. Override for delivery with
 // REMOTION_WIDTH/REMOTION_HEIGHT when a larger master is required.
-export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1280);
-export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 720);
+export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1920);
+export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 1080);
 export const OUTPUT_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_OUTPUT_DIR, join(ROOT_DIR, "outputs"));
 export const AUDIO_DIR = join(OUTPUT_DIR, "audio");
 export const MUSIC_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_MUSIC_DIR, join(OUTPUT_DIR, "music"));
@@ -83,7 +83,7 @@ export const PUBLIC_DIR = join(__dirname, "public");
 export const PUBLIC_GENERATED_DIR = join(PUBLIC_DIR, "generated");
 // On Windows, localhost can resolve to a stale IPv4 listener while ExplainFlow
 // is served by the IPv6 dual-stack API process. Pin the project API explicitly.
-export const PYTHON_API = process.env.PYTHON_API_URL ?? "http://[::1]:8010";
+export const PYTHON_API = process.env.PYTHON_API_URL ?? "http://127.0.0.1:8010";
 export const IMAGEGEN_REQUEST_TIMEOUT_MS = Number(process.env.REMOTION_IMAGEGEN_TIMEOUT_MS ?? 0);
 export const COMPOSITION_ID = "GeneratedVideo";
 export const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
@@ -105,19 +105,19 @@ export const SEEDREAM_REFERENCE_RENDER_MODE = String(process.env.REMOTION_SEEDRE
   .toLowerCase();
 // Generate one representative plate by default. ComfyUI is the dominant
 // latency and VRAM cost; callers can raise this explicitly when needed.
-export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 1));
+export const IMAGE_TRACE_MAX_SCENES = Math.max(0, Number(process.env.REMOTION_IMAGE_TRACE_MAX_SCENES ?? 16));
 export const IMAGE_TRACE_MAX_PATHS = Math.max(16, Number(process.env.REMOTION_IMAGE_TRACE_MAX_PATHS ?? 90));
 export const RASTER_REVEAL_MAX_STROKES = Math.max(
   24,
-  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 48),
+  Number(process.env.REMOTION_RASTER_REVEAL_MAX_STROKES ?? 150),
 );
 export const RASTER_REVEAL_TRACE_WIDTH = Math.max(
   240,
-  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_WIDTH ?? 720),
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_WIDTH ?? 960),
 );
 export const RASTER_REVEAL_TRACE_HEIGHT = Math.max(
   180,
-  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_HEIGHT ?? 405),
+  Number(process.env.REMOTION_RASTER_REVEAL_TRACE_HEIGHT ?? 540),
 );
 export const RASTER_REVEAL_ASSET_MAX_SIZE = Math.max(
   640,

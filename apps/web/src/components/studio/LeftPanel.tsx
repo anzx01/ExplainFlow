@@ -3,10 +3,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { ACTIVE_PEN_STYLE_ID, ACTIVE_VIDEO_STYLE_ID, PEN_STYLE_OPTIONS, VIDEO_STYLE_OPTIONS } from "@/lib/constants";
-import type { ImageGenerationMode, PenStyleId, VideoStyleId } from "@/lib/types";
+import type { ImageGenerationMode, LineArtColorMode, PenStyleId, VideoStyleId } from "@/lib/types";
 
 interface Props {
-  onGenerate: (prompt: string, markdown: string, videoStyle: VideoStyleId, penStyle: PenStyleId) => void;
+  onGenerate: (prompt: string, markdown: string, videoStyle: VideoStyleId, penStyle: PenStyleId, colorMode: LineArtColorMode) => void;
   loading: boolean;
   duration: number;
   onDurationChange: (duration: number) => void;
@@ -16,6 +16,8 @@ interface Props {
   onPenStyleChange: (style: PenStyleId) => void;
   imageMode: ImageGenerationMode;
   onImageModeChange: (mode: ImageGenerationMode) => void;
+  lineArtColorMode: LineArtColorMode;
+  onLineArtColorModeChange: (mode: LineArtColorMode) => void;
 }
 
 function durationLabel(seconds: number) {
@@ -36,13 +38,15 @@ export function LeftPanel({
   onPenStyleChange,
   imageMode,
   onImageModeChange,
+  lineArtColorMode,
+  onLineArtColorModeChange,
 }: Props) {
   const [prompt, setPrompt] = useState("");
   const [markdown, setMarkdown] = useState("");
 
   const handleSubmit = () => {
     if (!prompt.trim()) return;
-    onGenerate(prompt.trim(), markdown.trim(), ACTIVE_VIDEO_STYLE_ID, ACTIVE_PEN_STYLE_ID);
+    onGenerate(prompt.trim(), markdown.trim(), ACTIVE_VIDEO_STYLE_ID, ACTIVE_PEN_STYLE_ID, lineArtColorMode);
   };
 
   return (
@@ -102,6 +106,23 @@ export function LeftPanel({
             <div className="flex justify-between text-xs text-[--fg-subtle]">
               <span>1 分钟</span>
               <span>3 分钟</span>
+            </div>
+          </div>
+
+          <div className="space-y-2">
+            <span className="text-xs text-[--fg-default]">手绘线稿颜色</span>
+            <div className="grid grid-cols-2 gap-2" role="group" aria-label="手绘线稿颜色">
+              {([
+                ["color", "彩色手绘", "黑色线条 + 彩色点缀"],
+                ["monochrome", "黑白手绘", "仅黑、白与灰度"],
+              ] as const).map(([mode, label, detail]) => (
+                <button key={mode} type="button" disabled={loading} aria-pressed={lineArtColorMode === mode}
+                  onClick={() => onLineArtColorModeChange(mode)}
+                  className={`rounded-lg border px-2.5 py-2 text-left transition-colors ${lineArtColorMode === mode ? "border-purple-500 bg-purple-500/10 text-[--fg-default]" : "border-[--border-default] bg-[--bg-elevated] text-[--fg-muted] hover:border-[--border-subtle]"}`}>
+                  <span className="block text-xs font-semibold">{label}</span>
+                  <span className="mt-0.5 block text-[11px] text-[--fg-subtle]">{detail}</span>
+                </button>
+              ))}
             </div>
           </div>
 

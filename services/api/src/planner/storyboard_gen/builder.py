@@ -276,6 +276,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         scenes=scenes,
         video_style=video_style,
         pen_style=pen_style,
+        line_art_color_mode=req.line_art_color_mode if req.line_art_color_mode in {"color", "monochrome"} else "color",
         style_lock=req.style_lock,
         character_lock=req.character_lock,
         palette_id=req.palette_id,

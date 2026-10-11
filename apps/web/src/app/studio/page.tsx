@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { LeftPanel } from "@/components/studio/LeftPanel";
 import { generateGraph, generateStoryboard } from "@/lib/api";
 import { ACTIVE_PEN_STYLE_ID, ACTIVE_VIDEO_STYLE_ID, penStyleLabel, videoStyleLabel } from "@/lib/constants";
-import type { ImageGenerationMode, PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
+import type { ImageGenerationMode, LineArtColorMode, PenStyleId, Storyboard, VideoStyleId } from "@/lib/types";
 
 type GenerationStage = "idle" | "graph" | "storyboard";
 
@@ -19,12 +19,18 @@ export default function StudioPage() {
   const [targetDuration, setTargetDuration] = useState(120);
   const [videoStyle, setVideoStyle] = useState<VideoStyleId>(ACTIVE_VIDEO_STYLE_ID);
   const [penStyle, setPenStyle] = useState<PenStyleId>(ACTIVE_PEN_STYLE_ID);
+  const [lineArtColorMode, setLineArtColorMode] = useState<LineArtColorMode>("color");
   const [imageMode, setImageMode] = useState<ImageGenerationMode>(() => {
     return "sd15";
   });
   useEffect(() => {
     setImageMode(window.localStorage.getItem("explainflow_image_mode") === "flux" ? "flux" : "sd15");
+    setLineArtColorMode(window.localStorage.getItem("explainflow_line_art_color_mode") === "monochrome" ? "monochrome" : "color");
   }, []);
+  const handleLineArtColorModeChange = (mode: LineArtColorMode) => {
+    setLineArtColorMode(mode);
+    window.localStorage.setItem("explainflow_line_art_color_mode", mode);
+  };
   const handleImageModeChange = (mode: ImageGenerationMode) => {
     setImageMode(mode);
     window.localStorage.setItem("explainflow_image_mode", mode);
@@ -60,7 +66,8 @@ export default function StudioPage() {
     prompt: string,
     markdown: string,
     style: VideoStyleId,
-    pen: PenStyleId
+    pen: PenStyleId,
+    colorMode: LineArtColorMode
   ) => {
     setError(null);
     setGenerationStage("graph");
@@ -73,7 +80,7 @@ export default function StudioPage() {
       setGenerationStage("storyboard");
       const requestedStyle = style === ACTIVE_VIDEO_STYLE_ID ? style : ACTIVE_VIDEO_STYLE_ID;
       const requestedPen = pen === ACTIVE_PEN_STYLE_ID ? pen : ACTIVE_PEN_STYLE_ID;
-      const sb = await generateStoryboard(g, targetDuration, requestedStyle, requestedPen, imageMode);
+      const sb = await generateStoryboard(g, targetDuration, requestedStyle, requestedPen, imageMode, colorMode);
       setStoryboard(sb);
       sessionStorage.setItem("explainflow_storyboard", JSON.stringify(sb));
       router.push("/storyboard");
@@ -154,6 +161,8 @@ export default function StudioPage() {
             onPenStyleChange={handlePenStyleChange}
             imageMode={imageMode}
             onImageModeChange={handleImageModeChange}
+            lineArtColorMode={lineArtColorMode}
+            onLineArtColorModeChange={handleLineArtColorModeChange}
           />
         </div>
 

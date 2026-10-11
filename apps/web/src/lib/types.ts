@@ -16,6 +16,7 @@ export type VideoStyleId =
 
 export type PenStyleId = "no_hand" | "pen" | "marker" | "fountain_pen";
 export type ImageGenerationMode = "sd15" | "flux";
+export type LineArtColorMode = "color" | "monochrome";
 
 // ── Explain Graph ──────────────────────────────────────────────
 export type NodeType = "concept" | "formula" | "example" | "conclusion" | "process";
@@ -219,6 +220,7 @@ export interface Scene {
 
 export interface Storyboard {
   image_generation_mode?: ImageGenerationMode;
+  line_art_color_mode?: LineArtColorMode;
   topic: string;
   total_duration_estimate: number;
   scenes: Scene[];

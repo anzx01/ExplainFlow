@@ -60,6 +60,7 @@ class SceneImageRequest:
     pen_style: str = "marker"
     quality: str = "final"
     image_mode: str | None = None
+    line_art_color_mode: str = "color"
 
 
 def _canonical_video_style(value: str | None) -> str:
@@ -350,7 +351,8 @@ def _build_local_prompt(req: SceneImageRequest) -> str:
     if topic_hint:
         description = f"{topic_hint}. {description}"
     context = f"Topic subject: {req.topic}. Scene: {req.title}."
-    style = "rich editorial realistic instructional hand-drawn illustration rendered as a colored whiteboard scene, 3-5 large meaningful subject-specific objects, close-up readable action view, natural subject colors, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image"
+    monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
+    style = ("rich instructional monochrome hand-drawn line-art whiteboard scene, black charcoal gray and white only, no colored accents or fills, 3-5 large meaningful subject-specific objects, close-up readable action view, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image" if monochrome else "rich editorial realistic instructional hand-drawn illustration rendered as a colored whiteboard scene, 3-5 large meaningful subject-specific objects, close-up readable action view, natural subject colors, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image")
     exclusions = "No captions, logos, or watermarks."
     action_exclusions = {
         "roll_rope": " No rolling pin, knife, dough ball, wrapper, bowl, or other food.",
@@ -484,6 +486,7 @@ def _build_prompt(req: SceneImageRequest) -> str:
     if str(settings.imagegen_provider or "").strip().lower() == "local":
         return _build_local_prompt(req)
     mode = (req.board_mode or "whiteboard").strip().lower()
+    monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
     canvas_style = _canonical_video_style(req.video_style)
     style = (req.visual_style or "teacher_whiteboard").strip().lower()
     style_preset = VIDEO_STYLE_PRESETS.get(canvas_style, VIDEO_STYLE_PRESETS["whiteboard"])
@@ -532,10 +535,11 @@ def _build_prompt(req: SceneImageRequest) -> str:
     # truth; the renderer handles drawing annotations separately.
     domain_suffix, domain_negative = "", ""
     image_description = _normalize_image_description(req.image_description)
+    color_rules = ("strict monochrome black, charcoal gray and white hand-drawn marker line art, no colored accents or colored fills" if monochrome else "colored hand-drawn marker line art with restrained purposeful red, blue, yellow and green accents")
     return (
         f"{image_description}. Topic context only, do not draw as text: {req.topic}. "
         f"Scene context only, do not draw as text: {req.title}. "
-        f"{domain_suffix} {suffix}. Strict text-free policy: do not render any readable Chinese, English, letters, numbers, labels, captions, title, logo, watermark, UI text, or gibberish pseudo-text; leave open whitespace in the margins for renderer-added handwriting, not empty callout boxes or placeholder bubbles. "
+        f"{domain_suffix} {suffix}. {color_rules}. Strict text-free policy: do not render any readable Chinese, English, letters, numbers, labels, captions, title, logo, watermark, UI text, or gibberish pseudo-text; leave open whitespace in the margins for renderer-added handwriting, not empty callout boxes or placeholder bubbles. "
         f"Negative prompt: {negative}, readable text, words, letters, numbers, labels, captions, title, logo, watermark, gibberish pseudo-text, empty label boxes, blank callout boxes, empty circles, unlabeled geometric shapes, placeholder bubbles, blank legend boxes, standalone annotation arrows, pointing arrows, baked callout arrows, standalone warning marks, standalone brackets, {domain_negative}"
     )
 

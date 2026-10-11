@@ -1,4 +1,4 @@
-import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId, ImageGenerationMode } from "./types";
+import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId, ImageGenerationMode, LineArtColorMode } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
@@ -34,15 +34,17 @@ export async function generateStoryboard(
   targetDuration = 120,
   videoStyle: VideoStyleId = "whiteboard",
   penStyle: PenStyleId = "marker",
-  imageMode: ImageGenerationMode = "sd15"
+  imageMode: ImageGenerationMode = "sd15",
+  lineArtColorMode: LineArtColorMode = "color"
 ): Promise<Storyboard> {
   const data = await post<{ storyboard: Storyboard }>("/planner/storyboard", {
     graph,
     target_duration: targetDuration,
     video_style: videoStyle,
     pen_style: penStyle,
+    line_art_color_mode: lineArtColorMode,
   });
-  return { ...data.storyboard, image_generation_mode: imageMode } as Storyboard;
+  return { ...data.storyboard, image_generation_mode: imageMode, line_art_color_mode: lineArtColorMode } as Storyboard;
 }
 
 export async function listJobs(): Promise<RenderJobSummary[]> {
@@ -83,6 +85,7 @@ export async function generateSceneImage(storyboard: Storyboard, scene: Scene, i
         pen_style: scene.pen_style || storyboard.pen_style || "marker",
         quality: "preview",
         image_mode: imageMode,
+        line_art_color_mode: storyboard.line_art_color_mode || "color",
       },
     ],
   });

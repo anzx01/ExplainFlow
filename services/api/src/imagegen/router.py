@@ -29,6 +29,7 @@ class SceneImageItem(BaseModel):
     pen_style: str = "marker"
     quality: str = "final"
     image_mode: str | None = None
+    line_art_color_mode: str = "color"
 
 
 class GenerateImagesRequest(BaseModel):
@@ -76,6 +77,7 @@ async def generate_scene_images(req: GenerateImagesRequest) -> GenerateImagesRes
             pen_style=scene.pen_style,
             quality="preview" if scene.quality == "preview" else "final",
             image_mode=scene.image_mode,
+            line_art_color_mode=scene.line_art_color_mode,
         )
         for scene in req.scenes
     ]

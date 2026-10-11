@@ -172,6 +172,7 @@ class Storyboard(BaseModel):
     title_image_url: str | None = Field(default=None, alias="titleImageUrl")  # 标题卡片的主题插图
     video_style: str | None = None
     pen_style: str | None = None
+    line_art_color_mode: str = Field(default="color", alias="lineArtColorMode")
     style_lock: str | None = Field(default=None, alias="styleLock")
     character_lock: str | None = Field(default=None, alias="characterLock")
     palette_id: str | None = Field(default=None, alias="paletteId")
@@ -222,6 +223,7 @@ class GenerateStoryboardRequest(BaseModel):
     target_duration: int = Field(default=120, ge=60, le=180)
     video_style: str = "whiteboard"
     pen_style: str = "marker"
+    line_art_color_mode: str = Field(default="color", alias="lineArtColorMode")
     style_lock: str | None = Field(default=None, alias="styleLock")
     character_lock: str | None = Field(default=None, alias="characterLock")
     palette_id: str | None = Field(default=None, alias="paletteId")

@@ -120,7 +120,9 @@ function TitleCard({ topic, imageUrl }: { topic: string; imageUrl?: string | nul
 }
 
 export const WhiteboardVideo: React.FC<Props> = ({ storyboard }) => {
+  const monochrome = String(storyboard.line_art_color_mode ?? "color").toLowerCase() === "monochrome";
   return (
+    <div style={monochrome ? { filter: "grayscale(1) contrast(1.04)" } : undefined}>
     <Series>
       <Series.Sequence durationInFrames={TITLE_FRAMES}>
         <TitleCard topic={storyboard.topic} imageUrl={storyboard.titleImageUrl} />
@@ -135,5 +137,6 @@ export const WhiteboardVideo: React.FC<Props> = ({ storyboard }) => {
         );
       })}
     </Series>
+    </div>
   );
 };
