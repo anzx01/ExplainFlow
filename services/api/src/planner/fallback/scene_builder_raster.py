@@ -15,15 +15,18 @@ def build_raster_reveal(self, start: int) -> int:
     render_mode = _clean_text(self.raster_reveal.get("renderMode") or self.raster_reveal.get("render_mode")).lower()
 
     if render_mode == "direct":
-        region_x = self.width * 0.18
-        region_y = self.height * 0.17
-        region_w = self.width * 0.64
-        region_h = self.height * 0.62
+        # Reference artwork is the teaching visual, so reserve most of the
+        # board for it. The former 64% region made generated subjects appear
+        # like tiny icons in the finished video.
+        region_x = self.width * 0.09
+        region_y = self.height * 0.12
+        region_w = self.width * 0.82
+        region_h = self.height * 0.76
     else:
-        region_x = self.width * 0.20
+        region_x = self.width * 0.10
         region_y = self.diagram_top - self.height * 0.01
-        region_w = self.width * 0.60
-        region_h = self.height * 0.60
+        region_w = self.width * 0.80
+        region_h = self.height * 0.72
     region_aspect = region_w / max(1.0, region_h)
     if image_aspect >= region_aspect:
         draw_w = region_w
@@ -48,7 +51,7 @@ def build_raster_reveal(self, start: int) -> int:
             "width": round(draw_w, 1),
             "height": round(draw_h, 1),
             "renderMode": "direct",
-            "fit": "cover",
+            "fit": "contain",
             "directAppearFrame": 0,
             "strokes": [],
         }

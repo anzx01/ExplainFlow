@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { descriptionForScene, imageGenerationDescription, imagegenRequestTimeoutMs, selectSeedreamCandidates } from "./trace-inject.mjs";
+import { isRequiredReferenceScene, topicHanddrawImageBuffer, imageCacheKey, descriptionForScene, imageGenerationDescription, imagegenRequestTimeoutMs, selectSeedreamCandidates } from "./trace-inject.mjs";
 import { joinConnectedPaths } from "./trace-algo.mjs";
 import { shouldGenerateReferenceImage } from "./scene-strategy.mjs";
 
@@ -80,7 +80,7 @@ test("keeps whiteboard trace scenes eligible for subject artwork when they alrea
   assert.deepEqual(selectSeedreamCandidates([scene], new Set(), {}), [scene]);
 });
 
-test("does not turn ordinary whiteboard scenes into required direct references", () => {
+test("keeps every authored scene eligible without changing its reveal strategy", () => {
   const scenes = Array.from({ length: 4 }, (_, index) => ({
     id: `scene_${index}`,
     title: `Scene ${index}`,
@@ -91,7 +91,7 @@ test("does not turn ordinary whiteboard scenes into required direct references",
     visual_style: "teacher_whiteboard",
   }));
 
-  assert.equal(selectSeedreamCandidates(scenes, new Set(), {}).length, 1);
+  assert.equal(selectSeedreamCandidates(scenes, new Set(), {}).length, 4);
   assert.equal(scenes.every((scene) => !scene.render_strategy), true);
 });
 
@@ -103,8 +103,8 @@ test("keeps all explicit reference scenes above the optional image cap", () => {
   ];
 
   assert.deepEqual(
-    selectSeedreamCandidates(scenes, new Set(), {}).map((scene) => scene.id),
-    ["scene_3", "scene_4"],
+    selectSeedreamCandidates(scenes, new Set(), {}).map((scene) => scene.id).sort(),
+    ["scene_0", "scene_3", "scene_4"],
   );
 });
 
@@ -146,4 +146,24 @@ test("joins nearby endpoints within the skeleton sampling tolerance", () => {
   ]);
   assert.equal(joined.length, 1);
   assert.equal(joined[0].length, 3);
+});
+
+
+test("short-video scenes do not silently substitute fixed topic plates", () => {
+  const previous = process.env.EXPLAINFLOW_USE_TOPIC_PLATES;
+  delete process.env.EXPLAINFLOW_USE_TOPIC_PLATES;
+  try { assert.equal(topicHanddrawImageBuffer({topic: "short video harms"}, {id: "scene_0"}, 0), null); }
+  finally { if (previous === undefined) delete process.env.EXPLAINFLOW_USE_TOPIC_PLATES; else process.env.EXPLAINFLOW_USE_TOPIC_PLATES = previous; }
+});
+
+test("chalkboard formulas and no-hand scenes do not require raster artwork", () => {
+  assert.equal(isRequiredReferenceScene({image_description: "formula", board_mode: "chalkboard"}), false);
+  assert.equal(isRequiredReferenceScene({image_description: "formula", visual_style: "math_chalkboard"}), false);
+  assert.equal(isRequiredReferenceScene({image_description: "screenshot", hand_usage: "none"}), false);
+});
+test("image cache changes when authored action or image mode changes", () => {
+  const board = {topic: "short video harms", image_generation_mode: "flux"};
+  const scene = {id: "scene_0", image_description: "person and phone", visual_beats: [{draw_intent: "lying on side"}]};
+  assert.notEqual(imageCacheKey(board, scene), imageCacheKey(board, {...scene, visual_beats: [{draw_intent: "standing"}]}));
+  assert.notEqual(imageCacheKey(board, scene), imageCacheKey({...board, image_generation_mode: "sd15"}, scene));
 });

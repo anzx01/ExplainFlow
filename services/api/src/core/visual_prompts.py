@@ -72,7 +72,7 @@ BOLD_EDITORIAL_HANDDRAWN_STYLE_NAME = "bold_editorial_handdrawn"
 BOLD_EDITORIAL_IMAGE_STYLE = (
     "bold editorial hand-drawn explainer illustration inspired by modern marker and wax-crayon storyboard slides, "
     "warm off-white whiteboard or paper surface with subtle grain, "
-    "thick imperfect black marker/crayon outlines, loose sketch texture, expressive but simple people, objects, food, tools, or icons, "
+    "thick imperfect black marker/crayon outlines around solid filled color shapes, loose sketch texture, visible material cues, expressive but simple people, objects, food, tools, or icons, "
     "large friendly visual anchors rather than tiny symbols, "
     "hot pink accent connectors only when they are integral process paths between subject parts; no baked callout arrows, pointing arrows, warning marks, underlines, circles, brackets, or title marks, "
     "sunny yellow paint-blob or halo highlight shapes behind the main subject, never as a full-page background, "

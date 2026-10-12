@@ -269,7 +269,7 @@ export default function StoryboardPage() {
   const [selectedMusicId, setSelectedMusicId] = useState("");
   const [musicError, setMusicError] = useState<string | null>(null);
   const [sceneActionError, setSceneActionError] = useState<string | null>(null);
-  const [imageMode, setImageMode] = useState<ImageGenerationMode>("sd15");
+  const [imageMode, setImageMode] = useState<ImageGenerationMode>("flux");
   const [busySceneAction, setBusySceneAction] = useState<string | null>(null);
   const backgroundMusicVolume = 0.12;
 
@@ -280,7 +280,7 @@ export default function StoryboardPage() {
         const sb = JSON.parse(saved) as Storyboard;
         sb.topic = sb.topic.replace(/\x1b\[[0-9;]*m/g, "").trim();
         setStoryboard(sb);
-        setImageMode(sb.image_generation_mode === "flux" ? "flux" : "sd15");
+        setImageMode(sb.image_generation_mode === "sd15" ? "sd15" : "flux");
       } catch {
         // ignore parse errors, keep demo
       }

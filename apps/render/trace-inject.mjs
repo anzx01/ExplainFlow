@@ -37,11 +37,11 @@ function isShortVideoTopic(storyboard) {
   return /短视频|short[\s-]?video/i.test(text);
 }
 
-function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
+export function topicHanddrawImageBuffer(storyboard, scene, sceneIndex) {
   // Keep the checked-in plates available for diagnostics, but let the image
   // provider create the final subject artwork. The plates are intentionally
   // icon-like and are too sparse for the finished video.
-  if (!isShortVideoTopic(storyboard) || process.env.EXPLAINFLOW_USE_TOPIC_PLATES === "1") return null;
+  if (!isShortVideoTopic(storyboard) || process.env.EXPLAINFLOW_USE_TOPIC_PLATES !== "1") return null;
   const idMatch = String(scene?.id ?? "").match(/(\d+)$/);
   const sceneNumber = Number(idMatch?.[1] ?? sceneIndex);
   if (!Number.isInteger(sceneNumber) || sceneNumber < 0 || sceneNumber > 5) return null;
@@ -61,9 +61,13 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
   return Math.max(180000, Math.max(1, sceneCount) * providerSeconds * 1000 + 120000);
 }
 
-function imageCacheKey(storyboard, scene) {
+export function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "detailed-whiteboard-reference-v6",
+    renderAssetMode: "scene-authored-artwork-v7",
+    imageMode: storyboard?.image_generation_mode ?? storyboard?.imageGenerationMode ?? "default",
+    authoredPrompt: imageGenerationDescription(storyboard, scene),
+    sourceImage: createHash("sha256").update(sceneLocalImageBuffer(scene) ?? Buffer.alloc(0)).digest("hex"),
+    topicPlates: process.env.EXPLAINFLOW_USE_TOPIC_PLATES === "1",
     topic: storyboard?.topic ?? "",
     id: scene?.id ?? "",
     title: scene?.title ?? "",
@@ -104,12 +108,11 @@ export function imageGenerationDescription(storyboard, scene) {
   ].filter(Boolean).join(". ");
   const monochrome = String(storyboard?.line_art_color_mode ?? storyboard?.lineArtColorMode ?? "color").toLowerCase() === "monochrome";
   return [
-    "Create one unmistakable hand-drawn educational illustration",
+    `Required scene artwork: ${base}`,
     context,
-    `main visual description: ${base}`,
-    "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; build a complete classroom whiteboard composition with 6-10 recognizable objects, clear foreground and background relationships, varied line detail, and one readable central action",
-    `Use detailed hand-drawn marker line art like a real teaching sketch: person, phone, clock, brain/reward symbols, arrows and surrounding objects should be structurally recognizable and connected; ${monochrome ? "use only black, charcoal gray and white, with no colored accents" : "use restrained purposeful color accents"}; avoid isolated icon tiles and avoid an empty canvas`,
-    "Do not use anime, manga, glossy digital illustration, photorealism, generic cute characters, abstract icon-only diagrams, or unrelated stock art; no readable text, labels, logos, watermark, or baked callout boxes",
+    "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; build a complete classroom whiteboard composition preserving the specified objects, pose, lighting, and action, with clear foreground and background relationships and one readable central action",
+    `Use detailed hand-drawn marker line art like a real teaching sketch: the specified subjects should be structurally recognizable and connected; ${monochrome ? "use only black, charcoal gray and white, with no colored accents" : "use solid subject-specific color fills and purposeful color accents"}; avoid isolated icon tiles and avoid an empty canvas`,
+    "Do not use anime, manga, glossy digital illustration, photorealism, generic cute characters, a generic face substituted for the requested action, abstract icon-only diagrams, or unrelated stock art; no readable text, labels, logos, watermark, or baked callout boxes",
   ].join(". ");
 }
 
@@ -219,7 +222,9 @@ export function selectSeedreamCandidates(scenes, localImageSceneIds, rasterBySce
 export function isRequiredReferenceScene(scene) {
   const mode = sceneBoardMode(scene);
   const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").toLowerCase();
-  return (mode === "reference" || strategy === "direct") &&
+  const described = Boolean(scene.image_description ?? scene.imageDescription);
+  return mode !== "chalkboard" && sceneVisualStyle(scene) !== "math_chalkboard" &&
+    (described || mode === "reference" || strategy === "direct") &&
     sceneHandUsage(scene) !== "none" && !sceneLocalImageBuffer(scene);
 }
 
@@ -284,7 +289,7 @@ export async function injectImageTraces(storyboard, jobId) {
     ...storyboard,
     scenes: storyboard.scenes.map((scene) => ({
       ...scene,
-      image_description: descriptionForScene(storyboard, scene),
+      image_description: scene.image_description ?? scene.imageDescription ?? "",
       // Keep the original strategy absent when the storyboard did not set one.
       // A synthetic default here would make every ordinary whiteboard scene
       // look like a required direct-reference scene and defeat the scene cap.
@@ -347,7 +352,7 @@ export async function injectImageTraces(storyboard, jobId) {
       console.log(`[image-trace] Generating ${candidates.length} reference image(s) with ${providerStatus.provider ?? "configured"} provider (timeout ${Math.ceil(timeoutMs / 60000)} min)...`);
       const imageMode = String(storyboard.image_generation_mode ?? storyboard.imageGenerationMode ?? "default");
       console.log(`[image-trace] image_mode resolved: "${imageMode}" (storyboard.image_generation_mode=${JSON.stringify(storyboard.image_generation_mode)}, storyboard.imageGenerationMode=${JSON.stringify(storyboard.imageGenerationMode)})`);
-      response = await postJson(`${PYTHON_API}/imagegen/scenes`, {
+      const imageRequest = {
         scenes: candidates.map((scene) => ({
           scene_id: scene.id, topic: storyboard.topic ?? "",
           title: scene.title ?? "", image_description: imageGenerationDescription(storyboard, scene),
@@ -358,8 +363,14 @@ export async function injectImageTraces(storyboard, jobId) {
           pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
           quality: "final",
           image_mode: imageMode,
+          line_art_color_mode: storyboard.line_art_color_mode ?? storyboard.lineArtColorMode ?? "color",
         })),
-      }, timeoutMs);
+      };
+      const auditDir = join(PUBLIC_GENERATED_DIR, jobId);
+      mkdirSync(auditDir, { recursive: true });
+      writeFileSync(join(auditDir, "image-generation-request.json"), JSON.stringify(imageRequest, null, 2), "utf8");
+      response = await postJson(`${PYTHON_API}/imagegen/scenes`, imageRequest, timeoutMs);
+      writeFileSync(join(auditDir, "image-generation-diagnostics.json"), JSON.stringify(response.diagnostics ?? {}, null, 2), "utf8");
       const generatedCount = candidates.filter((scene) => response.images?.[scene.id]).length;
       if (REQUIRE_SEEDREAM_REFERENCE_IMAGES && generatedCount === 0) {
         const diagnostics = Object.entries(response.diagnostics ?? {})

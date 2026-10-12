@@ -164,15 +164,9 @@ export function shouldGenerateReferenceImage(scene) {
   if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
   if (explicit === "direct") return true;
-  if (
-    explicit === "trace" ||
-    (boardMode === "whiteboard" &&
-      handUsage === "trace" &&
-      ["", "teacher_whiteboard", "sharpie"].includes(visualStyle) &&
-      ["", "simple", "medium"].includes(String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase()))
-  ) {
-    return false;
-  }
+  // Trace describes the reveal animation, not permission to discard the
+  // scene's authored image description and substitute procedural icons.
+  if (scene?.image_description ?? scene?.imageDescription) return true;
   // Explicit reference contracts take precedence over the ordinary
   // whiteboard default, even when their overall video style is whiteboard.
   if (boardMode === "reference" || boardMode === "clean_canvas") return true;

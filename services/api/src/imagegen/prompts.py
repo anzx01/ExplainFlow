@@ -16,7 +16,7 @@ STYLE_SUFFIX = (
     "one vivid central visual metaphor, object, comparison, process, or mechanism per image; never a dense infographic, "
     "place the main illustration in the middle or slightly right of center, using about 55-75 percent of the frame width, "
     "leave broad clean margins around the drawing for a hand to write callouts later, "
-    "hand-drawn marker and crayon doodle style with solid readable strokes, not just thin black line art, "
+    "hand-drawn marker and crayon teaching artwork with solid filled color shapes, visible material texture and readable edge strokes, never thin outline-only line art, "
     "include 3-6 meaningful illustrated subject parts such as people, signs, clocks, routes, scales, gears, cards, process paths, badges, containers, food, cookware, or maps when they clarify the concept, "
     "do not add a title, topic heading, scene name, readable labels, logo, watermark, paragraph text, legend box, slide frame, or poster layout inside the image, "
     "the scene title and topic are only context for the artist; never render them as words inside the image, "

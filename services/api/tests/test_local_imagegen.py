@@ -27,13 +27,11 @@ def test_local_imagegen_status_reports_missing_components(monkeypatch, tmp_path:
     assert status["maxAttempts"] == settings.local_imagegen_max_attempts
 
 
-def test_local_prompt_removes_cloud_negative_prompt_and_caps_length():
-    prompt = "useful subject " + ("detail " * 300) + "Negative prompt: cloud-only exclusions"
-    result = _local_prompt(prompt)
-    assert len(result) <= 1000
-    assert "Negative prompt" not in result
+def test_local_prompt_preserves_late_scene_requirements():
+    prompt = "scene details " * 100 + "person lying on their side, glowing phone, spinning clock"
+    result = _local_prompt(prompt + "Negative prompt: cloud-only exclusions")
+    assert "person lying on their side, glowing phone, spinning clock" in result
     assert "cloud-only" not in result
-    assert "no artist signature" in result
 
 
 def test_flux_lora_adds_trigger_and_cli_lora_tag(monkeypatch, tmp_path: Path):
@@ -50,38 +48,14 @@ def test_flux_lora_adds_trigger_and_cli_lora_tag(monkeypatch, tmp_path: Path):
     assert "a text-free lesson drawing of a brain" in prompt
 
 
-def test_local_scene_prompt_keeps_action_before_style_noise(monkeypatch):
-    monkeypatch.setattr(settings, "imagegen_provider", "local")
-    request = SceneImageRequest(
-        "boiling", "dumplings", "Boil dumplings",
-        "three-stage action: lower dumplings into clear boiling water, pour cold water into the same pot, then scoop floating dumplings with a slotted spoon",
-    )
+def test_local_scene_prompt_preserves_authored_action_without_topic_override():
+    description = "A person lying on their side, glowing smartphone, rapidly spinning clock. " + "detail " * 160 + "Blue light on pillow."
+    request = SceneImageRequest("sleep", "short video harms", "sleep", description)
     prompt = _build_local_prompt(request)
-    assert len(prompt) < 1100
-    assert prompt.index("lower") < prompt.index("realistic instructional")
-    assert "slotted spoon" in prompt
-    assert "dense infographic" not in prompt
-
-
-def test_local_scene_prompt_keeps_topic_specific_visual_subject():
-    request = SceneImageRequest(
-        "attention", "看短视频的坏处", "注意力碎片化",
-        "a text-free educational illustration with one large central subject and generous margins",
-    )
-    prompt = _build_local_prompt(request)
-    assert "smartphone" in prompt
-    assert "scattered attention" in prompt
-    assert "generic geometric icons" in prompt
-
-
-def test_local_scene_prompt_changes_subject_by_short_video_scene():
-    request = SceneImageRequest(
-        "sleep", "看短视频的坏处", "睡眠与情绪",
-        "a text-free educational illustration with one large central subject and generous margins",
-    )
-    prompt = _build_local_prompt(request)
-    assert "tired person in bed" in prompt
-    assert "no brain network" in prompt
+    assert description in prompt
+    assert "Blue light on pillow" in _local_prompt(prompt)
+    assert "no brain, clock, or checklist" not in prompt
+    assert "solid filled color shapes" in prompt
 
 
 def test_local_seed_is_stable_and_prompt_specific():

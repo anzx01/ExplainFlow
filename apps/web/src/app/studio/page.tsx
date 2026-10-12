@@ -21,10 +21,10 @@ export default function StudioPage() {
   const [penStyle, setPenStyle] = useState<PenStyleId>(ACTIVE_PEN_STYLE_ID);
   const [lineArtColorMode, setLineArtColorMode] = useState<LineArtColorMode>("color");
   const [imageMode, setImageMode] = useState<ImageGenerationMode>(() => {
-    return "sd15";
+    return "flux";
   });
   useEffect(() => {
-    setImageMode(window.localStorage.getItem("explainflow_image_mode") === "flux" ? "flux" : "sd15");
+    setImageMode(window.localStorage.getItem("explainflow_image_mode") === "sd15" ? "sd15" : "flux");
     setLineArtColorMode(window.localStorage.getItem("explainflow_line_art_color_mode") === "monochrome" ? "monochrome" : "color");
   }, []);
   const handleLineArtColorModeChange = (mode: LineArtColorMode) => {

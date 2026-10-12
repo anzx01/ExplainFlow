@@ -151,8 +151,14 @@ def _comfy_workflow(prompt: str, negative: str, *, seed: int, width: int, height
         raise RuntimeError(f"Could not load ComfyUI API workflow {workflow_path}: {exc}") from exc
     if not isinstance(template, dict) or not template:
         raise RuntimeError("ComfyUI API workflow must be a non-empty object")
-    # 添加简洁度强制前缀
-    simplicity_prefix = "simple illustration, minimal details, 3-5 main objects only, clean composition, "
+    # Keep the scene readable without collapsing the subject into outline-only
+    # doodles. The generated image is shown as teaching artwork, so it needs
+    # filled shapes, material cues, and a clear visual anchor before the
+    # renderer adds handwriting.
+    simplicity_prefix = (
+        "finished full-color educational illustration, bold filled shapes, solid color areas, "
+        "visible subject materials and simple shading, 3-5 large main objects only, clean composition, "
+    )
     if settings.comfyui_lora.strip() and settings.comfyui_lora_trigger.strip():
         prompt = f"{settings.comfyui_lora_trigger}, {simplicity_prefix}{prompt}"
     else:
@@ -193,6 +199,7 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
         "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects, "
         "overly detailed, too many elements, cluttered composition, busy background, complex patterns, "
         "photorealistic details, fine textures, intricate shading, realistic rendering, "
+        "outline-only drawing, thin line art, wireframe, empty white interiors, unfilled objects, icon-only symbols, "
         "anime style details, hair strands, fabric folds, glossy highlights, "
         "small objects, tiny icons, miniature details, dense infographic, "
         "more than 5 main objects, crowded scene, overlapping elements"
@@ -305,8 +312,6 @@ def local_imagegen_status() -> dict:
 
 def _local_prompt(prompt: str) -> str:
     positive = prompt.split("Negative prompt:", 1)[0].strip()
-    if len(positive) > 900:
-        positive = positive[:900].rsplit(" ", 1)[0]
     return f"{positive}. Clean blank margins, no text, no logo, no watermark, no artist signature."
 
 
@@ -323,49 +328,17 @@ def _flux_prompt_with_lora(prompt: str) -> str:
 
 def _build_local_prompt(req: SceneImageRequest) -> str:
     """Build a topic-agnostic local image prompt from storyboard intent."""
-    stage_guidance = ""
-    stage = None
-    legacy_stage_guidance = {
-        "dough_prep": "Primary action: pour water into flour, mix it with hands or chopsticks, then knead one dough ball.",
-        "wrappers": "Primary action sequence, left to right: roll one long dough rope, cut it into equal pieces with a knife, roll one piece into one round wrapper.",
-        "roll_rope": "Primary action: two bare hands roll one straight long cylindrical dough rope directly on a board, palms touching the rope; no tool.",
-        "cut_pieces": "Primary action: one hand holds a knife touching one straight dough rope and cuts it into equal small pieces.",
-        "roll_wrapper": "Primary action: both hands hold a wooden rolling pin touching one small dough ball and flatten it into one thin round wrapper.",
-        "wrapping": "Primary action: place filling on one wrapper, fold it, and pinch visible pleats.",
-        "boiling": "Primary action sequence, left to right: lower crescent-shaped dumplings with folded pleated edges into clear boiling water, pour cold water into the same open pot, then scoop floating crescent dumplings with a slotted spoon.",
-        "boil_drop": "Primary action: a slotted spoon lowers crescent-shaped dumplings with folded edges below the water surface in an open pot of clear boiling water.",
-        "boil_add_water": "Primary action: a ladle pours cold water into the same open pot while crescent-shaped dumplings with folded edges are submerged in boiling water.",
-        "boil_float_scoop": "Primary action: crescent-shaped dumplings with folded edges float on clear boiling water and a slotted spoon lifts them out.",
-    }.get(stage)
-    action_stages = {"roll_rope", "cut_pieces", "roll_wrapper", "boil_drop", "boil_add_water", "boil_float_scoop"}
-    if stage in action_stages:
-        positive_description = _normalize_image_description(req.image_description).split("; no", 1)[0].strip()
-        description = f"{positive_description}. {stage_guidance}"
-    elif stage_guidance:
-        description = stage_guidance
-    else:
-        description = _normalize_image_description(req.image_description)
-        if len(description) > 520:
-            description = description[:520].rsplit(" ", 1)[0]
-    topic_hint = _topic_visual_hint(req)
-    if topic_hint:
-        description = f"{topic_hint}. {description}"
-    context = f"Topic subject: {req.topic}. Scene: {req.title}."
+    description = _normalize_image_description(req.image_description)
     monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
-    style = ("rich instructional monochrome hand-drawn line-art whiteboard scene, black charcoal gray and white only, no colored accents or fills, 3-5 large meaningful subject-specific objects, close-up readable action view, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image" if monochrome else "rich editorial realistic instructional hand-drawn illustration rendered as a colored whiteboard scene, 3-5 large meaningful subject-specific objects, close-up readable action view, natural subject colors, thick imperfect marker outlines, clear object relationships, generous off-white whitespace, plain unlabeled image")
-    exclusions = "No captions, logos, or watermarks."
-    action_exclusions = {
-        "roll_rope": " No rolling pin, knife, dough ball, wrapper, bowl, or other food.",
-        "cut_pieces": " No rolling pin, wrapper, filling, bowl, or other food.",
-        "roll_wrapper": " No knife, filling, folded dumpling, bowl, or other food.",
-        "boil_drop": " No round steamed buns, baozi, mantou, bamboo steamer, dry steam, noodles, or soup.",
-        "boil_add_water": " No round steamed buns, baozi, mantou, bamboo steamer, dry steam, noodles, or soup.",
-        "boil_float_scoop": " No round steamed buns, baozi, mantou, bamboo steamer, dry steam, noodles, or soup.",
-    }
-    exclusions += action_exclusions.get(stage, "")
-    if stage in {"dough_prep", "wrappers", "roll_rope", "cut_pieces", "roll_wrapper", "wrapping", "boiling", "boil_drop", "boil_add_water", "boil_float_scoop"}:
-        exclusions += " No steamer, steamed buns, baozi, mantou, noodles, soup, or plated meal."
-    return f"{description} {context} {style}. Preserve the concrete topic subject and scene action; do not replace it with generic geometric icons. {exclusions}"
+    style = (
+        "monochrome black and gray instructional illustration"
+        if monochrome else
+        "finished hand-drawn instructional illustration with solid filled color shapes and gentle shading"
+    )
+    return (
+        f"{description} Preserve every specified subject, pose, action, and lighting relationship. "
+        f"{style}. White background with clear margins; no readable text or watermark."
+    )
 
 
 def _local_seed(prompt: str) -> int:
@@ -483,7 +456,7 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
 
 
 def _build_prompt(req: SceneImageRequest) -> str:
-    if str(settings.imagegen_provider or "").strip().lower() == "local":
+    if str(req.image_mode or "").lower() == "flux" or (not req.image_mode and str(settings.imagegen_provider or "").strip().lower() in {"local", "local_then_ark"}):
         return _build_local_prompt(req)
     mode = (req.board_mode or "whiteboard").strip().lower()
     monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
@@ -535,7 +508,7 @@ def _build_prompt(req: SceneImageRequest) -> str:
     # truth; the renderer handles drawing annotations separately.
     domain_suffix, domain_negative = "", ""
     image_description = _normalize_image_description(req.image_description)
-    color_rules = ("strict monochrome black, charcoal gray and white hand-drawn marker line art, no colored accents or colored fills" if monochrome else "colored hand-drawn marker line art with restrained purposeful red, blue, yellow and green accents")
+    color_rules = ("strict monochrome black, charcoal gray and white hand-drawn marker line art, no colored accents or colored fills" if monochrome else "full-color hand-drawn teaching artwork with solid filled forms, subject-specific natural colors, visible material texture and restrained purposeful red, blue, yellow and green accents; never outline-only")
     return (
         f"{image_description}. Topic context only, do not draw as text: {req.topic}. "
         f"Scene context only, do not draw as text: {req.title}. "

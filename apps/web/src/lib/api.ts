@@ -34,7 +34,7 @@ export async function generateStoryboard(
   targetDuration = 120,
   videoStyle: VideoStyleId = "whiteboard",
   penStyle: PenStyleId = "marker",
-  imageMode: ImageGenerationMode = "sd15",
+  imageMode: ImageGenerationMode = "flux",
   lineArtColorMode: LineArtColorMode = "color"
 ): Promise<Storyboard> {
   const data = await post<{ storyboard: Storyboard }>("/planner/storyboard", {
@@ -69,7 +69,7 @@ export async function updateJobTopic(jobId: string, topic: string): Promise<void
   });
 }
 
-export async function generateSceneImage(storyboard: Storyboard, scene: Scene, imageMode: ImageGenerationMode = "sd15"): Promise<string> {
+export async function generateSceneImage(storyboard: Storyboard, scene: Scene, imageMode: ImageGenerationMode = "flux"): Promise<string> {
   const sceneId = scene.id;
   const data = await post<{ images: Record<string, string | null> }>("/imagegen/scenes", {
     scenes: [
