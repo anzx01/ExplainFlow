@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from src.planner.models import Storyboard
 
@@ -30,6 +30,7 @@ class RenderJobRequest(BaseModel):
     background_music_enabled: bool = False
     background_music_id: str | None = None
     background_music_volume: float = Field(default=0.12, ge=0.0, le=0.5)
+    force_render: bool = Field(default=False, validation_alias=AliasChoices("force_render", "forceRender"))
 
 
 class RenderJobStatus(BaseModel):

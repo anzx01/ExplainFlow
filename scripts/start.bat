@@ -23,7 +23,9 @@ start "EF-ComfyUI" cmd /k "cd /d D:\ck\ComfyUI && venv\Scripts\python.exe main.p
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-for-comfyui.ps1" -Port 8188 -TimeoutSeconds 90
 if errorlevel 1 echo ComfyUI did not become ready within 90 seconds. API will still start; check the EF-ComfyUI window.
 
-start "EF-API" cmd /k "cd /d %~dp0..\services\api && uv run uvicorn main:app --host :: --port 8010 --reload"
+set "UV_EXE=%USERPROFILE%\AppData\Local\Programs\Python\Python311\Scripts\uv.exe"
+if not exist "%UV_EXE%" set "UV_EXE=uv"
+start "EF-API" /D "%~dp0..\services\api" "%UV_EXE%" run uvicorn main:app --host 127.0.0.1 --port 8010 --reload
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0wait-for-api.ps1" -Port 8010 -TimeoutSeconds 45
 if errorlevel 1 (
   echo API did not become ready. Check the EF-API window for the startup error.
@@ -31,7 +33,7 @@ if errorlevel 1 (
   exit /b 1
 )
 start "EF-Web" cmd /k "cd /d %~dp0..\apps\web && node_modules\.bin\next dev --turbopack --port 3010"
-start "EF-Render" cmd /k "cd /d %~dp0..\apps\render && node server.mjs"
+start "EF-Render" cmd /k "cd /d %~dp0..\apps\render && set PYTHON_API_URL=http://127.0.0.1:8010 && node server.mjs"
 
 echo API     http://localhost:8010
 echo Web     http://localhost:3010

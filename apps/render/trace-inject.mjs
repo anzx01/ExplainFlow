@@ -345,6 +345,8 @@ export async function injectImageTraces(storyboard, jobId) {
       }
       const timeoutMs = imagegenRequestTimeoutMs(providerStatus, candidates.length, IMAGEGEN_REQUEST_TIMEOUT_MS);
       console.log(`[image-trace] Generating ${candidates.length} reference image(s) with ${providerStatus.provider ?? "configured"} provider (timeout ${Math.ceil(timeoutMs / 60000)} min)...`);
+      const imageMode = String(storyboard.image_generation_mode ?? storyboard.imageGenerationMode ?? "default");
+      console.log(`[image-trace] image_mode resolved: "${imageMode}" (storyboard.image_generation_mode=${JSON.stringify(storyboard.image_generation_mode)}, storyboard.imageGenerationMode=${JSON.stringify(storyboard.imageGenerationMode)})`);
       response = await postJson(`${PYTHON_API}/imagegen/scenes`, {
         scenes: candidates.map((scene) => ({
           scene_id: scene.id, topic: storyboard.topic ?? "",
@@ -355,7 +357,7 @@ export async function injectImageTraces(storyboard, jobId) {
           visual_style: scene.visual_style ?? scene.visualStyle ?? "teacher_whiteboard",
           pen_style: scene.pen_style ?? scene.penStyle ?? storyboard.pen_style ?? storyboard.penStyle ?? "marker",
           quality: "final",
-          image_mode: String(storyboard.image_generation_mode ?? storyboard.imageGenerationMode ?? "sd15"),
+          image_mode: imageMode,
         })),
       }, timeoutMs);
       const generatedCount = candidates.filter((scene) => response.images?.[scene.id]).length;

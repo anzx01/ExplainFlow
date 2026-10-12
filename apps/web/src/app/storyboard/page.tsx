@@ -95,6 +95,9 @@ function RenderButton({
           background_music_enabled: backgroundMusicEnabled,
           background_music_id: backgroundMusicId,
           background_music_volume: backgroundMusicVolume,
+          // Always render the current storyboard. Reusing an older QA result can
+          // point diagnostics at a different job and hide audio/image changes.
+          forceRender: true,
         }),
       });
       if (!res.ok) {

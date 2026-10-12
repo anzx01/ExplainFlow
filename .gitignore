@@ -16,6 +16,7 @@ logs/
 .tmp/
 services/api/logs/
 outputs/
+.explainflow-render.pid
 apps/render/generated/
 apps/render/public/generated/
 evals/results.json

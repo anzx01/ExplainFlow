@@ -83,7 +83,10 @@ export const PUBLIC_DIR = join(__dirname, "public");
 export const PUBLIC_GENERATED_DIR = join(PUBLIC_DIR, "generated");
 // On Windows, localhost can resolve to a stale IPv4 listener while ExplainFlow
 // is served by the IPv6 dual-stack API process. Pin the project API explicitly.
-export const PYTHON_API = process.env.PYTHON_API_URL ?? "http://127.0.0.1:8010";
+const configuredPythonApi = process.env.PYTHON_API_URL?.trim();
+export const PYTHON_API = configuredPythonApi
+  ? configuredPythonApi.replace("http://[::1]:8010", "http://127.0.0.1:8010").replace("http://localhost:8010", "http://127.0.0.1:8010")
+  : "http://127.0.0.1:8010";
 export const IMAGEGEN_REQUEST_TIMEOUT_MS = Number(process.env.REMOTION_IMAGEGEN_TIMEOUT_MS ?? 0);
 export const COMPOSITION_ID = "GeneratedVideo";
 export const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
@@ -130,6 +133,7 @@ export const DIRECT_IMAGE_STROKE_THRESHOLD = Math.max(
 export const HAND_ASSET = "hand-real-pen.png";
 export const MIN_RENDER_OUTPUT_BYTES = Math.max(1024, Number(process.env.RENDER_QA_MIN_BYTES ?? 50000) || 50000);
 export const MIN_RENDER_FRAME_STDDEV = Math.max(0.5, Number(process.env.RENDER_QA_MIN_FRAME_STDDEV ?? 2.5) || 2.5);
+export const MIN_RENDER_FRAME_FOREGROUND = Math.max(0.02, Number(process.env.RENDER_QA_MIN_FRAME_FOREGROUND ?? 0.04) || 0.04);
 export const SCENE_PREROLL_FRAMES = Math.max(0, Math.min(90, Number(process.env.SCENE_PREROLL_FRAMES ?? 0) || 0));
 export const BEAT_AUDIO_LEAD_FRAMES = Math.max(0, Math.min(36, Number(process.env.BEAT_AUDIO_LEAD_FRAMES ?? 8) || 8));
 export const MUSIC_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".ogg", ".webm"]);

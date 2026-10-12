@@ -90,6 +90,7 @@ async def create_render_job(req: RenderJobRequest) -> RenderJobStatus:
                     "backgroundMusicEnabled": req.background_music_enabled,
                     "backgroundMusicId": req.background_music_id,
                     "backgroundMusicVolume": req.background_music_volume,
+                    "forceRender": req.force_render,
                 },
             )
             resp.raise_for_status()

@@ -77,6 +77,21 @@ function ensureReferenceImagesVisible(code) {
   );
 }
 
+/**
+ * Patch getActiveDrawOp so it searches ALL drawOps (text + path), not just
+ * kind==="path". LLM sometimes emits the path-only filter from learned patterns
+ * even when told otherwise; this post-processing step enforces the fix.
+ */
+function ensureHandFollowsTextGlyphs(code) {
+  // Match the common generated pattern:
+  //   .filter((op) => op.kind === "path" && frame >= op.startFrame && frame <= op.endFrame)
+  // Replace with a filter that accepts all kinds.
+  return String(code || "").replace(
+    /\.filter\(\s*\(\s*op\s*\)\s*=>\s*op\.kind\s*===\s*["']path["']\s*&&\s*frame\s*>=\s*op\.startFrame\s*&&\s*frame\s*<=\s*op\.endFrame\s*\)/g,
+    ".filter((op) => frame >= op.startFrame && frame <= op.endFrame)",
+  );
+}
+
 export function generatedTsxRendersSceneAudio(code, source) {
   if (generatedTsxRendersLiteralAudioSource(code, source)) return true;
   if (!codeContainsAudioSource(code, source)) return false;
@@ -240,7 +255,7 @@ export function writeGeneratedProject(jobId, generated, storyboard, options = {}
   // Scene audio is stripped from the generated component below. Calculate
   // fallback tracks from that stripped source so every TTS segment remains
   // rendered by the wrapper entrypoint.
-  const strippedTsx = ensureReferenceImagesVisible(stripGeneratedSceneAudio(generated.tsx));
+  const strippedTsx = ensureHandFollowsTextGlyphs(ensureReferenceImagesVisible(stripGeneratedSceneAudio(generated.tsx)));
   // The component is stripped of all generated scene audio, so derive the
   // wrapper tracks against an empty source and inject every storyboard segment.
   const extraVoiceTracks = collectMissingVoiceTracks(storyboard, "");

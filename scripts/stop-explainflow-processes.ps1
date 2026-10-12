@@ -14,11 +14,13 @@ $processes = $allProcesses | Where-Object {
 $killIds = [Collections.Generic.HashSet[int]]::new()
 foreach ($process in $processes) { [void]$killIds.Add([int]$process.ProcessId) }
 
-# ComfyUI is installed outside the ExplainFlow checkout but is owned by this
-# local stack and listens on 8188. Reclaim its listener on restart.
-foreach ($connection in @(Get-NetTCPConnection -LocalPort 8188 -State Listen)) {
+# Reclaim listeners owned by this local stack on restart. This also handles
+# orphaned child processes whose command line no longer contains the project path.
+foreach ($port in @(8010, 3010, 3002, 8188)) {
+  foreach ($connection in @(Get-NetTCPConnection -LocalPort $port -State Listen)) {
   if ($connection.OwningProcess -and $connection.OwningProcess -ne $PID) {
     [void]$killIds.Add([int]$connection.OwningProcess)
+  }
   }
 }
 $pidFile = Join-Path $root '.explainflow-render.pid'

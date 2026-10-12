@@ -82,7 +82,7 @@ export function buildStylePrompt(videoStyle, penStyle, styleInstructions, subtit
     "Use exact constants: const HAND_WIDTH = 260; const HAND_HEIGHT = 289; const PEN_TIP_X = 15; const PEN_TIP_Y = 78; position with left: tipX - PEN_TIP_X and top: tipY - PEN_TIP_Y so the marker tip touches the active stroke. " +
     "HandPen must return an absolutely positioned HTML div wrapping Img, and <HandPen> must be rendered as a sibling after the SVG, never inside SVG. " +
     "In chalkboard/no-hand scenes keep the HandPen component defined but pass visible={false}; do not show a decorative hand. " +
-    "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). " +
+    "Define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), and getPenPosition(frame). getActiveDrawOp must search ALL drawOps regardless of kind (both 'text' and 'path'), not only kind='path'; text glyph ops carry stroke-like points and must also drive the hand position. " +
     "When two drawOps are separated by a short gap, keep the hand visible and move it from the previous stroke endpoint to the next stroke start without drawing, like a teacher lifting the marker. " +
     "If scenes include audioSegments, render each segment's audioUrl in its own Sequence using audioStartFrame when present, and keep matching drawOps inside the same beat window. " +
     "The hand must move up/down/left/right within words, not slide on one text baseline; text ops need stroke-like zig-zag points. " +
@@ -101,7 +101,7 @@ export function buildStylePrompt(videoStyle, penStyle, styleInstructions, subtit
     "When scene.referenceImageAsset and scene.rasterReveal exist, always render the generated reference image via RasterRevealImage/RasterFinalOverlay; do not silently replace it with simpler SVG-only shapes. " +
     "Never create an inner paper, card, panel, slide, sheet, poster, white rectangle, or separate board surface; the full AbsoluteFill background is the only whiteboard. " +
     "Do not use washD, boxShadow, textShadow, drop-shadow, CSS filter, gradients, or any shadow/backing behind drawings or board text. " +
-    "follow a real teacher-board layout: short blue title near the top-left or top-center, one central diagram occupying roughly 45-65% of the width, large empty margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. " +
+    "follow a real teacher-board layout: short blue title near the top-left or top-center, one detailed central diagram occupying roughly 70-85% of the width and at least 60% of the height, with large readable people, devices, clocks, arrows, and cause-effect elements; keep only modest margins, short labels close to the object, no fixed left explanation column, no paragraphs on the board. Never shrink a reference image to a small centered thumbnail. " +
     "animated dashed paths must use fill=\"none\"; do not use colored background washes, paper tints, or colored panels behind diagrams. and lots of negative space. " +
     "Start writing immediately in each scene and avoid blank boards after a cut; scene changes should feel like continuous board work. " +
     "For Chinese text use STXingkai/华文行楷/KaiTi/STKaiti/Kaiti SC/cursive first, not default bold sans-serif. " +

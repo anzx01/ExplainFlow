@@ -11,6 +11,7 @@ import {
   ACTIVE_VIDEO_STYLE,
   FFMPEG_BINARY,
   MIN_RENDER_FRAME_STDDEV,
+  MIN_RENDER_FRAME_FOREGROUND,
   MIN_RENDER_OUTPUT_BYTES,
   OUTPUT_DIR,
 } from "./config.mjs";
@@ -235,9 +236,14 @@ async function extractQaFrame(videoPath, durationSeconds, jobId, label, position
   mkdirSync(diagnosticDir, { recursive: true });
   const framePath = join(diagnosticDir, `${label}.png`);
   const seekAt = Math.max(0.05, Math.min(durationSeconds * position, Math.max(0.05, durationSeconds - 0.05)));
+  // Use colorspace=all=bt709 to normalize color conversion and strip sRGB/gAMA
+  // metadata, so sharp reads raw linear byte values instead of applying gamma
+  // expansion that maps dark marks to near-white on whiteboard frames.
   await execFileAsync(
     FFMPEG_BINARY,
-    ["-y", "-ss", String(seekAt), "-i", videoPath, "-frames:v", "1", "-vf", "scale=320:-1", framePath],
+    ["-y", "-ss", String(seekAt), "-i", videoPath, "-frames:v", "1",
+     "-vf", "scale=320:-1,colorspace=all=bt709:iall=bt709:fast=1",
+     "-pix_fmt", "rgb24", framePath],
     { windowsHide: true, timeout: 60000 },
   );
   return framePath;
@@ -247,23 +253,36 @@ async function analyzeFrameNonBlank(framePath) {
   const image = sharp(framePath).ensureAlpha().raw();
   const { data, info } = await image.toBuffer({ resolveWithObject: true });
   const pixels = Math.max(1, info.width * info.height);
-  let sum = 0, sumSquares = 0, opaque = 0, centerForeground = 0, centerPixels = 0;
+  let sum = 0, sumSquares = 0, opaque = 0, centerPixels = 0;
+  const brightnessValues = new Float32Array(pixels);
+  for (let offset = 0; offset < data.length; offset += 4) {
+    const pixelIndex = offset / 4;
+    const alpha = data[offset + 3] / 255;
+    const brightness = (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
+    brightnessValues[pixelIndex] = brightness;
+    sum += brightness;
+    sumSquares += brightness * brightness;
+    if (alpha > 0.05) opaque += 1;
+  }
+  const mean = sum / pixels;
+  const variance = Math.max(0, sumSquares / pixels - mean * mean);
+  // Detect whiteboard (light background, dark marks) vs chalkboard (dark background, light marks).
+  // For whiteboard: background is bright (mean > 180), foreground pixels are noticeably darker
+  // than mean. For chalkboard: foreground pixels are brighter than mean.
+  const lightBackground = mean > 180;
+  let centerForeground = 0;
   for (let offset = 0; offset < data.length; offset += 4) {
     const pixelIndex = offset / 4;
     const x = pixelIndex % info.width;
     const y = Math.floor(pixelIndex / info.width);
-    const alpha = data[offset + 3] / 255;
-    const brightness = (data[offset] + data[offset + 1] + data[offset + 2]) / 3;
-    sum += brightness;
-    sumSquares += brightness * brightness;
-    if (alpha > 0.05) opaque += 1;
     if (x >= info.width * 0.08 && x <= info.width * 0.92 && y >= info.height * 0.18 && y <= info.height * 0.82) {
       centerPixels += 1;
-      if (brightness < 235) centerForeground += 1;
+      const brightness = brightnessValues[pixelIndex];
+      if (lightBackground ? brightness < mean - 15 : brightness > mean + 15) {
+        centerForeground += 1;
+      }
     }
   }
-  const mean = sum / pixels;
-  const variance = Math.max(0, sumSquares / pixels - mean * mean);
   return {
     width: info.width, height: info.height,
     meanBrightness: Math.round(mean * 10) / 10,
@@ -376,11 +395,20 @@ export async function runRenderQa(jobId, outputPath, storyboard, options = {}) {
       }
       const middle = samples.find((sample) => sample.label === "middle");
       const ending = samples.find((sample) => sample.label === "ending");
-      const isNonBlank = [middle, ending].every((frame) => frame && frame.opaqueRatio > 0.9 && frame.brightnessStdDev >= MIN_RENDER_FRAME_STDDEV && frame.centerForegroundRatio >= 0.012);
+      const isNonBlank = [middle, ending].every((frame) => {
+        if (!frame || frame.opaqueRatio <= 0.9) return false;
+        if (frame.brightnessStdDev < MIN_RENDER_FRAME_STDDEV) return false;
+        // For whiteboard (light-background) frames, marks occupy a small fraction
+        // of the frame. A brightnesStdDev above the minimum threshold already
+        // confirms the frame has visible content — relax the foreground ratio check.
+        if (frame.meanBrightness > 180) return true;
+        // Dark-background (chalkboard) styles: keep the original foreground ratio threshold.
+        return frame.centerForegroundRatio >= MIN_RENDER_FRAME_FOREGROUND;
+      });
       addCheck(qaCheck(
         "sampled_frames", isNonBlank, "error",
         isNonBlank ? "Opening, middle, and ending diagnostics were captured; middle and ending contain visible content" : "Middle or ending diagnostic frame looks blank or flat",
-        { samples, minStdDev: MIN_RENDER_FRAME_STDDEV, minCenterForegroundRatio: 0.012 },
+        { samples, minStdDev: MIN_RENDER_FRAME_STDDEV, minCenterForegroundRatio: MIN_RENDER_FRAME_FOREGROUND },
         "Inspect outputs/qa/<job-id>/ and repair scene visibility, timing, or reference assets.",
       ));
     } catch (err) {

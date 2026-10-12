@@ -179,7 +179,9 @@ export function shouldGenerateReferenceImage(scene) {
   if (visualStyle === "technical_reference" || visualStyle === "marketing_doodle") return true;
   const complexity = String(scene?.visual_complexity ?? scene?.visualComplexity ?? "").toLowerCase();
   if (complexity === "dense" || complexity === "reference") return true;
-  if (videoStyle === "whiteboard" || videoStyle === "sharpie") return false;
+  // Whiteboard/sharpie scenes with an explicit image_description get a reference
+  // image too; only skip them when there is no description at all.
+  if ((videoStyle === "whiteboard" || videoStyle === "sharpie") && !(scene?.image_description ?? scene?.imageDescription)) return false;
   if (["modern_minimal", "technical_blueprint", "editorial", "playful"].includes(videoStyle)) return true;
   if (ENABLE_SEEDREAM_REFERENCE_IMAGES && scene?.image_description) return true;
   if (boardMode === "whiteboard" && visualStyle === "teacher_whiteboard" && handUsage === "trace") {
