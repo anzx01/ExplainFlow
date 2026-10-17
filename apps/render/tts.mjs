@@ -198,8 +198,16 @@ function reusableSceneAudio(scene) {
 
 export async function injectAudio(storyboard, voice) {
   const voiceKey = normalizeVoiceKey(voice ?? "xiaoxiao");
-  // Local default voice uses one continuous take; explicit alternate voices retain their provider.
-  if (process.platform === "win32" && voiceKey === "xiaoxiao" && storyboard.scenes.every(scene => scene.narration?.trim() && !scene.audioUrl && !scene.audio_url && !scene.audio_data_url && !scene.audioDataUrl)) {
+  // The Windows SAPI continuous take sounds robotic; edge-tts neural voices
+  // are the default. Set EXPLAINFLOW_TTS_ENGINE=sapi to restore the single
+  // continuous local take with speech bookmarks.
+  const ttsEngine = String(process.env.EXPLAINFLOW_TTS_ENGINE ?? "edge").trim().toLowerCase();
+  if (
+    ttsEngine === "sapi" &&
+    process.platform === "win32" &&
+    voiceKey === "xiaoxiao" &&
+    storyboard.scenes.every(scene => scene.narration?.trim() && !scene.audioUrl && !scene.audio_url && !scene.audio_data_url && !scene.audioDataUrl)
+  ) {
     return continuousNarration(storyboard);
   }
   const sceneResults = await Promise.allSettled(

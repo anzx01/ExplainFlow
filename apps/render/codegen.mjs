@@ -242,10 +242,13 @@ export async function generateRemotionCode(storyboard, options = {}) {
     try {
       const validatedTsx = validateGeneratedTsx(response.tsx, codegenStoryboard);
       const glyphTsx = injectGlyphOutlineDrawing(validatedTsx);
+      // Compress stroke schedules that spill into the scene tail so the
+      // finished-artwork overlay can fade in and hold before the cut.
+      const heldTsx = enforceSceneFinalHold(glyphTsx);
       const plannedSceneFrames = computePlannedFrames(codegenStoryboard);
 
       return {
-        tsx: validateGeneratedTsx(glyphTsx, codegenStoryboard),
+        tsx: validateGeneratedTsx(heldTsx, codegenStoryboard),
         durationInFrames: Math.max(
           FPS,
           Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
@@ -276,6 +279,105 @@ function computePlannedFrames(storyboard) {
       : 0;
     return sum + Math.max(0, timingFrames, estimateFrames, segmentFrames);
   }, 0);
+}
+
+// ---------------------------------------------------------------------------
+// Final-hold enforcement
+// ---------------------------------------------------------------------------
+
+// The generated RasterFinalOverlay fades the finished artwork in over ~8
+// frames after the last stroke ends. Every scene must keep a protected tail
+// (fade + hold) with no scheduled drawing, otherwise the cut lands mid-sketch.
+// Longer scenes keep a proportional tail (up to ~3.7s) so viewers spend more
+// time on the finished board and less watching half-written characters.
+export const FINAL_HOLD_TAIL_FRAMES = 20;
+export const FINAL_HOLD_TAIL_MAX_FRAMES = 90;
+const FINAL_HOLD_TAIL_RATIO = 0.12;
+
+function finalHoldTailFrames(duration, { tailFrames = FINAL_HOLD_TAIL_FRAMES } = {}) {
+  return Math.max(tailFrames, Math.min(FINAL_HOLD_TAIL_MAX_FRAMES, Math.round(duration * FINAL_HOLD_TAIL_RATIO)));
+}
+
+function sceneDurationFramesInGeneratedScene(scene) {
+  const segments = Array.isArray(scene?.audioSegments) ? scene.audioSegments : [];
+  const fromSegments = segments.reduce(
+    (max, seg) => Math.max(max, Number(seg?.endFrame ?? 0), Number(seg?.duration ?? 0)),
+    0,
+  );
+  return Math.max(0, Number(scene?.timingPlan?.durationFrames ?? 0), fromSegments);
+}
+
+function rescaleSceneDrawOps(scene, options = {}) {
+  const duration = sceneDurationFramesInGeneratedScene(scene);
+  const ops = Array.isArray(scene?.drawOps) ? scene.drawOps : [];
+  if (!duration || !ops.length) return scene;
+  const tailFrames = finalHoldTailFrames(duration, options);
+  const maxEnd = ops.reduce((max, op) => Math.max(max, Number(op?.endFrame ?? 0) || 0), 0);
+  if (maxEnd <= 0 || maxEnd <= duration - tailFrames) return scene;
+  const scale = Math.max(0.05, (duration - tailFrames) / maxEnd);
+  const drawOps = ops.map((op) => {
+    const start = Number(op?.startFrame ?? 0) || 0;
+    const end = Number(op?.endFrame ?? 0) || 0;
+    const scaledStart = Math.round(start * scale);
+    let scaledEnd = Math.round(end * scale);
+    // Rounding two nearby frames to the same integer makes interpolate()
+    // ranges like [135,135] crash the render; keep positive-length ops
+    // strictly increasing.
+    if (end > start) scaledEnd = Math.max(scaledEnd, scaledStart + 1);
+    return { ...op, startFrame: scaledStart, endFrame: scaledEnd };
+  });
+  return { ...scene, drawOps };
+}
+
+function findSceneArrayLiterals(code) {
+  const spans = [];
+  const declaration = /(?:const|let|var)\s+[A-Za-z_$][\w$]*\s*=\s*(?=\[)/g;
+  for (const match of code.matchAll(declaration)) {
+    const open = code.indexOf("[", match.index + match[0].length - 1);
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (let i = open; i < code.length; i += 1) {
+      const char = code[i];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (char === "\\") escaped = true;
+        else if (char === '"') inString = false;
+      } else if (char === '"') inString = true;
+      else if (char === "[") depth += 1;
+      else if (char === "]") {
+        depth -= 1;
+        if (depth === 0) {
+          const literal = code.slice(open, i + 1);
+          try {
+            const parsed = JSON.parse(literal);
+            if (
+              Array.isArray(parsed) &&
+              parsed.length > 0 &&
+              parsed.every((item) => item && typeof item === "object" && Array.isArray(item.drawOps))
+            ) {
+              spans.push({ start: open, end: i + 1, parsed });
+            }
+          } catch {
+            // Not a pure JSON array literal; leave it untouched.
+          }
+          break;
+        }
+      }
+    }
+  }
+  return spans;
+}
+
+export function enforceSceneFinalHold(code, options = {}) {
+  const spans = findSceneArrayLiterals(code);
+  if (!spans.length) return code;
+  let result = code;
+  for (const span of [...spans].reverse()) {
+    const rescaled = span.parsed.map((scene) => rescaleSceneDrawOps(scene, options));
+    result = result.slice(0, span.start) + JSON.stringify(rescaled) + result.slice(span.end);
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------

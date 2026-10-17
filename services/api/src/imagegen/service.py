@@ -197,7 +197,9 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
     preview = quality.strip().lower() == "preview"
     width = settings.local_imagegen_preview_width if preview else settings.local_imagegen_width
     height = settings.local_imagegen_preview_height if preview else settings.local_imagegen_height
-    # 强化负面提示：限制复杂度，确保简洁教学风格
+    # 强化负面提示：限制复杂度，确保简洁教学风格。
+    # meinaPastel 是动漫底模：复杂多对象场景会漂移成"动漫人物+奇幻构图"，
+    # 必须在负面里硬性排除人物与暗背景。
     negative = (
         "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects, "
         "overly detailed, too many elements, cluttered composition, busy background, complex patterns, "
@@ -205,7 +207,9 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
         "outline-only drawing, thin line art, wireframe, empty white interiors, unfilled objects, icon-only symbols, "
         "anime style details, hair strands, fabric folds, glossy highlights, "
         "small objects, tiny icons, miniature details, dense infographic, "
-        "more than 5 main objects, crowded scene, overlapping elements"
+        "more than 5 main objects, crowded scene, overlapping elements, "
+        "anime, manga, 1girl, 1boy, bishoujo, anime character, human face, portrait, person, "
+        "dark background, black background, night sky, galaxy, fantasy art"
     )
     timeout = max(5.0, float(settings.comfyui_timeout_s))
     client_id = f"{settings.comfyui_client_id}-{uuid.uuid4().hex}"
@@ -458,9 +462,31 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
             return image
 
 
-def _build_prompt(req: SceneImageRequest) -> str:
+def _build_prompt(req: SceneImageRequest, condensed_subject: str | None = None) -> str:
     if str(req.image_mode or "").lower() == "flux" or (not req.image_mode and str(settings.imagegen_provider or "").strip().lower() in {"local", "local_then_ark"}):
         return _build_local_prompt(req)
+    # SD1.5's CLIP encoder only reads ~77 tokens, so the long storyboard
+    # prompt gets truncated into noise. A distilled concrete subject keeps
+    # the artwork on-topic; verified with direct ComfyUI tests.
+    if condensed_subject:
+        mode = (req.board_mode or "whiteboard").strip().lower()
+        monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
+        canvas_style = _canonical_video_style(req.video_style)
+        if canvas_style in {"chalkboard_bw", "chalkboard_black_white", "chalkboard_color"} or mode == "chalkboard":
+            style_head = "simple hand-drawn chalk doodle on dark blackboard:"
+        elif monochrome:
+            style_head = "simple black and gray marker doodle:"
+        else:
+            style_head = "simple hand-drawn teaching doodle:"
+        color_tail = (
+            "black marker outline only, white background"
+            if monochrome else
+            "black marker outline, light color fill, white background"
+        )
+        return (
+            f"{style_head} {condensed_subject.strip().rstrip('.')}. "
+            f"{color_tail}, generous margins, no text. Flat simple doodle illustration, absolutely not anime, no people"
+        )
     mode = (req.board_mode or "whiteboard").strip().lower()
     monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
     canvas_style = _canonical_video_style(req.video_style)
@@ -684,8 +710,83 @@ def _semantic_prompt_diagnostics(req: SceneImageRequest) -> dict:
     }
 
 
+def _heuristic_condensed_subject(req: SceneImageRequest) -> str:
+    """Fallback subject extraction when the condensing LLM call is unavailable."""
+    text = _normalize_image_description(req.image_description)
+    text = re.sub(r"^Required scene artwork:\s*", "", text)
+    # The planner writes "<style phrase>: <subject sentence>, <style details>";
+    # keep the clause right after the first colon when present.
+    if ":" in text[:160]:
+        text = text.split(":", 1)[1]
+    text = re.split(r"[.;]", text)[0] or text
+    words = [w for w in re.findall(r"[A-Za-z][A-Za-z-]+", text) if w.lower() not in {
+        "bold", "editorial", "hand", "drawn", "explainer", "illustration", "clean",
+        "simple", "style", "whiteboard", "doodle", "marker", "thick", "imperfect",
+    }]
+    return " ".join(words[:28]).strip()
+
+
+_CONDENSE_CACHE: dict[str, str] = {}
+
+
+async def _condense_subject_for_clip(req: SceneImageRequest) -> str:
+    """Distill the long storyboard artwork prompt into a concrete <=40-word
+    subject line that survives SD1.5's 77-token CLIP window."""
+    cache_key = hashlib.sha1(
+        f"{req.topic}|{req.title}|{req.image_description}".encode("utf-8")
+    ).hexdigest()
+    if cache_key in _CONDENSE_CACHE:
+        return _CONDENSE_CACHE[cache_key]
+    fallback = _heuristic_condensed_subject(req)
+    try:
+        from src.core.llm import chat_json
+
+        data = await chat_json(
+            [
+                {
+                    "role": "system",
+                    "content": (
+                        "你把白板教学场景压缩成 SD1.5 文生图提示词。SD1.5 只读取约77个token,"
+                        "且不擅长抽象概念。只输出 JSON:{\"subject\": \"...\"}。subject 规则:"
+                        "英文;不超过40个词;只描述可见的具体对象、数量、相对位置和简单动作;"
+                        "把抽象概念转成具体物件(复利→叠高的硬币堆/滚雪球,时间→时钟,利率→百分号,"
+                        "频率→循环箭头);禁止出现 text/label/style/concept/process/story 这类指令或抽象词;"
+                        "禁止描述文字内容;直接列出对象。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"主题:{req.topic}\n场景标题:{req.title}\n场景画面描述:{_normalize_image_description(req.image_description)}"
+                    ),
+                },
+            ],
+            temperature=0.2,
+            max_retries=1,
+        )
+        subject = re.sub(r"\s+", " ", str(data.get("subject", ""))).strip().strip('"').rstrip(".").lower()
+        subject = re.sub(r"\b(no|without) (text|words|letters|labels)\b.*$", "", subject).strip()
+        if 3 <= len(subject.split()) <= 45:
+            logger.info("[imagegen] condensed subject for %s: %s", req.scene_id, subject)
+            _CONDENSE_CACHE[cache_key] = subject
+            return subject
+        logger.warning("[imagegen] condensed subject rejected (%d words), using heuristic", len(subject.split()))
+    except Exception as exc:
+        logger.warning("[imagegen] subject condensation failed, using heuristic: %s", exc)
+    _CONDENSE_CACHE[cache_key] = fallback
+    return fallback
+
+
 async def generate_scene_image_result(req: SceneImageRequest, client: httpx.AsyncClient) -> tuple[str | None, dict]:
-    prompt = _build_prompt(req)
+    requested_mode = str(req.image_mode or "").strip().lower()
+    # The render pipeline sends image_mode="default"; only flux/local bypass
+    # the ComfyUI path. Everything landing on the long-prompt ComfyUI branch
+    # needs the condensed subject, or SD1.5's 77-token window drops the topic.
+    uses_comfyui = requested_mode not in {"flux", "local", "local_then_ark"} or (
+        requested_mode in {"sd15", "sd1.5", "sd-1.5"}
+    )
+    condensed_subject = await _condense_subject_for_clip(req) if uses_comfyui else None
+    prompt = _build_prompt(req, condensed_subject)
     semantic = _semantic_prompt_diagnostics(req)
     requested_mode = str(req.image_mode or "").strip().lower()
     if requested_mode == "flux":
@@ -713,14 +814,30 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
     )
     attempts: list[dict] = []
     max_attempts = max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
+    # When OCR keeps reading words in the artwork, retell the model the board
+    # must stay textless — Flux tends to transcribe structural prompt terms
+    # ("cause-process-result flow") into painted labels. The reworded prompt
+    # also derives a fresh seed, so resubmitted jobs get genuinely new
+    # candidates instead of the same deterministic rejections.
+    anti_text_suffix = (
+        " Absolutely no words in any language: never draw the words cause, process, result, "
+        "conclusion, title, or any other label, letter, digit, number, caption, watermark, or "
+        "signature — the video renderer adds all text later. Express every concept purely with "
+        "icons, arrows, boxes, charts, and doodle shapes."
+    )
     for attempt in range(max_attempts):
         try:
+            retry_prompt = (
+                prompt + anti_text_suffix
+                if any("possible_readable_text_or_signature" in (item.get("errors") or []) for item in attempts)
+                else prompt
+            )
             if provider in {"local", "local_then_ark"}:
-                img_bytes = await _call_local_flux(prompt, quality=req.quality, attempt=attempt)
+                img_bytes = await _call_local_flux(retry_prompt, quality=req.quality, attempt=attempt)
             elif provider in {"comfyui", "comfy"}:
-                img_bytes = await _call_comfyui(prompt, quality=req.quality, attempt=attempt)
+                img_bytes = await _call_comfyui(retry_prompt, quality=req.quality, attempt=attempt)
             elif provider in {"ark", "seedream", "volcengine"}:
-                img_bytes = await _call_seedream(prompt, client)
+                img_bytes = await _call_seedream(retry_prompt, client)
             else:
                 raise RuntimeError(f"Unsupported IMAGEGEN_PROVIDER: {settings.imagegen_provider}")
             img_bytes = normalize_whiteboard_image(img_bytes)

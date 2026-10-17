@@ -263,7 +263,7 @@ const DEMO_STORYBOARD: Storyboard = {
 export default function StoryboardPage() {
   const [storyboard, setStoryboard] = useState<Storyboard>(DEMO_STORYBOARD);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
-  const [subtitlesEnabled, setSubtitlesEnabled] = useState(false);
+  const [subtitlesEnabled, setSubtitlesEnabled] = useState(true);
   const [backgroundMusicEnabled, setBackgroundMusicEnabled] = useState(false);
   const [musicTracks, setMusicTracks] = useState<BackgroundMusicTrack[]>([]);
   const [selectedMusicId, setSelectedMusicId] = useState("");

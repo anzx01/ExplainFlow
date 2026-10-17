@@ -63,7 +63,7 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
 
 export function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "scene-authored-artwork-v12-subject-first-coverage",
+    renderAssetMode: "scene-authored-artwork-v14-flux-master",
     imageMode: storyboard?.image_generation_mode ?? storyboard?.imageGenerationMode ?? "default",
     authoredPrompt: imageGenerationDescription(storyboard, scene),
     sourceImage: createHash("sha256").update(sceneLocalImageBuffer(scene) ?? Buffer.alloc(0)).digest("hex"),

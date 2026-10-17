@@ -122,7 +122,8 @@ const server = http.createServer(async (req, res) => {
       const createdAt = new Date().toISOString();
       const renderOptions = {
         voice,
-        subtitlesEnabled: Boolean(subtitlesEnabled ?? subtitles_enabled),
+        // Subtitles are the product default: only an explicit false disables them.
+        subtitlesEnabled: (subtitlesEnabled ?? subtitles_enabled) === undefined ? true : Boolean(subtitlesEnabled ?? subtitles_enabled),
         backgroundMusicUrl: backgroundMusicTrack?.url ?? null,
         backgroundMusicVolume: backgroundMusicVolumeValue,
       };
