@@ -28,3 +28,4 @@ evals/e2e_results.json
 Thumbs.db
 .remotion/
 .cache/
+.tmpframes/
