@@ -48,7 +48,6 @@ ExplainFlow:
 - `apps/render/public/hand-with-pen.png`
 - `image/README/*.png`
 - `image/README/*.gif`
-- `d2b0a4ac83c8a52341bff172d2749086_30s.gif`
 - `pencil-new.pen`
 
 Unless a file-specific notice is added later, these project assets are covered
