@@ -1,0 +1,36 @@
+{
+  "ok": true,
+  "attempts": [
+    {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 57.11,
+        "foregroundRatio": 0.1608,
+        "edgeDensity": 0.0256,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "FAL 95 KIER}",
+      "attempt": 1,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "3abd9bd44c08e9ceb9772321130fe059e526529660f3b92cb3a98266d335cb53",
+        "promptHash": "31d9505bf267b7703cc7287705e9ece8ca6e5f3ddadac61bff901998a5605073",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    }
+  ],
+  "selectedAttempt": 1
+}

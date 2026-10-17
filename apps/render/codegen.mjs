@@ -71,25 +71,61 @@ export function stripGeneratedSceneAudio(code) {
 }
 
 function ensureReferenceImagesVisible(code) {
-  return String(code || "").replace(
-    /interpolate\(frame, \[colorEnd, colorEnd \+ 8\], \[0, 1\],/g,
-    "interpolate(frame, [0, colorEnd + 8], [0.82, 1],",
-  );
+  return String(code || "");
 }
 
-/**
- * Patch getActiveDrawOp so it searches ALL drawOps (text + path), not just
- * kind==="path". LLM sometimes emits the path-only filter from learned patterns
- * even when told otherwise; this post-processing step enforces the fix.
- */
-function ensureHandFollowsTextGlyphs(code) {
-  // Match the common generated pattern:
-  //   .filter((op) => op.kind === "path" && frame >= op.startFrame && frame <= op.endFrame)
-  // Replace with a filter that accepts all kinds.
-  return String(code || "").replace(
-    /\.filter\(\s*\(\s*op\s*\)\s*=>\s*op\.kind\s*===\s*["']path["']\s*&&\s*frame\s*>=\s*op\.startFrame\s*&&\s*frame\s*<=\s*op\.endFrame\s*\)/g,
-    ".filter((op) => frame >= op.startFrame && frame <= op.endFrame)",
-  );
+/** Keep the pen on drawable geometry. Text glyph ops are reveal data, not a
+ * reliable physical pen path, so including them makes the pen scribble. */
+export function ensureHandFollowsTextGlyphs(code) {
+  const source = String(code || "");
+  const declarations = [...source.matchAll(/\nconst pointsForOp = \(scene: SceneSpec, op: DrawOp\): Point\[\] => \{[\s\S]*?\};/g)];
+  const normalized = declarations.length > 1
+    ? source.replace(/\nconst pointsForOp = \(scene: SceneSpec, op: DrawOp\): Point\[\] => \{[\s\S]*?\};/g, "").replace(
+      /\nconst HandPen = /,
+      `${declarations[0][0]}\nconst HandPen = `,
+    )
+    : declarations.length === 1
+      ? source
+      : source.replace(
+        /\nconst HandPen = /,
+        "\nconst pointsForOp = (scene: SceneSpec, op: DrawOp): Point[] => { const stroke = scene.rasterReveal?.strokes?.find((item) => item.opId === op.id || item.colorOpId === op.id); if (!stroke?.d) return op.points; const values = [...stroke.d.matchAll(/-?\\d+(?:\\.\\d+)?/g)].map((match) => Number(match[0])); const points = []; for (let index = 0; index + 1 < values.length; index += 2) points.push({ x: values[index], y: values[index + 1] }); return points.length > 0 ? points : op.points; };\n\nconst HandPen = ",
+      );
+  return normalized
+    .replace(/pointOnPolyline\(active\.points, progress\)/g, "pointOnPolyline(pointsForOp(scene, active), progress)")
+    .replace(/pointOnPolyline\(previous\.points, 1\)/g, "pointOnPolyline(pointsForOp(scene, previous), 1)")
+    .replace(/pointOnPolyline\(next\.points, 0\)/g, "pointOnPolyline(pointsForOp(scene, next), 0)")
+    .replace(
+      /orderedDrawOps\.filter\(\(op\) => op\.kind === ["']path["'] && frame >= op\.startFrame && frame <= op\.endFrame\)/g,
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (scene.rasterReveal?.strokes?.length ? String(op.id ?? \"\").includes(\"_raster_\") : !scene.rasterReveal || scene.rasterReveal.renderMode !== \"direct\") && frame >= op.startFrame && frame <= op.endFrame)",
+    )
+    .replace(
+      /orderedDrawOps\.filter\(\(op\) => op\.kind === ["']path["']\)/g,
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (scene.rasterReveal?.strokes?.length ? String(op.id ?? \"\").includes(\"_raster_\") : !scene.rasterReveal || scene.rasterReveal.renderMode !== \"direct\"))",
+    )
+    .replace(
+      /orderedDrawOps\.filter\(drawable\)/g,
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (scene.rasterReveal?.strokes?.length ? String(op.id ?? \"\").includes(\"_raster_\") : !scene.rasterReveal || scene.rasterReveal.renderMode !== \"direct\"))",
+    )
+    .replace(
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (!String(op.id ?? \"\").includes(\"_raster_\") || (Array.isArray(scene.rasterReveal?.strokes) && scene.rasterReveal.strokes.some((stroke) => stroke.opId === op.id || stroke.colorOpId === op.id))) && frame >= op.startFrame && frame <= op.endFrame)",
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (scene.rasterReveal?.strokes?.length ? String(op.id ?? \"\").includes(\"_raster_\") : !scene.rasterReveal || scene.rasterReveal.renderMode !== \"direct\") && frame >= op.startFrame && frame <= op.endFrame)",
+    )
+    .replace(
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (!String(op.id ?? \"\").includes(\"_raster_\") || (Array.isArray(scene.rasterReveal?.strokes) && scene.rasterReveal.strokes.some((stroke) => stroke.opId === op.id || stroke.colorOpId === op.id))))",
+      "orderedDrawOps.filter((op) => op.kind === \"path\" && (scene.rasterReveal?.strokes?.length ? String(op.id ?? \"\").includes(\"_raster_\") : !scene.rasterReveal || scene.rasterReveal.renderMode !== \"direct\"))",
+    )
+    .replace(
+      /<HandPen\s+tipX=\{pen\.x\}\s+tipY=\{pen\.y\}\s+visible=\{showHand && pen\.visible\}\s*\/>/g,
+      "{showHand && pen.visible ? <HandPen tipX={pen.x} tipY={pen.y} visible /> : null}",
+    )
+    .replace(
+      "{showHand && !scene.rasterReveal && pen.visible ? <HandPen tipX={pen.x} tipY={pen.y} visible /> : null}",
+      "{showHand && pen.visible ? <HandPen tipX={pen.x} tipY={pen.y} visible /> : null}",
+    )
+    .replace(
+      /\s*<image\s+href=\{staticFile\(colorAsset\)\}[\s\S]*?opacity=\{0\.28\}\s*\/>/g,
+      "",
+    );
 }
 
 export function generatedTsxRendersSceneAudio(code, source) {

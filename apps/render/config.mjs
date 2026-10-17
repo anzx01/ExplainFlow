@@ -68,12 +68,10 @@ function isInsidePath(child, parent) {
 }
 
 export const PORT = Number(process.env.RENDER_PORT ?? 3002);
-export const FPS = 30;
-// 720p is sufficient for whiteboard teaching videos and keeps SVG rasterizing
-// and H.264 encoding practical on local hardware. Override for delivery with
-// REMOTION_WIDTH/REMOTION_HEIGHT when a larger master is required.
-export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1920);
-export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 1080);
+export const FPS = 24;
+// 540p is sufficient for line-art teaching videos and keeps local renders fast.
+export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 960);
+export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 540);
 export const OUTPUT_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_OUTPUT_DIR, join(ROOT_DIR, "outputs"));
 export const AUDIO_DIR = join(OUTPUT_DIR, "audio");
 export const MUSIC_DIR = resolveConfiguredPath(process.env.EXPLAINFLOW_MUSIC_DIR, join(OUTPUT_DIR, "music"));
@@ -90,14 +88,14 @@ export const PYTHON_API = configuredPythonApi
 export const IMAGEGEN_REQUEST_TIMEOUT_MS = Number(process.env.REMOTION_IMAGEGEN_TIMEOUT_MS ?? 0);
 export const COMPOSITION_ID = "GeneratedVideo";
 export const STATIC_PORT_START = Number(process.env.REMOTION_STATIC_PORT ?? 3100);
-export const DEFAULT_RENDER_CONCURRENCY = 2;
+export const DEFAULT_RENDER_CONCURRENCY = Math.max(2, Math.min(8, availableParallelism() - 2));
 export const RENDER_CONCURRENCY = Number.isFinite(Number(process.env.REMOTION_CONCURRENCY))
   ? Math.max(1, Number(process.env.REMOTION_CONCURRENCY))
   : DEFAULT_RENDER_CONCURRENCY;
 export const RENDER_CRF = Number.isFinite(Number(process.env.REMOTION_CRF))
   ? Math.max(1, Math.min(51, Number(process.env.REMOTION_CRF)))
   : 18;
-export const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "veryfast";
+export const RENDER_X264_PRESET = process.env.REMOTION_X264_PRESET || "ultrafast";
 export const RENDER_PIXEL_FORMAT = process.env.REMOTION_PIXEL_FORMAT || "yuv420p";
 export const ENABLE_IMAGE_TRACE = process.env.REMOTION_IMAGE_TRACE !== "0";
 export const SKIP_IMAGE_TRACE = process.env.SKIP_IMAGE_TRACE === "1";

@@ -1,0 +1,68 @@
+{
+  "ok": true,
+  "attempts": [
+    {
+      "ok": false,
+      "errors": [
+        "possible_readable_text_or_signature"
+      ],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 55.13,
+        "foregroundRatio": 0.1477,
+        "edgeDensity": 0.0434,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "JURN weTm! a a",
+      "attempt": 1,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "4f83de1e133d23f38902434f6be70034942a76718f412fd0dea94c1114a6d206",
+        "promptHash": "b085542106737d920d99aa1b32193a4ad6cc268141d69bc96f8113eac308fb6a",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    },
+    {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 46.7,
+        "foregroundRatio": 0.1334,
+        "edgeDensity": 0.0323,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "Uv Pf wwe \\ 2 3 ] 4 Fe | {2 @ SS a [eat Li aR ,) Pec",
+      "attempt": 2,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "ef25f01cee0a60a648ea42622bb5fbded7fb267403c2f026389c00faa116b1fd",
+        "promptHash": "b085542106737d920d99aa1b32193a4ad6cc268141d69bc96f8113eac308fb6a",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    }
+  ],
+  "selectedAttempt": 2
+}

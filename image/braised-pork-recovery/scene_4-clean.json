@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "attempts": [
+    {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 91.0,
+        "foregroundRatio": 0.3957,
+        "edgeDensity": 0.0584,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "J =1\\ v7 ae \\2 we aD Ney & Vv",
+      "attempt": 1,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "860bf2f012c422055f129a72980eaf3071e69630f14a988be0939c19b3eee3f2",
+        "promptHash": "2f28623268662c6808f477e8613bd642a9b0d8e0e5b8793b06c9997b7fa56f0c",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    }
+  ],
+  "selectedAttempt": 1,
+  "prompt": "Two large wide black woks side by side: the first holds pork belly cubes in thin pale broth; the second holds glossy deep red-brown pork cubes coated in thick reduced sauce, with golden oil highlights and steam. Both pans fully visible. Rich colored-pencil and gouache food illustration, opaque natural colors, detailed appetizing textures, isolated on pure white background with broad empty margins. No lettering, no typography, no labels, no numbers, no arrows, no signatures.. text-free artwork; no readable words, no letters, no labels, no title, no watermark. Preserve every specified subject, pose, action, and lighting relationship. finished hand-drawn instructional illustration with solid filled color shapes and gentle shading. White background with clear margins; no readable text or watermark."
+}

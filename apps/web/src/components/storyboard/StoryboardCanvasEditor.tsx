@@ -1,4 +1,5 @@
 "use client";
+import { VideoPlayer } from "@/components/ui/VideoPlayer";
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Konva from "konva";
@@ -123,7 +124,7 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
   const generateEnginePreview = async () => {
     if (!scene.image_url) return;
     setEngineBusy(true);
-    setValidation("生成真实笔迹预览…");
+    setValidation("使用本地逐笔渲染器生成预览…");
     try {
       const response = await fetch(`${API}/render/engine/preview`, {
         method: "POST",
@@ -144,7 +145,7 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail ?? "真实笔迹预览失败");
       setEnginePreviewUrl(`${API}${data.preview_url}`);
-      setValidation("真实笔迹预览已生成");
+      setValidation("本地逐笔预览已生成");
     } catch (error) {
       setValidation(error instanceof Error ? error.message : "真实笔迹预览失败");
     } finally {
@@ -161,11 +162,11 @@ export default function StoryboardCanvasEditor({ scene, onUpdate }: Props) {
         <button onClick={() => moveSelected(1)} disabled={!selectedId} className="px-2.5 py-1.5 rounded border border-[--border-default] text-xs disabled:opacity-40">后移</button>
         <button onClick={addProtectedRegion} disabled={!selectedId} className="px-2.5 py-1.5 rounded border border-red-500/40 text-red-300 text-xs disabled:opacity-40">添加保护区</button>
         <button onClick={validate} className="px-2.5 py-1.5 rounded border border-purple-500/50 text-purple-300 text-xs">校验时间与遮罩</button>
-        <button onClick={generateEnginePreview} disabled={!scene.image_url || engineBusy} className="px-2.5 py-1.5 rounded border border-cyan-500/50 text-cyan-300 text-xs disabled:opacity-40">{engineBusy ? "生成中…" : "真实笔迹预览"}</button>
+        <button onClick={generateEnginePreview} disabled={!scene.image_url || engineBusy} className="px-2.5 py-1.5 rounded border border-cyan-500/50 text-cyan-300 text-xs disabled:opacity-40">{engineBusy ? "生成中…" : "本地逐笔预览"}</button>
         <button onClick={exportDiagnostic} className="px-2.5 py-1.5 rounded border border-[--border-default] text-xs">导出诊断图</button>
         {validation && <span className="text-xs text-[--fg-muted]">{validation}</span>}
       </div>
-      {enginePreviewUrl && <video src={enginePreviewUrl} controls className="w-full max-w-[760px] rounded-lg border border-cyan-500/30 bg-black" />}
+      {enginePreviewUrl && <VideoPlayer src={enginePreviewUrl} className="w-full max-w-[760px] rounded-lg border border-cyan-500/30 bg-black" />}
       <div className="h-[27rem] flex items-center justify-center overflow-hidden rounded-lg border border-[--border-default] bg-[#f5ebd7]">
         <Stage ref={stageRef} width={displayWidth} height={displayHeight} scaleX={scale} scaleY={scale} onMouseDown={(event) => { if (event.target === event.target.getStage()) setSelectedId(null); }}>
           <Layer>

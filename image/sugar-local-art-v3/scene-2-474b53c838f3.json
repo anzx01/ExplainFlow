@@ -1,0 +1,27 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "runtime": "D:\\ck\\04-第三方库与二进制依赖\\stable-diffusion-cpp-bin\\vulkan\\sd-cli.exe",
+  "width": 1024,
+  "height": 768,
+  "steps": 4,
+  "prompt": "Richly shaded colored-pencil and opaque gouache science-book artwork, bright filled colors and visible pencil texture. Exactly four separate vignettes in a precise two-by-two grid, broad pure-white gutters and margins, no panel borders. No lettering, no numbers, no arrows, no icons, no outline-only art. TOP LEFT: tall amber soda glass with ice and sugar cubes. TOP RIGHT: anatomical human stomach cutaway containing only a little blue liquid, non-graphic. BOTTOM LEFT: full-body adult in yellow shirt standing on a bathroom scale. BOTTOM RIGHT: walking adult in teal sportswear beside a balanced meal with vegetables and rice.",
+  "sha256": "dec8481806231c5605886c7d7004affd5e8830485c7ed3577afbd9131bc454db",
+  "seconds": 86.05,
+  "quality": {
+    "ok": false,
+    "errors": [
+      "border_signature_or_watermark"
+    ],
+    "warnings": [],
+    "metrics": {
+      "width": 1024,
+      "height": 768,
+      "brightnessStdDev": 42.85,
+      "foregroundRatio": 0.1384,
+      "edgeDensity": 0.0242,
+      "borderForegroundRatio": 0.0141
+    },
+    "ocrText": "4 Of"
+  }
+}

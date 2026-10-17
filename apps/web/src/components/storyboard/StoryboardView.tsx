@@ -1,4 +1,5 @@
 "use client";
+import { VideoPlayer } from "@/components/ui/VideoPlayer";
 
 import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
@@ -268,11 +269,9 @@ function SceneEditor({
 function VideoPreview({ url, scene }: { url: string; scene: Scene }) {
   return (
     <div className="w-full max-w-2xl px-8 space-y-4">
-      <video
+      <VideoPlayer
         key={url}
         src={url}
-        controls
-        autoPlay
         className="w-full aspect-video rounded-xl bg-black border border-[--border-default] shadow-lg shadow-purple-500/10"
       />
       <div className="flex flex-wrap gap-2">

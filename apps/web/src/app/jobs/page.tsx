@@ -1,4 +1,5 @@
 "use client";
+import { VideoPlayer } from "@/components/ui/VideoPlayer";
 
 import { useEffect, useRef, useState, useCallback } from "react";
 import Link from "next/link";
@@ -449,11 +450,9 @@ export default function JobsPage() {
               </button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
-              <video
+              <VideoPlayer
                 key={previewJob.id}
                 src={`${RENDER_URL}/download/${previewJob.id}`}
-                controls
-                autoPlay
                 className="w-full aspect-video rounded-lg bg-black border border-[--border-default]"
               />
               <div className="space-y-2 text-xs font-mono text-[--fg-muted]">

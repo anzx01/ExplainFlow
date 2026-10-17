@@ -1,0 +1,27 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "runtime": "D:\\ck\\04-第三方库与二进制依赖\\stable-diffusion-cpp-bin\\vulkan\\sd-cli.exe",
+  "width": 1024,
+  "height": 768,
+  "steps": 4,
+  "prompt": "A richly detailed hand-painted gouache and colored pencil educational illustration on pure white paper. Soft opaque filled colors, expressive irregular dark pencil contours, visible pencil grain, warm shadows, dimensional materials and skillful shading. Polished illustrated science book artwork, NOT line art, NOT icons, NOT a geometric diagram, NOT a vector graphic. Four separate large illustrations arranged as a two by two contact sheet, with a broad clean white cross-shaped gutter separating the four quadrants. Each quadrant is a complete self-contained scene, with all objects away from the center gutters and outer edges. No words, no letters, no captions, no numbers, no arrows, no panel frames, no watermark. Top left: close up of a pearly white human molar with sugar crystals and tiny stylized blue oral bacteria on its enamel, scientific educational illustration. Top right: close up of the same human molar with a small brown enamel cavity and a few orange acidic droplets, non-graphic, anatomically recognizable. Bottom left: a small pile of colorful sweets and a half-eaten cookie beside an analog clock with completely blank dial. Bottom right: a beautiful blue toothbrush with a pea-sized dab of white toothpaste gently brushing a clean white human molar, no face on the tooth.",
+  "sha256": "153c16e29c492acb50f8657de494495e695fcd5b06a61aea31d7a4ddc6e9aeca",
+  "seconds": 89.77,
+  "quality": {
+    "ok": false,
+    "errors": [
+      "border_signature_or_watermark"
+    ],
+    "warnings": [],
+    "metrics": {
+      "width": 1024,
+      "height": 768,
+      "brightnessStdDev": 33.72,
+      "foregroundRatio": 0.136,
+      "edgeDensity": 0.0288,
+      "borderForegroundRatio": 0.0423
+    },
+    "ocrText": "11 12 7S fF 10 1S S$ 2\") oe \\ W 漏@ i Ww! 6 5 a"
+  }
+}

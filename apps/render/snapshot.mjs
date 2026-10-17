@@ -3,7 +3,7 @@ import { createHash } from "crypto";
 // Bump whenever render semantics, image tracing, or stage-quality gates change.
 // This prevents an older MP4 (for example one made from a stale noodle image)
 // from being reused after the scene contract or source image is repaired.
-export const SNAPSHOT_VERSION = 3;
+export const SNAPSHOT_VERSION = 5;
 
 function normalize(value) {
   if (Array.isArray(value)) return value.map(normalize);

@@ -64,8 +64,25 @@ class FallbackSceneBuilder:
 
         audio_segments, timing_duration, transition_frames = _audio_segments_for_scene(scene, fps)
         self.audio_segments: list[dict] = audio_segments
+        raw_subtitle_cues = _scene_extra(scene, "subtitleCues") or _scene_extra(scene, "subtitle_cues") or []
+        self.subtitle_cues = raw_subtitle_cues if isinstance(raw_subtitle_cues, list) else []
         self.transition_frames = transition_frames
         self.duration = max(fps * 8, round(scene.duration_estimate * fps), timing_duration)
+        if self.subtitle_cues:
+            previous_end = 0
+            for cue in self.subtitle_cues:
+                if not isinstance(cue, dict):
+                    raise ValueError("Invalid spoken subtitle cue")
+                start, end = cue.get("startFrame"), cue.get("endFrame")
+                if (not isinstance(cue.get("text"), str) or not cue["text"].strip()
+                    or not isinstance(start, (int, float)) or not isinstance(end, (int, float))
+                    or not math.isfinite(start) or not math.isfinite(end)
+                    or start < previous_end or end <= start or end > self.duration):
+                    raise ValueError("Invalid or overlapping spoken subtitle cues")
+                previous_end = end
+            spoken = "".join(segment.get("subtitleText") or "" for segment in audio_segments)
+            if spoken and re.sub(r"\s+", "", spoken) != re.sub(r"\s+", "", "".join(cue["text"] for cue in self.subtitle_cues)):
+                raise ValueError("Subtitle cues omit or change spoken audio text")
 
         board_mode = (_clean_text(_scene_extra(scene, "board_mode") or _scene_extra(scene, "boardMode")) or "whiteboard").lower()
         hand_usage = (_clean_text(_scene_extra(scene, "hand_usage") or _scene_extra(scene, "handUsage")) or "trace").lower()

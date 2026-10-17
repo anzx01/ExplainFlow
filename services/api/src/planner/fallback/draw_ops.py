@@ -53,6 +53,12 @@ def _retime_draw_ops_in_window(
         for _, op in group:
             op["startFrame"] = op_start
             op["endFrame"] = op_end
+            if len(group) == 2 and op.get("phase") in {"ink", "color"}:
+                split = round(op_start + (op_end - op_start) * 0.7, 2)
+                if op["phase"] == "ink":
+                    op["endFrame"] = split
+                else:
+                    op["startFrame"] = split
             if beat_id:
                 op["beatId"] = beat_id
         cursor = op_end + gap
@@ -60,6 +66,28 @@ def _retime_draw_ops_in_window(
 
 def _retime_draw_ops_to_fill_scene(draw_ops: list[dict], duration: int) -> None:
     _retime_draw_ops_in_window(draw_ops, 0.0, max(1.0, duration - 4.0))
+
+
+def _retime_draw_ops_to_subtitle_cues(draw_ops: list[dict], subtitle_cues: list[dict], duration: int) -> bool:
+    """Retime explicitly bound drawings, never infer meaning from path count."""
+    cues = [
+        cue for cue in subtitle_cues
+        if isinstance(cue, dict)
+        and float(cue.get("endFrame", 0) or 0) > float(cue.get("startFrame", 0) or 0)
+    ]
+    if not draw_ops or not cues:
+        return False
+
+    if any(not any(op.get("beatId") == f"cue_{index}" for op in draw_ops) for index in range(len(cues))):
+        return False
+    if any(op.get("beatId") not in {f"cue_{index}" for index in range(len(cues))} for op in draw_ops):
+        return False
+    for cue_index, cue in enumerate(cues):
+        bucket = [op for op in draw_ops if op.get("beatId") == f"cue_{cue_index}"]
+        start = max(0.0, float(cue.get("startFrame", 0) or 0))
+        end = min(float(duration), float(cue.get("endFrame", duration) or duration))
+        _retime_draw_ops_in_window(bucket, start, max(start + 1.0, end), f"cue_{cue_index}")
+    return True
 
 
 def _audio_segment_groups_for_draw_ops(draw_ops: list[dict], segments: list[dict]) -> list[list[dict]]:
@@ -212,11 +240,10 @@ def _retime_draw_ops_to_audio_segments(draw_ops: list[dict], audio_segments: lis
         end = float(segment.get("endFrame", duration) or duration)
         audio_start = float(segment.get("audioStartFrame", start) or start)
         audio_end = float(segment.get("audioEndFrame", end) or end)
-        # Keep each drawing group inside its own beat. A large pre-audio lead makes the
-        # hand appear to explain the next idea before the narration reaches it.
-        lead_frames = 4.0 if index == 0 else 2.0
-        window_start = max(0.0, start, audio_start - lead_frames)
-        window_end = min(max(audio_end + 8.0, end - 2.0), max(1.0, duration - 1.0))
+        # Spoken beats and their drawing must share one window: no narration
+        # over a static board, and no pre-drawn explanation.
+        window_start = max(0.0, start, audio_start)
+        window_end = min(audio_end, max(1.0, duration - 1.0))
         window_end = max(window_start + 1.0, window_end)
         _retime_draw_ops_in_window(group, window_start, window_end, str(segment.get("id") or f"beat_{index}"))
 

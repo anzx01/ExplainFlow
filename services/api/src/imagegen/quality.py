@@ -81,6 +81,11 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
 
     ocr_text = ""
     tesseract = shutil.which("tesseract") if use_ocr else None
+    if use_ocr and not tesseract:
+        installed = Path("C:/Program Files/Tesseract-OCR/tesseract.exe")
+        tesseract = str(installed) if installed.is_file() else None
+        if not tesseract:
+            warnings.append("ocr_unavailable")
     if tesseract:
         with tempfile.TemporaryDirectory(prefix="explainflow-ocr-") as tmp:
             source = Path(tmp) / "image.png"
@@ -88,7 +93,7 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
             try:
                 result = subprocess.run(
                     [tesseract, str(source), "stdout", "-l", "eng", "--psm", "11"],
-                    capture_output=True, text=True, timeout=20, check=False,
+                    capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False,
                 )
                 ocr_text = " ".join((result.stdout or "").split())[:200]
             except (OSError, subprocess.TimeoutExpired):
@@ -98,10 +103,7 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
         # when OCR has enough coherent evidence to indicate an actual label.
         tokens = re.findall(r"[A-Za-z]{4,}|[A-Za-z0-9]{6,}", ocr_text)
         if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens):
-            # OCR is advisory for generated illustrations. Tesseract often
-            # reads line intersections and texture as short pseudo-words;
-            # rejecting the image here can discard an otherwise valid scene.
-            warnings.append("possible_readable_text_or_signature")
+            errors.append("possible_readable_text_or_signature")
     return {
         "ok": not errors,
         "errors": errors,

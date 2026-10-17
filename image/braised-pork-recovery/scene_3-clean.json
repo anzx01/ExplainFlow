@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "attempts": [
+    {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 88.62,
+        "foregroundRatio": 0.3519,
+        "edgeDensity": 0.029,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "Na ya | — yw) a = NS ~—",
+      "attempt": 1,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "0e79ddb9ea0f82c6a2e6a76e1b78581b294661629ab63aa4509e7068a13a1038",
+        "promptHash": "840d785ae91d8beae6f28a45ff29f22c3ecf9d7f6ecaf92e471e066103d340ce",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    }
+  ],
+  "selectedAttempt": 1,
+  "prompt": "One large wide black braising pot with red-brown sauce, large skin-on pork belly cubes and gentle steam over a tiny orange flame. Beside it ginger slices, star anise, cinnamon and an unbranded plain dark sauce bottle. Rich colored-pencil and gouache food illustration, opaque natural colors, detailed appetizing textures, isolated on pure white background with broad empty margins. No lettering, no typography, no labels, no numbers, no arrows, no signatures.. text-free artwork; no readable words, no letters, no labels, no title, no watermark. Preserve every specified subject, pose, action, and lighting relationship. finished hand-drawn instructional illustration with solid filled color shapes and gentle shading. White background with clear margins; no readable text or watermark."
+}

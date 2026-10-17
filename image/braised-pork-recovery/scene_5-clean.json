@@ -1,0 +1,37 @@
+{
+  "ok": true,
+  "attempts": [
+    {
+      "ok": true,
+      "errors": [],
+      "warnings": [],
+      "metrics": {
+        "width": 768,
+        "height": 768,
+        "brightnessStdDev": 74.34,
+        "foregroundRatio": 0.3089,
+        "edgeDensity": 0.0344,
+        "borderForegroundRatio": 0.0
+      },
+      "ocrText": "4) Ae",
+      "attempt": 1,
+      "semantic": {
+        "stage": null,
+        "requiredTerms": [],
+        "forbiddenTerms": []
+      },
+      "sourceAsset": {
+        "width": 768,
+        "height": 768,
+        "sourceHash": "9b7a555cfff77b2a84c11dd4c0ed6b40d1a149ffefd130e4bb62011217b6c590",
+        "promptHash": "8e9fb4cfb177a18925ca60ff6c40850da3f04036eacf742e471175e6c5baeb97",
+        "provider": "local",
+        "imageMode": "flux",
+        "quality": "final",
+        "stage": "generated"
+      }
+    }
+  ],
+  "selectedAttempt": 1,
+  "prompt": "A beautiful close-up shallow ceramic plate piled with glossy red-brown Chinese braised pork belly cubes, distinct translucent fat and lean layers, thick rich sauce, tiny green scallion garnish and gentle rising steam. Only the finished dish, no process diagram. Rich colored-pencil and gouache food illustration, opaque natural colors, detailed appetizing textures, isolated on pure white background with broad empty margins. No lettering, no typography, no labels, no numbers, no arrows, no signatures.. text-free artwork; no readable words, no letters, no labels, no title, no watermark. Preserve every specified subject, pose, action, and lighting relationship. finished hand-drawn instructional illustration with solid filled color shapes and gentle shading. White background with clear margins; no readable text or watermark."
+}

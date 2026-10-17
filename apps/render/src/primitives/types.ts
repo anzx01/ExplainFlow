@@ -113,9 +113,9 @@ export interface Storyboard {
   line_art_color_mode?: "color" | "monochrome" | string | null;
 }
 
-export const FPS = 30;
-export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 1920);
-export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 1080);
+export const FPS = 24;
+export const WIDTH = Number(process.env.REMOTION_WIDTH ?? 960);
+export const HEIGHT = Number(process.env.REMOTION_HEIGHT ?? 540);
 
 export const COLORS = {
   bg: "#FDFCF8",

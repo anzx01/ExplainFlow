@@ -26,3 +26,5 @@ evals/e2e_results.json
 *.wav
 .DS_Store
 Thumbs.db
+.remotion/
+.cache/

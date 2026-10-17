@@ -3,7 +3,7 @@
  * 依赖: config.mjs, jobs.mjs, utils.mjs, tts.mjs, trace-inject.mjs, codegen.mjs, render-qa.mjs
  */
 import { createServer as createNetServer } from "net";
-import { existsSync, rmSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, writeFileSync, rmSync, unlinkSync } from "fs";
 import { isAbsolute, join, relative, resolve, sep } from "path";
 import { bundle } from "@remotion/bundler";
 import { renderMedia, selectComposition, RenderInternals } from "@remotion/renderer";
@@ -24,6 +24,7 @@ import { assertStoryboardAudioComplete, injectAudio } from "./tts.mjs";
 import { injectImageTraces } from "./trace-inject.mjs";
 import { generateRemotionCode, writeGeneratedProject } from "./codegen.mjs";
 import { runRenderQa } from "./render-qa.mjs";
+import { nvencOptions } from "./nvenc.mjs";
 
 // Re-export runRenderQa for callers that import from render-core
 export { runRenderQa } from "./render-qa.mjs";
@@ -118,6 +119,7 @@ export async function bundleAndRender(jobId, entryPath, outputPath) {
       composition, serveUrl, codec: "h264", imageFormat: "png",
       crf: RENDER_CRF, x264Preset: RENDER_X264_PRESET, pixelFormat: RENDER_PIXEL_FORMAT,
       outputLocation: outputPath, concurrency: RENDER_CONCURRENCY, ...browserOptions(),
+      ...nvencOptions(),
       onProgress: ({ progress }) => {
         const percent = Math.round(progress * 100);
         process.stdout.write(`\r[render] ${percent}%`);
@@ -135,6 +137,10 @@ export async function bundleAndRender(jobId, entryPath, outputPath) {
 // ---------------------------------------------------------------------------
 
 export async function renderVideo(jobId, storyboard, voice, outputPath, options = {}) {
+  const recoveryDir = join(GENERATED_DIR, jobId);
+  mkdirSync(recoveryDir, {recursive:true});
+  writeFileSync(join(recoveryDir, "render-input.json"), JSON.stringify({storyboard,voice,options},null,2));
+  updateJob(jobId, {generatedDir:recoveryDir});
   updateJob(jobId, { phase: "tts", progress: 0 });
   console.log(`[tts] Synthesizing ${storyboard.scenes.length} scenes...`);
   const storyboardWithAudio = await injectAudio(storyboard, voice);

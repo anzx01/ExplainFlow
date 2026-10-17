@@ -19,14 +19,14 @@ def build_raster_reveal(self, start: int) -> int:
         # board for it. The former 64% region made generated subjects appear
         # like tiny icons in the finished video.
         region_x = self.width * 0.09
-        region_y = self.height * 0.12
+        region_y = self.height * 0.18
         region_w = self.width * 0.82
-        region_h = self.height * 0.76
+        region_h = self.height * 0.54
     else:
         region_x = self.width * 0.10
         region_y = self.diagram_top - self.height * 0.01
         region_w = self.width * 0.80
-        region_h = self.height * 0.72
+        region_h = self.height * 0.65
     region_aspect = region_w / max(1.0, region_h)
     if image_aspect >= region_aspect:
         draw_w = region_w
@@ -131,7 +131,11 @@ def build_raster_reveal(self, start: int) -> int:
         return min(self.duration - 8, cursor)
 
     prepared: list[dict] = []
-    contract_elements = sorted(self.scene.render_elements, key=lambda item: (item.sequence, item.id))
+    # Generated text rows are not image-object regions and must never clip artwork.
+    contract_elements = sorted(
+        (item for item in self.scene.render_elements if item.source != "generated"),
+        key=lambda item: (item.sequence, item.id),
+    )
     contract_sx = self.width / max(1, self.scene.canvas_width)
     contract_sy = self.height / max(1, self.scene.canvas_height)
 
@@ -189,6 +193,16 @@ def build_raster_reveal(self, start: int) -> int:
             append_prepared(points, reveal_width)
             continue
 
+        # A two-point paint sweep can cross several authored object regions.
+        # Sample the segment before partitioning, not only its two endpoints.
+        sampled = [points[0]]
+        for first, second in zip(points, points[1:]):
+            steps = max(1, math.ceil(math.hypot(second["x"] - first["x"], second["y"] - first["y"]) / 4))
+            sampled.extend(_point(first["x"] + (second["x"] - first["x"]) * step / steps,
+                                  first["y"] + (second["y"] - first["y"]) * step / steps)
+                           for step in range(1, steps + 1))
+        points = sampled
+
         path_was_partitioned = False
         for element_index, element in enumerate(contract_elements):
             run: list[dict[str, float]] = []
@@ -244,15 +258,13 @@ def build_raster_reveal(self, start: int) -> int:
         "strokes": raster_paths,
     }
 
-    # Keep generated artwork text-free, then add readable teaching labels in
-    # the renderer. Four sparse margin labels plus the scene title satisfy the
-    # instructional contract without baking pseudo-text into the local image.
+    # Respect the authored label count instead of padding the board with text.
     plan_items = self.annotation_items(4)
     fallback_labels = self.direct_callout_labels()
-    while len(plan_items) < 4:
-        label = fallback_labels[len(plan_items)] if len(plan_items) < len(fallback_labels) else f"重点{len(plan_items) + 1}"
-        plan_items.append(("side_label", label, self.beat_id_for(len(plan_items))))
-    note_size = max(38, int(self.body_size * 1.20))
+    if not plan_items:
+        plan_items = [("side_label", label, self.beat_id_for(index))
+                      for index, label in enumerate(fallback_labels[:2])]
+    note_size = max(28, int(self.body_size * 1.10))
     note_width = self.width * 0.15
     left_x = self.width * 0.045
     right_x = self.width - note_width - self.width * 0.045

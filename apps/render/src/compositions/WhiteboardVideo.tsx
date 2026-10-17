@@ -42,7 +42,7 @@ function TitleCard({ topic, imageUrl }: { topic: string; imageUrl?: string | nul
       >
         {/* 横线 */}
         {Array.from({ length: 14 }).map((_, i) => (
-          <line key={`h${i}`} x1={0} y1={i * 80} x2={1920} y2={i * 80} stroke={COLORS.lineGray} strokeWidth={1} />
+          <line key={`h${i}`} x1={0} y1={i * 40} x2={WIDTH} y2={i * 40} stroke={COLORS.lineGray} strokeWidth={1} />
         ))}
       </svg>
 
@@ -51,14 +51,14 @@ function TitleCard({ topic, imageUrl }: { topic: string; imageUrl?: string | nul
         <div
           style={{
             position: "absolute",
-            right: 140,
-            top: 180,
-            width: 520,
-            height: 520,
+            right: 70,
+            top: 90,
+            width: 260,
+            height: 260,
             opacity: imageOpacity,
-            borderRadius: 16,
+            borderRadius: 8,
             overflow: "hidden",
-            border: `3px solid ${COLORS.lineGray}`,
+            border: `2px solid ${COLORS.lineGray}`,
             background: "#fff",
           }}
         >
@@ -80,34 +80,34 @@ function TitleCard({ topic, imageUrl }: { topic: string; imageUrl?: string | nul
         text={topic}
         startFrame={8}
         durationFrames={TITLE_FRAMES - 8}
-        x={140}
-        y={380}
-        fontSize={120}
+        x={70}
+        y={190}
+        fontSize={60}
         color={COLORS.ink}
         bold
-        maxWidth={imageUrl ? 1080 : 1640}
+        maxWidth={imageUrl ? 540 : 820}
       />
 
       {/* 下划线（标题写完后画） */}
       <SketchUnderline
-        x={140}
-        y={530}
-        width={Math.min(imageUrl ? 1080 : 1640, topic.length * 68 + 60)}
+      x={70}
+      y={265}
+      width={Math.min(imageUrl ? 540 : 820, topic.length * 34 + 30)}
         startFrame={40}
         durationFrames={TITLE_FRAMES - 40}
         color={COLORS.blue}
-        strokeWidth={5}
+      strokeWidth={3}
       />
 
       {/* 副标题 */}
       <div
         style={{
           position: "absolute",
-          left: 140,
-          top: 600,
+          left: 70,
+          top: 300,
           opacity: subtitleOpacity,
           fontFamily: FONT.handwriting,
-          fontSize: 46,
+          fontSize: 23,
           color: COLORS.inkLight,
           fontWeight: 400,
           letterSpacing: "0.04em",

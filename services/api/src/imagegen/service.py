@@ -74,6 +74,9 @@ def _canonical_video_style(value: str | None) -> str:
 def _normalize_image_description(value: str | None) -> str:
     text = str(value or "").strip()
     replacements = [
+        (r"(?:用|添加|加上|旁边|附近|并)?(?:短|小|文字)?标签(?:标出|标注|写|为|注明)?[^;；。.!]*", "留白供渲染器添加标注"),
+        (r"(?:旁边|下方|上方|底部|顶部|框内|框里|短标签)写[^;；。.!]*", "留白供渲染器添加标注"),
+        (r"(?:右下角|左下角|下方|上方|底部)?画短?结论框", "留白供渲染器添加结论"),
         (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title\s+['\"][^.;]*['\"]?[^.;]*", "open top margin for renderer-added title"),
         (r"\b(?:top|bottom|upper|lower|left|right|center)(?:[-\s]+(?:left|right|center))?\s+(?:blue|red|green|yellow|pink|coral[-\s]?pink)?\s*(?:hand[-\s]?drawn\s+)?(?:scene\s+)?title[^.;]*", "open top margin for renderer-added title"),
         (r"\blater additions?\s*[:：-]?\s*[^.;]*(?:arrow|circle|callout|highlight|label|title|star|warning|underline|tick)[^.;]*", "open whitespace for renderer-drawn annotations"),
@@ -709,7 +712,7 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
         settings.imagegen_provider.strip().lower()
     )
     attempts: list[dict] = []
-    max_attempts = 1 if requested_mode == "flux" else max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
+    max_attempts = max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
     for attempt in range(max_attempts):
         try:
             if provider in {"local", "local_then_ark"}:
@@ -721,10 +724,8 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
             else:
                 raise RuntimeError(f"Unsupported IMAGEGEN_PROVIDER: {settings.imagegen_provider}")
             img_bytes = normalize_whiteboard_image(img_bytes)
-            # OCR launches a separate Tesseract process and is useful for
-            # offline QA, but it needlessly serializes every generated scene.
-            # Keep the generation hot path focused on inexpensive pixel checks.
-            quality = inspect_generated_image(img_bytes, use_ocr=False)
+            # Labels belong to the renderer, not the generated illustration.
+            quality = inspect_generated_image(img_bytes)
             quality["attempt"] = attempt + 1
             quality["semantic"] = semantic
             quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, prompt, provider)

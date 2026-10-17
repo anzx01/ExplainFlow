@@ -1,0 +1,27 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "runtime": "D:\\ck\\04-第三方库与二进制依赖\\stable-diffusion-cpp-bin\\vulkan\\sd-cli.exe",
+  "width": 1024,
+  "height": 768,
+  "steps": 4,
+  "prompt": "Richly shaded colored-pencil and opaque gouache science-book artwork, bright filled colors and visible pencil texture. Exactly four separate vignettes in a precise two-by-two grid, broad pure-white gutters and margins, no panel borders. No lettering, no numbers, no arrows, no icons, no outline-only art. TOP LEFT: anatomical reddish-brown liver with a few golden fat droplets. TOP RIGHT: sweet soda cup beside a blood droplet and medical glucose meter with blank display. BOTTOM LEFT: one sugar cube on a saucer beside a reassuring medical shield. BOTTOM RIGHT: colorful balanced vegetable meal, apple and walking shoes.",
+  "sha256": "8040fde25d9aa1d035a509632d451130af9d7430e9800e5df8496526e2a8f672",
+  "seconds": 86.94,
+  "quality": {
+    "ok": false,
+    "errors": [
+      "border_signature_or_watermark"
+    ],
+    "warnings": [],
+    "metrics": {
+      "width": 1024,
+      "height": 768,
+      "brightnessStdDev": 56.87,
+      "foregroundRatio": 0.213,
+      "edgeDensity": 0.0365,
+      "borderForegroundRatio": 0.0021
+    },
+    "ocrText": "ae = _"
+  }
+}

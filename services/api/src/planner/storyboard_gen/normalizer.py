@@ -129,11 +129,11 @@ def _clean_narration_text(value: object) -> str:
     if not text:
         return ""
     replacements = [
-        (r"^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现|看|看到)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*", ""),
+        (r"^\s*(?:首先|先|接着|然后|再|最后|这里|现在|我们|把|请)?\s*(?:先|再)?\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现)\s*(?:左边|右边|上方|下方|中间|图中|画面中|这个图|这张图)?\s*(?:的|出|上)?\s*", ""),
         (r"(?:先|再|然后|接着|最后)\s*(?:画|绘制|写|写上|标出|标注|圈出|框出|显示|展示|呈现)\s*", ""),
-        (r"(?:左边|右边|上方|下方|中间|旁边|图中|画面中)\s*(?:画|绘制|写|写上|标出|标注|可以看到|看到)\s*", ""),
+        (r"(?:左边|右边|上方|下方|中间|旁边|图中|画面中)\s*(?:画|绘制|写|写上|标出|标注)\s*", ""),
         (r"(?:这一步|这个 beat|此时)\s*(?:同步)?\s*(?:说|讲|说明|解释)\s*", ""),
-        (r"(?:我们|这里|现在)\s*(?:来|可以)?\s*(?:画|绘制|写|写上|标出|标注|看)\s*", ""),
+        (r"(?:我们|这里|现在)\s*(?:来|可以)?\s*(?:画|绘制|写|写上|标出|标注)\s*", ""),
     ]
     for pattern, replacement in replacements:
         text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
@@ -171,7 +171,8 @@ def _trim_text_to_chars(text: str, max_chars: int) -> str:
     return kept
 
 def _subtitle_text(value: object) -> str | None:
-    text = _clean_narration_text(value)
+    # This is already spoken text; instruction stripping/localization can drop words.
+    text = "" if value is None else str(value).strip()
     return text or None
 
 def _planner_str_list(value: object, limit: int | None = None) -> list[str]:

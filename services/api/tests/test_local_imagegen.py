@@ -1,5 +1,6 @@
 import sys
 import io
+import asyncio
 from pathlib import Path
 
 from PIL import Image, ImageDraw
@@ -9,6 +10,59 @@ sys.path.insert(0, str(Path(__file__).parents[1]))
 from src.core.config import settings
 from src.imagegen.service import SceneImageRequest, _build_local_prompt, _comfy_workflow, _flux_prompt_with_lora, _local_prompt, _local_seed, _semantic_prompt_diagnostics, compose_action_board, local_imagegen_status
 from src.imagegen.quality import inspect_generated_image, normalize_whiteboard_image
+
+
+def test_explicit_flux_retries_rejected_image_with_a_new_seed(monkeypatch):
+    from src.imagegen import service
+
+    monkeypatch.setattr(settings, "local_imagegen_max_attempts", 3)
+    monkeypatch.setattr(service, "local_imagegen_status", lambda: {"modes": {"flux": {"missing": []}}})
+    calls = []
+
+    async def generate(prompt, *, quality, attempt):
+        calls.append(attempt)
+        return b"test-image"
+
+    monkeypatch.setattr(service, "_call_local_flux", generate)
+    monkeypatch.setattr(service, "normalize_whiteboard_image", lambda image: image)
+    monkeypatch.setattr(service, "inspect_generated_image", lambda image: {"ok": len(calls) > 1, "errors": [] if len(calls) > 1 else ["possible_readable_text_or_signature"]})
+    monkeypatch.setattr(service, "_asset_contract_metadata", lambda *args: {})
+    image, diagnostics = asyncio.run(service.generate_scene_image_result(SceneImageRequest("retry", "food", "food", "a plate", image_mode="flux"), None))
+    assert image
+    assert calls == [0, 1]
+    assert diagnostics["selectedAttempt"] == 2
+
+
+def test_chinese_renderer_labels_are_not_sent_as_image_text():
+    from src.imagegen.service import _normalize_image_description
+
+    description = _normalize_image_description("画带皮五花肉，用短标签标出皮、肥肉、瘦肉; 右侧画冷水锅，旁边写冷水下锅; 右下角画短结论框。")
+    assert "带皮五花肉" in description
+    assert "冷水锅" in description
+    assert "标出皮" not in description
+    assert "写冷水" not in description
+    assert "结论框" not in description
+
+
+def test_explicit_flux_stops_after_configured_attempts(monkeypatch):
+    from src.imagegen import service
+
+    monkeypatch.setattr(settings, "local_imagegen_max_attempts", 2)
+    monkeypatch.setattr(service, "local_imagegen_status", lambda: {"modes": {"flux": {"missing": []}}})
+    calls = []
+
+    async def generate(prompt, *, quality, attempt):
+        calls.append(attempt)
+        return b"test-image"
+
+    monkeypatch.setattr(service, "_call_local_flux", generate)
+    monkeypatch.setattr(service, "normalize_whiteboard_image", lambda image: image)
+    monkeypatch.setattr(service, "inspect_generated_image", lambda image: {"ok": False, "errors": ["possible_readable_text_or_signature"]})
+    monkeypatch.setattr(service, "_asset_contract_metadata", lambda *args: {})
+    image, diagnostics = asyncio.run(service.generate_scene_image_result(SceneImageRequest("retry", "food", "food", "a plate", image_mode="flux"), None))
+    assert image is None
+    assert calls == [0, 1]
+    assert diagnostics["selectedAttempt"] is None
 
 
 def test_local_imagegen_status_reports_missing_components(monkeypatch, tmp_path: Path):
@@ -240,6 +294,25 @@ def test_quality_gate_rejects_blank_image():
     result = inspect_generated_image(_png(), use_ocr=False)
     assert not result["ok"]
     assert "blank_or_flat" in result["errors"]
+
+
+def test_quality_gate_rejects_coherent_generated_labels(monkeypatch):
+    from types import SimpleNamespace
+    from src.imagegen import quality
+    monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout="Sutenn attention fractentine"))
+    result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
+    assert not result["ok"]
+    assert "possible_readable_text_or_signature" in result["errors"]
+
+
+def test_quality_gate_does_not_reject_isolated_doodle_ocr_noise(monkeypatch):
+    from types import SimpleNamespace
+    from src.imagegen import quality
+    monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout="4 3) Yh"))
+    result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
+    assert result["ok"]
 
 
 def test_action_board_composes_ordered_images_without_labels():

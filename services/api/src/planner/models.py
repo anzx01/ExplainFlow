@@ -237,9 +237,9 @@ class GenerateStoryboardResponse(BaseModel):
 
 class GenerateRemotionCodeRequest(BaseModel):
     storyboard: Storyboard
-    fps: int = Field(default=30, ge=24, le=60)
-    width: int = Field(default=1920, ge=640, le=3840)
-    height: int = Field(default=1080, ge=360, le=2160)
+    fps: int = Field(default=24, ge=24, le=60)
+    width: int = Field(default=960, ge=640, le=3840)
+    height: int = Field(default=540, ge=360, le=2160)
     style_prompt: str | None = None
     subtitles_enabled: bool = False
     background_music_url: str | None = None
@@ -249,7 +249,7 @@ class GenerateRemotionCodeRequest(BaseModel):
 class GenerateRemotionCodeResponse(BaseModel):
     tsx: str
     duration_in_frames: int
-    fps: int = 30
-    width: int = 1920
-    height: int = 1080
+    fps: int = 24
+    width: int = 960
+    height: int = 540
     notes: str | None = None

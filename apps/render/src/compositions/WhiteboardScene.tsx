@@ -15,20 +15,21 @@ interface Props {
 }
 
 // 内容安全区
-const PAD_LEFT = 110;
-const PAD_RIGHT = 110;
-const TITLE_H = 130;
-const SUBTITLE_H = 130;
+const LAYOUT_SCALE = WIDTH / 1920;
+const PAD_LEFT = 110 * LAYOUT_SCALE;
+const PAD_RIGHT = 110 * LAYOUT_SCALE;
+const TITLE_H = 130 * LAYOUT_SCALE;
+const SUBTITLE_H = 130 * LAYOUT_SCALE;
 const CONTENT_TOP = TITLE_H;
 const CONTENT_BOTTOM = HEIGHT - SUBTITLE_H;
 const CONTENT_H = CONTENT_BOTTOM - CONTENT_TOP;
 const CONTENT_W = WIDTH - PAD_LEFT - PAD_RIGHT;
 
 // 右侧 AI 缩略图区域
-const THUMB_W = 400;
-const THUMB_H = 340;
-const THUMB_RIGHT = 80;
-const THUMB_TOP = TITLE_H + 30;
+const THUMB_W = 400 * LAYOUT_SCALE;
+const THUMB_H = 340 * LAYOUT_SCALE;
+const THUMB_RIGHT = 80 * LAYOUT_SCALE;
+const THUMB_TOP = TITLE_H + 30 * LAYOUT_SCALE;
 
 // 有缩略图时，文字内容区变窄
 const TEXT_W_WITH_THUMB = WIDTH - PAD_LEFT - THUMB_W - THUMB_RIGHT - 60;
@@ -77,7 +78,9 @@ function getHandPos(
     const writeFrames = animFrames * 0.7;
     const localF = frame - start;
 
-    if (localF < 0 || localF > animFrames + FPS * 0.4) continue;
+    // Keep the hand visible only while the corresponding element is being drawn.
+    // Showing it during the stagger/hold window makes it appear to scribble alone.
+    if (localF < 0 || localF > writeFrames) continue;
 
     const progress = Math.min(1, localF / Math.max(writeFrames, 1));
     const slot = slots[i];
@@ -99,6 +102,12 @@ function getHandPos(
         default: return anim.type;
       }
     })();
+
+    // Reference-image scenes only use the hand for explicit callouts; never
+    // invent a writing cursor beside a finished image.
+    if (hasThumb && ["write_title", "write_text", "write_formula", "bullet_list", "step_reveal", "highlight_word"].includes(type)) {
+      continue;
+    }
 
     if (type === "write_title") {
       const fs = Math.min(120, Math.max(52, slot.h * 0.55) * 1.2);
@@ -166,8 +175,9 @@ function getHandPos(
       return { x: hx, y: hy };
     }
 
-    // fallback
-    return { x: PAD_LEFT + progress * maxW * 0.5, y: slot.mid };
+    // There is no reliable stroke path for this animation, so a guessed cursor
+    // would be more distracting than omitting the hand.
+    continue;
   }
   return null;
 }

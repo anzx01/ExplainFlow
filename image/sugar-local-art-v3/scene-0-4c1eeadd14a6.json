@@ -1,0 +1,27 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "runtime": "D:\\ck\\04-第三方库与二进制依赖\\stable-diffusion-cpp-bin\\vulkan\\sd-cli.exe",
+  "width": 1024,
+  "height": 768,
+  "steps": 4,
+  "prompt": "Richly shaded colored-pencil and opaque gouache science-book artwork, bright filled colors and visible pencil texture. Exactly four separate vignettes in a precise two-by-two grid, broad pure-white gutters and margins, no panel borders. No lettering, no numbers, no arrows, no icons, no outline-only art. TOP LEFT: porcelain sugar bowl and wooden spoon. TOP RIGHT: amber soda glass with ice and sugar cubes. BOTTOM LEFT: pink cupcake, honey jar and small orange juice glass. BOTTOM RIGHT: red apple, sliced apple and whole orange.",
+  "sha256": "ab0883724180673592f2ff02cb74937d4969349f2cc141f730da58552bb692b5",
+  "seconds": 86.8,
+  "quality": {
+    "ok": false,
+    "errors": [
+      "border_signature_or_watermark"
+    ],
+    "warnings": [],
+    "metrics": {
+      "width": 1024,
+      "height": 768,
+      "brightnessStdDev": 51.47,
+      "foregroundRatio": 0.2666,
+      "edgeDensity": 0.0406,
+      "borderForegroundRatio": 0.019
+    },
+    "ocrText": ""
+  }
+}

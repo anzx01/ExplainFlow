@@ -1,0 +1,21 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "prompt": "One small white sugar cube on an empty pale-blue porcelain saucer, isolated on pure white paper. Rich colored-pencil and opaque gouache painting, visible crystalline sugar texture, gentle soft blue shadows, realistic small proportions. No bread, no toast, no cake, no cup, no lettering.",
+  "sha256": "af521c4a737343021737c0d00b62cfdb55b1d7721a8b7b5c945611c73b70d1fe",
+  "seconds": 40.41,
+  "quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "metrics": {
+      "width": 640,
+      "height": 512,
+      "brightnessStdDev": 22.99,
+      "foregroundRatio": 0.3378,
+      "edgeDensity": 0.0028,
+      "borderForegroundRatio": 0.0
+    },
+    "ocrText": "—"
+  }
+}

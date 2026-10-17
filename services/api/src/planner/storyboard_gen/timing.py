@@ -18,23 +18,8 @@ def _label_is_covered(label: object, text: str) -> bool:
 
 def _ensure_required_labels_in_beat_narration(beats: list[VisualBeat]) -> list[VisualBeat]:
     for beat in beats:
-        narration = _clean_narration_text(beat.narration)
-        missing: list[str] = []
-        seen: set[str] = set()
-        for label in beat.required_labels or []:
-            cleaned = _clean_text(label)
-            token = _label_token(cleaned)
-            if not cleaned or token in seen or _label_is_covered(cleaned, narration):
-                continue
-            seen.add(token)
-            missing.append(cleaned)
-            if len(missing) >= 3:
-                break
-        if missing:
-            addition = f"关键词要点是：{'、'.join(missing)}。"
-            beat.narration = _clean_narration_text(f"{narration} {addition}" if narration else addition)
-        else:
-            beat.narration = narration
+        # Required labels belong to the visual channel, not an appended spoken list.
+        beat.narration = _clean_narration_text(re.sub(r"关键词要点是[：:][^。！？]*[。！？]?", "", beat.narration or ""))
     return beats
 
 def _narration_from_beats(narration: str, beats: list[VisualBeat]) -> str:

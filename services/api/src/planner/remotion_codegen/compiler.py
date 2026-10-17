@@ -200,7 +200,7 @@ async def generate_remotion_code(
                     "use STXingkai/华文行楷/KaiTi/STKaiti for Chinese handwriting, never bold sans-serif, "
                     "include limited teaching accent colors and teacher-style whiteboard callouts, with a clean whiteboard background, "
                     f"render a moving HandPen with <Img src={{staticFile('{HAND_ASSET}')}} />, "
-                    "use HAND_WIDTH >= 220 and PEN_TIP_X/PEN_TIP_Y offsets so the marker tip touches the active stroke, "
+                    "use HAND_WIDTH >= 180 and PEN_TIP_X/PEN_TIP_Y offsets so the marker tip touches the active stroke, "
                     "define drawOps with kind/startFrame/endFrame/points, pointOnPolyline(), getActiveDrawOp(), "
                     "and getPenPosition(frame); pass getPenPosition(frame) to HandPen, "
                     "make text points move up/down/left/right inside words instead of sliding on a baseline, "

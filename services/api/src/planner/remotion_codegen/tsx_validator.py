@@ -81,8 +81,8 @@ def _validate_generated_tsx(tsx: str) -> str:
         raise ValueError("Generated Remotion code must compute pen tip coordinates for the hand overlay")
     if not re.search(r"\bvisible\b", code):
         raise ValueError("HandPen must receive a visible flag and hide during non-drawing holds")
-    if not re.search(r"\bHAND_WIDTH\s*=\s*(?:2[2-9]\d|[3-9]\d\d)\b", code):
-        raise ValueError("Generated Remotion code must size the hand image with HAND_WIDTH >= 220")
+    if not re.search(r"\bHAND_WIDTH\s*=\s*(?:1[89]\d|[2-9]\d\d)\b", code):
+        raise ValueError("Generated Remotion code must size the hand image with HAND_WIDTH >= 180")
     if not re.search(r"\bPEN_TIP_(?:X|Y)\b", code):
         raise ValueError("Generated Remotion code must use fixed PEN_TIP_X/PEN_TIP_Y offsets to align the marker tip")
     if re.search(r"<svg(?:(?!</svg>).)*<HandPen(?:(?!</svg>).)*</svg>", code, flags=re.IGNORECASE | re.DOTALL):

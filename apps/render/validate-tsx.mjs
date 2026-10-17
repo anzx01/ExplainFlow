@@ -182,7 +182,7 @@ export function validateGeneratedTsx(tsx, storyboard = null) {
   if (!/\bHandPen\b/.test(code)) throw new Error("Generated TSX must define and render a HandPen component");
   if (!/\b(tip|pen)(X|Y)\b/.test(code)) throw new Error("Generated TSX must compute pen tip coordinates for the hand overlay");
   if (!/\bvisible\b/.test(code)) throw new Error("HandPen must receive a visible flag and hide during non-drawing holds");
-  if (!/\bHAND_WIDTH\s*=\s*(?:2[2-9]\d|[3-9]\d\d)\b/.test(code)) throw new Error("Generated TSX must size the hand image with HAND_WIDTH >= 220");
+  if (!/\bHAND_WIDTH\s*=\s*(?:1[89]\d|[2-9]\d\d)\b/.test(code)) throw new Error("Generated TSX must size the hand image with HAND_WIDTH >= 180");
   if (!/\bPEN_TIP_(?:X|Y)\b/.test(code)) throw new Error("Generated TSX must use fixed PEN_TIP_X/PEN_TIP_Y offsets to align the marker tip");
   if (/<svg(?:(?!<\/svg>)[\s\S])*<HandPen(?:(?!<\/svg>)[\s\S])*<\/svg>/i.test(code)) {
     throw new Error("Generated TSX must render HandPen outside SVG as an HTML overlay sibling");

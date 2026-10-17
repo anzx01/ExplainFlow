@@ -5,12 +5,11 @@ _WHITEBOARD_TSX_TEMPLATE = r'''
 import React from "react";
 import { AbsoluteFill, Audio, Easing, Img, interpolate, Sequence, staticFile, useCurrentFrame } from "remotion";
 
-const HAND_WIDTH = 282;
-const HAND_HEIGHT = 282;
-// hand-real-pen.png is a compact transparent asset. These coordinates locate
-// the actual marker tip inside the square, so the tip stays on the raster path.
-const PEN_TIP_X = 198;
-const PEN_TIP_Y = 197;
+const HAND_WIDTH = 180;
+const HAND_HEIGHT = 200;
+// Match the tip in the 1620x1800 hand asset to its 180x200 display size.
+const PEN_TIP_X = 10;
+const PEN_TIP_Y = 48;
 const VIDEO_WIDTH = __VIDEO_WIDTH__;
 const VIDEO_HEIGHT = __VIDEO_HEIGHT__;
 const BOARD_BACKGROUND = "#F7F7F2";
@@ -30,6 +29,9 @@ type RasterRevealSpec = { asset: string; inkAsset?: string; colorAsset?: string;
 type AudioSegmentSpec = { id: string; index?: number; startFrame: number; endFrame: number; duration: number; audioStartFrame?: number; audioEndFrame?: number; audioSequenceDuration?: number; audioUrl?: string | null; audioDurationFrames: number; drawBudgetFrames: number; subtitleText?: string | null; drawIntent?: string | null };
 type SceneSpec = {
   title: string;
+  keywords?: string[];
+  summaryPoints?: string[];
+  subtitleCues?: {text: string; startFrame: number; endFrame: number}[];
   diagramKind?: string;
   boardMode?: "whiteboard" | "chalkboard" | "clean_canvas" | "reference";
   handUsage?: "trace" | "annotate" | "none";
@@ -127,6 +129,15 @@ const pointOnPolyline = (points: Point[], progress: number): Point => {
   return points[points.length - 1];
 };
 
+const pointsForOp = (scene: SceneSpec, op: DrawOp): Point[] => {
+  const stroke = scene.rasterReveal?.strokes?.find((item) => item.opId === op.id || item.colorOpId === op.id);
+  if (!stroke?.d) return op.points;
+  const values = [...stroke.d.matchAll(/-?\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  const points = [];
+  for (let index = 0; index + 1 < values.length; index += 2) points.push({ x: values[index], y: values[index + 1] });
+  return points.length > 0 ? points : op.points;
+};
+
 const HandPen = ({ tipX, tipY, visible }: { tipX: number; tipY: number; visible: boolean }) => (
   <div
     style={{
@@ -174,8 +185,10 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
     const audioEnd = segment.audioEndFrame ?? segment.endFrame;
     return frame >= audioStart && frame < audioEnd;
   });
-  if (segments.length > 0 && !activeSegment) return null;
-  const text = (activeSegment ? activeSegment.subtitleText : scene.subtitleText)?.trim();
+  const cue = scene.subtitleCues?.find(c => frame >= c.startFrame && frame < c.endFrame);
+  if (scene.subtitleCues?.length && !cue) return null;
+  if (!cue && segments.length > 0 && !activeSegment) return null;
+  const text = (cue?.text ?? (activeSegment ? activeSegment.subtitleText : scene.subtitleText))?.trim();
   if (!text) return null;
   const chunks = splitSubtitleText(text);
   if (chunks.length === 0) return null;
@@ -184,18 +197,18 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
   const localFrame = activeSegment ? frame - audioStart : frame;
   const localDuration = activeSegment ? Math.max(1, audioEnd - audioStart) : scene.duration;
   const progress = clamp01(localFrame / Math.max(1, localDuration - 1));
-  const index = Math.min(chunks.length - 1, Math.floor(progress * chunks.length));
-  const opacity = interpolate(localFrame, [0, 8, Math.max(9, localDuration - 10), Math.max(10, localDuration - 2)], [0, 1, 1, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
+  const index = cue ? 0 : Math.min(chunks.length - 1, Math.floor(progress * chunks.length));
+  const opacity = 1;
   return (
     <div
       style={{
         position: "absolute",
         left: 0,
         right: 0,
-        bottom: 42,
+        bottom: 0,
+        height: VIDEO_HEIGHT * 0.16,
+        alignItems: "center",
+        backgroundColor: sceneBackground(scene),
         display: "flex",
         justifyContent: "center",
         pointerEvents: "none",
@@ -209,7 +222,7 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
           padding: "0 24px",
           color: sceneCaptionColor(scene),
           fontFamily: "'Noto Sans SC', 'Microsoft YaHei', sans-serif",
-          fontSize: 34,
+          fontSize: VIDEO_WIDTH * 0.025,
           fontWeight: 500,
           lineHeight: 1.42,
           letterSpacing: 0,
@@ -217,7 +230,7 @@ const SubtitleOverlay = ({ scene }: { scene: SceneSpec }) => {
           whiteSpace: "pre-wrap",
         }}
       >
-        {chunks[index]}
+        {cue ? text : chunks[index]}
       </div>
     </div>
   );
@@ -498,11 +511,9 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
   const orderedDrawOps = [...drawOps].sort((a, b) => a.startFrame - b.startFrame);
   const backgroundColor = sceneBackground(scene);
   const showHand = scene.handUsage !== "none" && scene.boardMode !== "chalkboard" && scene.visualStyle !== "math_chalkboard";
-  // The pen should only appear while it is drawing a real path. Text glyphs
-  // are rendered stroke-by-stroke, but showing the hand on a glyph baseline
-  // makes it look detached from the illustrated object.
+  // Preprocessed glyph ops carry sampled outline geometry for the pen.
   const getActiveDrawOp = (frame: number) => {
-    const activePaths = orderedDrawOps.filter((op) => op.kind === "path" && frame >= op.startFrame && frame <= op.endFrame);
+    const activePaths = orderedDrawOps.filter((op) => (op.kind === "path" || op.pace === "glyph") && (op.pace === "glyph" || (scene.rasterReveal?.strokes?.length ? String(op.id ?? "").includes("_raster_") : !scene.rasterReveal || scene.rasterReveal.renderMode !== "direct")) && frame >= op.startFrame && frame < op.endFrame);
     return activePaths.find((op) => op.phase === "color")
       ?? activePaths.find((op) => op.phase === "ink")
       ?? activePaths[0];
@@ -511,17 +522,17 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
     const active = getActiveDrawOp(frame);
     if (active) {
       const progress = progressForOp(frame, active);
-      const point = pointOnPolyline(active.points, progress);
+      const point = pointOnPolyline(pointsForOp(scene, active), progress);
       return { x: point.x, y: point.y, visible: true };
     }
-    const pathOps = orderedDrawOps.filter((op) => op.kind === "path");
+    const pathOps = orderedDrawOps.filter((op) => (op.kind === "path" || op.pace === "glyph") && (op.pace === "glyph" || (scene.rasterReveal?.strokes?.length ? String(op.id ?? "").includes("_raster_") : !scene.rasterReveal || scene.rasterReveal.renderMode !== "direct")));
     const previous = [...pathOps].reverse().find((op) => op.endFrame < frame);
     const next = pathOps.find((op) => op.startFrame > frame);
     if (previous && next) {
       const gap = next.startFrame - previous.endFrame;
       if (gap > 0 && gap <= 26 && frame >= previous.endFrame && frame <= next.startFrame) {
-        const from = pointOnPolyline(previous.points, 1);
-        const to = pointOnPolyline(next.points, 0);
+        const from = pointOnPolyline(pointsForOp(scene, previous), 1);
+        const to = pointOnPolyline(pointsForOp(scene, next), 0);
         const t = interpolate(frame, [previous.endFrame, next.startFrame], [0, 1], {
           extrapolateLeft: "clamp",
           extrapolateRight: "clamp",
@@ -560,9 +571,12 @@ const WhiteboardScene = ({ scene, sceneIndex }: { scene: SceneSpec; sceneIndex: 
         <GlyphText scene={scene} />
       </svg>
       <RasterFinalOverlay scene={scene} />
-      <SubtitleOverlay scene={scene} />
-      <HandPen tipX={pen.x} tipY={pen.y} visible={showHand && pen.visible} />
+      {showHand && pen.visible ? <HandPen tipX={pen.x} tipY={pen.y} visible /> : null}
       <SceneTransitionWipe scene={scene} />
+      <div style={{position: "absolute", top: 12, left: "6%", width: "88%", height: VIDEO_HEIGHT * 0.14, background: backgroundColor, color: sceneCaptionColor(scene), zIndex: 45, display: "flex", justifyContent: "center", alignItems: "center", textAlign: "center", fontWeight: 600, fontSize: Math.min(VIDEO_WIDTH * 0.037, VIDEO_WIDTH * 0.84 / Math.max(1, Array.from(scene.title).length)), fontFamily: "'Microsoft YaHei', sans-serif"}}>{scene.title}</div>
+      {scene.keywords?.length ? <div style={{position: "absolute", top: "74%", height: "10%", width: "100%", background: backgroundColor, zIndex: 45, display: "flex", gap: 18, alignItems: "center", justifyContent: "center", fontSize: VIDEO_WIDTH * 0.022, color: scene.accent}}>{scene.keywords?.map(word => <span key={word}>{word}</span>)}</div> : null}
+      {scene.summaryPoints?.length ? <div style={{position: "absolute", left: "12%", right: "12%", top: "21%", bottom: "27%", zIndex: 46, background: backgroundColor, color: sceneCaptionColor(scene), fontSize: VIDEO_WIDTH * 0.029, lineHeight: 2.1}}>{scene.summaryPoints.map((point, i) => <div key={point} style={{opacity: interpolate(frame, [i * 12, i * 12 + 5], [0, 1], {extrapolateLeft: "clamp", extrapolateRight: "clamp"})}}>{point}</div>)}</div> : null}
+      <SubtitleOverlay scene={scene} />
     </AbsoluteFill>
   );
 };

@@ -1,0 +1,21 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "prompt": "Friendly colored-pencil and gouache dental education artwork on clean white paper. One isolated solid human molar with natural ivory enamel and two roots. A tiny shallow tan-brown spot on its chewing surface illustrates early enamel damage. Opaque pastel shading, fine pencil texture, three dimensional form. No gums, no open mouth, no blood, no wounds, no black hole, no dramatic decay, no lettering.",
+  "sha256": "65c1be13d60227383e9e1f91071dd0c380e670cb18f17dd220595839aeb3d086",
+  "seconds": 40.34,
+  "quality": {
+    "ok": true,
+    "errors": [],
+    "warnings": [],
+    "metrics": {
+      "width": 640,
+      "height": 512,
+      "brightnessStdDev": 11.83,
+      "foregroundRatio": 0.0821,
+      "edgeDensity": 0.0045,
+      "borderForegroundRatio": 0.0
+    },
+    "ocrText": ""
+  }
+}

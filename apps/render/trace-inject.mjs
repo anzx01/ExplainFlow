@@ -63,7 +63,7 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
 
 export function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "scene-authored-artwork-v7",
+    renderAssetMode: "scene-authored-artwork-v12-subject-first-coverage",
     imageMode: storyboard?.image_generation_mode ?? storyboard?.imageGenerationMode ?? "default",
     authoredPrompt: imageGenerationDescription(storyboard, scene),
     sourceImage: createHash("sha256").update(sceneLocalImageBuffer(scene) ?? Buffer.alloc(0)).digest("hex"),
@@ -84,9 +84,9 @@ function shouldTraceReferenceScene(scene) {
   const boardMode = sceneBoardMode(scene);
   const strategy = String(scene.render_strategy ?? scene.renderStrategy ?? "").trim().toLowerCase();
   const visualStyle = sceneVisualStyle(scene);
-  if (handUsage !== "trace") return false;
+  if (handUsage === "none") return false;
   if (boardMode === "chalkboard" || visualStyle === "math_chalkboard") return false;
-  return !/(direct|finished|static|present|photo|show|annotate)/i.test(strategy);
+  return boardMode === "whiteboard" || !/(direct|finished|static|present|photo|show|annotate)/i.test(strategy);
 }
 
 export function imageGenerationDescription(storyboard, scene) {
@@ -378,9 +378,6 @@ export async function injectImageTraces(storyboard, jobId) {
           .join("; ");
         throw new Error(`Image generation returned 0/${candidates.length} images from the configured provider.${diagnostics ? ` Diagnostics: ${diagnostics}` : " Check /imagegen/status and /imagegen/scenes logs."}`);
       }
-      if (generatedCount < candidates.length) {
-        throw new Error(`Image generation returned ${generatedCount}/${candidates.length} storyboard reference images; refusing to render scenes without matching artwork.`);
-      }
     }
 
     for (const scene of candidates) {
@@ -407,7 +404,11 @@ export async function injectImageTraces(storyboard, jobId) {
 
     const missingCandidates = candidates.filter((scene) => !rasterBySceneId[scene.id] && !tracesBySceneId[scene.id]);
     if (missingCandidates.length > 0) {
-      throw new Error(`Required scene artwork missing after image generation: ${missingCandidates.map((scene) => scene.id).join(", ")}`);
+      const details = missingCandidates.map(scene => {
+        const errors = response.diagnostics?.[scene.id]?.attempts?.flatMap(attempt => attempt.errors ?? []) ?? [];
+        return `${scene.id}: ${[...new Set(errors)].join(", ") || "no usable artwork"}`;
+      }).join("; ");
+      throw new Error(`Required scene artwork missing after image generation (${candidates.length-missingCandidates.length}/${candidates.length}); successful artwork cached for retry. ${details}`);
     }
     if (Object.keys(tracesBySceneId).length === 0 && Object.keys(rasterBySceneId).length === 0) return storyboard;
     return mergeResults(rasterBySceneId, tracesBySceneId);

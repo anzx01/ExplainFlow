@@ -2,12 +2,17 @@ from .scene_builder_base import FallbackSceneBuilder
 from .scene_info import _contains_any
 from ..coverage.corpus import _scene_corpus
 from .scene_extra import _scene_extra
-from .draw_ops import _stretch_audio_segments_for_draw_workload, _retime_draw_ops_to_audio_segments
+from .draw_ops import _retime_draw_ops_in_window, _retime_draw_ops_to_subtitle_cues, _stretch_audio_segments_for_draw_workload, _retime_draw_ops_to_audio_segments
 from ..storyboard_gen.normalizer import _clean_text
+import re
 
 
 def _apply_render_contract(self) -> list[dict]:
-    elements = sorted(self.scene.render_elements, key=lambda item: (item.sequence, item.id))
+    elements = sorted(
+        (item for item in self.scene.render_elements
+         if not self.raster_reveal_spec or item.source != "generated"),
+        key=lambda item: (item.sequence, item.id),
+    )
     if not elements:
         return []
     scene_ms = max(1, round(self.scene.duration_estimate * 1000))
@@ -54,6 +59,22 @@ def _apply_render_contract(self) -> list[dict]:
     for index, element in enumerate(elements):
         start = round(element.reveal.start_ms * self.fps / 1000 * scale)
         end = round((element.reveal.start_ms + element.reveal.duration_ms) * self.fps / 1000 * scale)
+        # Authored time estimates must not override the actual spoken phrase.
+        token = re.sub(r"[\W_]+", "", element.subtitle or "")
+        cues = self.subtitle_cues
+        if token and cues:
+            cue_tokens = [re.sub(r"[\W_]+", "", cue["text"]) for cue in cues]
+            spoken = "".join(cue_tokens)
+            offset = spoken.find(token)
+            if offset >= 0 and spoken.find(token, offset + 1) < 0:
+                cursor = 0
+                matching = []
+                for cue, cue_token in zip(cues, cue_tokens):
+                    if cursor < offset + len(token) and cursor + len(cue_token) > offset:
+                        matching.append(cue)
+                    cursor += len(cue_token)
+                if matching:
+                    start, end = matching[0]["startFrame"], matching[-1]["endFrame"]
         later = [scaled_region(item.region) for item in elements[index + 1 :]]
         specs.append(
             {
@@ -120,14 +141,22 @@ def _apply_render_contract(self) -> list[dict]:
         assigned = [op for op in self.draw_ops if op.get("contractElementId") == spec["id"]]
         if not assigned:
             continue
-        raster_ink = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "ink"]
-        raster_color = [op for op in assigned if op.get("id") in raster_op_ids and op.get("phase") == "color"]
+        raster_ops = [op for op in assigned if op.get("id") in raster_op_ids]
         other = [op for op in assigned if op.get("id") not in raster_op_ids]
-        if raster_ink or raster_color:
-            # Paired line and color paths share one timeline so the visible
-            # fill stays attached to the pen instead of arriving in a second pass.
-            schedule_ops(raster_ink, spec["startFrame"], spec["endFrame"])
-            schedule_ops(raster_color, spec["startFrame"], spec["endFrame"])
+        if raster_ops:
+            _retime_draw_ops_in_window(raster_ops, spec["startFrame"], spec["endFrame"])
+            # Reveal the color with each painted stroke instead of waiting for
+            # an entire object's black outlines to finish.
+            by_id = {op["id"]: op for op in raster_ops}
+            for ink in raster_ops:
+                if ink.get("phase") != "ink":
+                    continue
+                color = by_id.get(ink.get("pairedOpId"))
+                if not color:
+                    continue
+                start, end = ink["startFrame"], color["endFrame"]
+                ink["endFrame"] = round(start + min(6, (end - start) * 0.12), 2)
+                color["startFrame"] = ink["endFrame"]
         if other:
             schedule_ops(other, spec["startFrame"], spec["endFrame"])
     return specs
@@ -204,19 +233,7 @@ def _build(self) -> dict:
     title_size = 58 if self.width >= 1600 else 44
     self.body_size = 32 if self.width >= 1600 else 26
     title_text = self.scene.title or f"Scene {self.scene_index + 1}"
-    self.add_text(
-        title_text,
-        self.title_x_for_text(title_text, title_size),
-        self.top,
-        title_size,
-        self.blue,
-        cursor,
-        44,
-        emphasis=True,
-        max_width=self.width * 0.78,
-        max_chars=24,
-    )
-    cursor += 54
+    # The title is a safe-area overlay, not clipped handwritten glyphs.
 
     builders = {
         "process_flow": self.build_process_flow,
@@ -237,7 +254,20 @@ def _build(self) -> dict:
     cooking = _contains_any(_scene_corpus(self.scene).lower(), ["饺子", "面粉", "擀皮", "包制", "下锅", "包馅", "dumpling", "dough", "wrapper"])
     # A traced model image is authoritative; procedural cooking art is only a
     # fallback when image generation or line-art extraction is unavailable.
-    if cooking and not (self.raster_reveal and self.reference_image_asset):
+    spoken_recap = bool(_scene_extra(self.scene, "summaryPoints") and self.subtitle_cues)
+    if spoken_recap:
+        self.raster_reveal_spec = None
+        self.reference_image_asset = None
+        line_height = self.height * 0.50 / max(1, len(self.subtitle_cues))
+        font_size = min(self.body_size, line_height * 0.70)
+        for index, cue in enumerate(self.subtitle_cues):
+            self.add_text(
+                cue["text"], self.width * 0.12, self.height * 0.21 + index * line_height,
+                font_size, self.ink, cue["startFrame"], cue["endFrame"] - cue["startFrame"],
+                max_width=self.width * 0.76, max_chars=len(cue["text"]),
+                emphasis=False, beat_id=f"cue_{index}",
+            )
+    elif cooking and not (self.raster_reveal and self.reference_image_asset):
         cooking_builders = {
             "ingredients": self.build_cooking_ingredients,
             "wrappers": self.build_cooking_wrappers,
@@ -261,13 +291,28 @@ def _build(self) -> dict:
         seven_habits_builder = _select_seven_habits_builder(self)
         cursor = (railway_builder or seven_habits_builder or builders.get(self.diagram_kind, self.build_process_flow))(cursor)
 
-    self.duration = _stretch_audio_segments_for_draw_workload(
-        self.draw_ops, self.texts, self.audio_segments, self.duration, self.fps
-    )
-    _retime_draw_ops_to_audio_segments(self.draw_ops, self.audio_segments, self.duration)
-    render_elements = _apply_render_contract(self)
+    if not self.raster_reveal_spec and not self.subtitle_cues:
+        self.duration = _stretch_audio_segments_for_draw_workload(
+            self.draw_ops, self.texts, self.audio_segments, self.duration, self.fps
+        )
+    # Recap cue bindings are authoritative; contract scheduling must not overwrite them.
+    if spoken_recap:
+        _retime_draw_ops_to_subtitle_cues(self.draw_ops, self.subtitle_cues, self.duration)
+        render_elements = []
+    elif self.scene.render_elements and (
+        not self.raster_reveal_spec
+        or any(item.source != "generated" for item in self.scene.render_elements)
+    ):
+        render_elements = _apply_render_contract(self)
+    else:
+        if not _retime_draw_ops_to_subtitle_cues(self.draw_ops, self.subtitle_cues, self.duration):
+            _retime_draw_ops_to_audio_segments(self.draw_ops, self.audio_segments, self.duration)
+        render_elements = []
     return {
         "title": self.scene.title,
+        "keywords": [] if self.raster_reveal_spec else list(dict.fromkeys(label for beat in self.scene.visual_beats for label in beat.required_labels))[:5],
+        "subtitleCues": self.subtitle_cues,
+        "summaryPoints": [] if spoken_recap else getattr(self.scene, "summaryPoints", []),
         "diagramKind": self.diagram_kind,
         "boardMode": self.board_mode,
         "handUsage": self.hand_usage,

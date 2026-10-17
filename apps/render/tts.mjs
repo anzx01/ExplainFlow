@@ -13,10 +13,12 @@ import {
   SCENE_PREROLL_FRAMES,
 } from "./config.mjs";
 import { safeAssetSegment } from "./utils.mjs";
+import { continuousNarration } from "./continuous-narration.mjs";
 import {
   cleanNarrationText,
   distributeNarrationAcrossBeats,
   estimateNarrationSeconds,
+  normalizeTextForTts,
   normalizeVoiceKey,
   probeAudioDurationSeconds,
   requestTtsAudio,
@@ -46,6 +48,7 @@ function ensureAudioDir() {
 export async function synthesizeScene(sceneId, text, voice) {
   const narration = String(text ?? "").trim();
   if (!narration) return null;
+  const speechText = normalizeTextForTts(narration) || narration;
   ensureAudioDir();
   const filename = ttsCacheFilename(narration, voice);
   const outPath = join(AUDIO_DIR, filename);
@@ -57,13 +60,13 @@ export async function synthesizeScene(sceneId, text, voice) {
       try { unlinkSync(outPath); } catch {}
       throw new Error(`Cached TTS audio is empty or unreadable for ${sceneId}`);
     }
-    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
+    return { audioUrl, filePath: outPath, durationSeconds, text: speechText };
   }
   if (ttsInFlight.has(filename)) {
     await ttsInFlight.get(filename);
     const durationSeconds = await probeAudioDurationSeconds(outPath);
     if (!durationSeconds) throw new Error(`Shared TTS audio is empty or unreadable for ${sceneId}`);
-    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
+    return { audioUrl, filePath: outPath, durationSeconds, text: speechText };
   }
 
   const pending = requestTtsAudio(narration, voice, sceneId).then((audio) => { writeFileSync(outPath, audio); });
@@ -74,7 +77,7 @@ export async function synthesizeScene(sceneId, text, voice) {
     if (!durationSeconds || !existsSync(outPath) || statSync(outPath).size <= 0) {
       throw new Error(`TTS audio is empty or unreadable for ${sceneId}`);
     }
-    return { audioUrl, filePath: outPath, durationSeconds, text: narration };
+    return { audioUrl, filePath: outPath, durationSeconds, text: speechText };
   } finally {
     ttsInFlight.delete(filename);
   }
@@ -195,6 +198,10 @@ function reusableSceneAudio(scene) {
 
 export async function injectAudio(storyboard, voice) {
   const voiceKey = normalizeVoiceKey(voice ?? "xiaoxiao");
+  // Local default voice uses one continuous take; explicit alternate voices retain their provider.
+  if (process.platform === "win32" && voiceKey === "xiaoxiao" && storyboard.scenes.every(scene => scene.narration?.trim() && !scene.audioUrl && !scene.audio_url && !scene.audio_data_url && !scene.audioDataUrl)) {
+    return continuousNarration(storyboard);
+  }
   const sceneResults = await Promise.allSettled(
     storyboard.scenes.map(async (scene, sceneIndex) => {
       const cachedSceneAudio = reusableSceneAudio(scene);
@@ -241,7 +248,8 @@ export async function injectAudio(storyboard, voice) {
           audioStartFrame, audioEndFrame: audioStartFrame + audioDurationFrames,
           audioSequenceDuration: audioDurationFrames, audioUrl: audio?.audioUrl ?? null,
           audioDurationFrames, drawBudgetFrames: Math.max(1, durationFrames - 4),
-          subtitleText: beat.text, narration: beat.text, drawIntent: beat.drawIntent,
+          // The subtitle must be the exact text handed to TTS, not an earlier beat draft.
+          subtitleText: audio.text, narration: audio.text, drawIntent: beat.drawIntent,
         };
       });
 

@@ -1,0 +1,27 @@
+{
+  "provider": "local",
+  "model": "E:\\MYLLM\\flux1-schnell-fp8\\gguf\\flux1-schnell-Q5_K_S.gguf",
+  "runtime": "D:\\ck\\04-第三方库与二进制依赖\\stable-diffusion-cpp-bin\\vulkan\\sd-cli.exe",
+  "width": 1024,
+  "height": 768,
+  "steps": 4,
+  "prompt": "Richly shaded colored-pencil and opaque gouache science-book artwork, bright filled colors and visible pencil texture. Exactly four separate vignettes in a precise two-by-two grid, broad pure-white gutters and margins, no panel borders. No lettering, no numbers, no arrows, no icons, no outline-only art. TOP LEFT: amber soda bottle with a large blank paper label. TOP RIGHT: amber soda bottle beside a large pile of white sugar cubes. BOTTOM LEFT: wooden bowl full of sugar beside a balanced food plate. BOTTOM RIGHT: two small wooden bowls with clearly different amounts of sugar, one full and one half full.",
+  "sha256": "678d41f708fe3c48ab73c8e8356030a7a0096653cf209561f6940b45574079cd",
+  "seconds": 85.62,
+  "quality": {
+    "ok": false,
+    "errors": [
+      "border_signature_or_watermark"
+    ],
+    "warnings": [],
+    "metrics": {
+      "width": 1024,
+      "height": 768,
+      "brightnessStdDev": 52.07,
+      "foregroundRatio": 0.2048,
+      "edgeDensity": 0.0442,
+      "borderForegroundRatio": 0.0375
+    },
+    "ocrText": "6 >. a Pe pines Oo"
+  }
+}

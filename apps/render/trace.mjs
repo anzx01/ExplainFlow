@@ -151,6 +151,43 @@ export async function traceRasterRevealImage(imageBuffer) {
   };
 }
 
+// Skeletons describe edges, not filled areas. Cover the actual painted subject
+// as well, so most of the illustration is not missing until the final overlay.
+export async function rasterCoveragePaths(colorBuffer) {
+  const {data, info} = await sharp(colorBuffer).ensureAlpha().raw().toBuffer({resolveWithObject: true});
+  const {width, height, channels} = info;
+  const pitch = Math.max(1, Math.floor(Math.min(width, height) / 40));
+  const paths = [];
+  for (let top = 0; top < height; top += pitch) {
+    let left = width, right = -1, painted = 0;
+    for (let y = top; y < Math.min(height, top + pitch); y++) {
+      for (let x = 0; x < width; x++) {
+        if (data[(y * width + x) * channels + 3] > 12) {
+          painted++;
+          left = Math.min(left, x);
+          right = Math.max(right, x);
+        }
+      }
+    }
+    if (right < left) continue;
+    // A short path's round cap still covers isolated details; keep it long
+    // enough that the renderer's short-stroke width guard cannot erase them.
+    const reach = Math.max(pitch * 2, (right - left) / 2);
+    const center = (left + right) / 2;
+    const y = Math.min(height - 1, top + pitch / 2) / height;
+    let points = [{x: Math.max(0, center - reach) / width, y},
+      {x: Math.min(width, center + reach) / width, y}];
+    if (paths.length % 2) points.reverse();
+    paths.push({id: `coverage_${paths.length}`, points,
+      revealWidth: 2 * pitch / Math.max(width, height), painted});
+  }
+  const mass = paths.reduce((sum, path) => sum + path.painted, 0);
+  const centerY = paths.reduce((sum, path) => sum + path.points[0].y * path.painted, 0) / (mass || 1);
+  // Start on the painted subject, not its empty border or a distant steam wisp.
+  return paths.sort((a, b) => Math.abs(a.points[0].y-centerY) - Math.abs(b.points[0].y-centerY))
+    .map(({painted, ...path}) => path);
+}
+
 async function makeHanddrawnMaster(imageBuffer) {
   // Keep the generated reference as the single source for both line art and
   // color. The old palette reduction made detailed references collapse into
@@ -179,10 +216,10 @@ async function makeHanddrawnMaster(imageBuffer) {
   const margin = Math.max(12, Math.round(side * 0.08));
   return sharp(trimmed)
     .extend({
-      top: Math.round((side - height) / 2) + margin,
-      bottom: Math.ceil((side - height) / 2) + margin,
-      left: Math.round((side - width) / 2) + margin,
-      right: Math.ceil((side - width) / 2) + margin,
+      top: margin,
+      bottom: margin,
+      left: margin,
+      right: margin,
       background: "#ffffff",
     })
     .png({ compressionLevel: 9 })
@@ -323,6 +360,7 @@ export async function buildRasterRevealFromBuffer(imageBuffer, jobId, scene, opt
   const colorAssetData = await makeTransparentColorAsset(handdrawnMaster);
   writeFileSync(join(assetDir, colorFilename), colorAssetData.buffer);
   const trace = await traceRasterRevealImage(assetBuffer);
+  trace.strokes.unshift(...await rasterCoveragePaths(colorAssetData.buffer));
   // A generated reference is still valuable when its line-art skeleton is too
   // sparse to animate. Keep the complete normalized plate and render it
   // directly instead of discarding the image and falling back to text-only SVG.
