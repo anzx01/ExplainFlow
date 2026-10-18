@@ -10,12 +10,14 @@ ExplainFlow 是一个本地化教学视频生成工具。目标是把用户输�
 
 ## 当前状态
 
-- MVP 主链路已打通：主题输入 -> 讲解规划 -> Storyboard -> TTS -> Remotion 代码生成 -> MP4 渲染。
-- 生成策略已经从“针对单一题材打补丁”改为通用课堂表达：按教学关系、信息密度、画面复杂度和讲画同步要求决定呈现方式。
-- 普通白板讲解不再默认生成参考位图，避免图形和文字背后出现像纸片一样的底板、阴影或卡片面。
-- 通用题材不再特殊考虑 MOS/FinFET，统一走“全局地图、结构拆解、优先取舍、目标路径、反馈闭环”等通用解释框架。
-- 文案和图形提示已强化为更生动的课堂表达，避免只有单调勾选、空泛标题或枯燥列表。
-- 2026-05-22 完成一次端到端冒烟生成和清理：视频可生成、TTS 和音视频流正常；临时 MP4、抽帧、生成目录和后台日志已清理。
+- MVP 主链路已打通：主题输入 -> 讲解规划 -> Storyboard -> TTS -> Remotion 代码生成 -> MP4 渲染，全链路本地运行。
+- **教学深度契约**：how-to/操作类主题按真实操作顺序“一步一景”编排（最多 12 个短场景），旁白粒度对齐“点哪里、输入什么、看到什么”，专有名词首现大白话解释，默认面向零基础观众。
+- **结构化生图提示词**：图像 prompt 采用分段标注式配方（描述 -> 风格句 -> 纸面 -> 色板 -> 负面 -> 生产契约），内置 vivid-storybook / clean-whiteboard / marker-whiteboard / minimal-line-explainer 四种风格；分镜规划自动为整片选择统一风格（导演机制）。
+- **图像质量门**：Tesseract OCR 逐词置信度检测，拒绝画面伪文字（覆盖拉丁与西里尔字符）；多概念场景支持 `image_shots` 多分拍独立生成、独立过检后拼合。
+- **手绘化管线**：生成图统一经过“中值滤波 + 手抖位移 + 色阶量化”后处理成蜡笔平涂质感；栅格揭示按笔迹长度加权铺满全场景（墨线先、颜色随），全程渐进手绘，结尾定格。
+- **场景动画层**：活塞曲柄、相位活塞排、流动箭头、脉冲、循环环五种确定性动效，场景声明 `motion.elements` 即注入。
+- 1080p 渲染 + NVENC p4/CQ20 编码；字幕默认开启；edge-tts 神经音色旁白。
+- 2026-10-18 完成图像与教学质量整体重构，四个主题（发动机/电动汽车/飞机升力/高铁购票）端到端验证通过。
 
 ## 项目结构
 
@@ -73,13 +75,13 @@ LOCAL_IMAGEGEN_MODEL=E:\MYLLM\flux1-schnell-fp8\gguf\flux1-schnell-Q5_K_S.gguf
 LOCAL_IMAGEGEN_VAE=E:\MYLLM\flux1-schnell-fp8\extracted\vae\diffusion_pytorch_model.safetensors
 LOCAL_IMAGEGEN_CLIP_L=E:\MYLLM\flux1-schnell-fp8\extracted\clip\clip-text-model.safetensors
 LOCAL_IMAGEGEN_T5XXL=E:\MYLLM\flux1-schnell-fp8\extracted\t5\t5xxl-relative-q8_0.gguf
-LOCAL_IMAGEGEN_BACKEND=diffusion=Vulkan0,te=cpu,vae=Vulkan0
+LOCAL_IMAGEGEN_BACKEND=diffusion=Vulkan0,te=cpu,vae=vulkan
 LOCAL_IMAGEGEN_WIDTH=1024
 LOCAL_IMAGEGEN_HEIGHT=1024
 LOCAL_IMAGEGEN_PREVIEW_WIDTH=512
 LOCAL_IMAGEGEN_PREVIEW_HEIGHT=512
 LOCAL_IMAGEGEN_STEPS=4
-LOCAL_IMAGEGEN_MAX_ATTEMPTS=3
+LOCAL_IMAGEGEN_MAX_ATTEMPTS=4
 
 # Optional Ark provider: IMAGEGEN_PROVIDER=ark or local_then_ark
 ARK_API_KEY=your-volcengine-ark-key
@@ -112,6 +114,12 @@ PORT=3010
 ```env
 RENDER_PORT=3002
 PYTHON_API_URL=http://localhost:8010
+
+# 1080p 渲染（不配置时默认 960x540）
+REMOTION_WIDTH=1920
+REMOTION_HEIGHT=1080
+# 场景参考图素材上限（像素，多分拍横幅需要更大值）
+REMOTION_RASTER_REVEAL_ASSET_MAX_SIZE=2048
 
 # 通常留空，服务会自动探测 Playwright / Chrome / Chromium / Edge。
 # REMOTION_BROWSER_EXECUTABLE=/absolute/path/to/chrome-or-chromium
@@ -165,6 +173,19 @@ ExplainFlow 以 MIT License 开源，详见 [LICENSE](LICENSE)。
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
 
 ## 最近进展
+
+2026-10-18 图像与教学质量整体重构（详见 git log）：
+
+- 生图提速 3.9 倍：VAE 解码移至 GPU（`vae=vulkan`），单张 72s -> 18s。
+- 渲染升级 1080p：NVENC p4/CQ20，参考图素材上限 2048px，动画线宽随分辨率缩放。
+- 生图提示词重构：移植 whiteboard-video-engine 的分段标注式风格配方，LLM 不可控的巨型模板 prompt 退役。
+- 图像质量门：Tesseract 逐词置信度 + 西里尔字符覆盖，高置信短词（如 GAS/Safe）也会被拒。
+- 多分拍合成（`image_shots`）与 OpenMoji/lucide 图标库路径（`image_icons`）两条可选视觉支线。
+- 手绘化后处理（中值+手抖+色阶量化）与栅格揭示节奏重排：从空白板渐进手绘铺满全场景。
+- 场景动画层（`motion.elements`）：活塞曲柄/相位活塞排/流动箭头/脉冲/循环环。
+- 教学深度契约：概念图与分镜双层约束 how-to 主题“一步一景”，场景上限 7 -> 12，概念图节点去重。
+- start.bat 启动失败修复：stop 脚本现在能杀掉 `--reload` 监督者与孤儿 worker，端口循环回收。
+- 清理历史产物：仅保留每个主题最终验证版视频。
 
 2026-05-22 完成渲染链路冒烟和清理：
 
