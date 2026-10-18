@@ -1,4 +1,5 @@
 import Link from "next/link";
+import VideoShowcase from "./video-showcase";
 
 export default function HomePage() {
   return (
@@ -12,7 +13,7 @@ export default function HomePage() {
         <div className="flex items-center gap-8 text-sm text-[--fg-muted]">
           <a href="#features" className="hover:text-[--fg-default] transition-colors">功能</a>
           <a href="#how" className="hover:text-[--fg-default] transition-colors">使用流程</a>
-          <Link href="/jobs" className="hover:text-[--fg-default] transition-colors">视频库</Link>
+          <Link href="/console" className="hover:text-[--fg-default] transition-colors">控制台</Link>
         </div>
         <Link
           href="/studio"
@@ -59,46 +60,11 @@ export default function HomePage() {
             </a>
           </div>
         </div>
-
-        {/* Demo card */}
-        <div className="relative z-10 mt-16 w-full max-w-4xl rounded-2xl border border-[--border-default] bg-[--bg-elevated] overflow-hidden shadow-2xl shadow-purple-900/20">
-          <div className="flex items-center gap-2 px-4 h-10 bg-[--bg-surface] border-b border-[--border-subtle]">
-            <span className="w-3 h-3 rounded-full bg-red-500/70" />
-            <span className="w-3 h-3 rounded-full bg-yellow-500/70" />
-            <span className="w-3 h-3 rounded-full bg-green-500/70" />
-            <span className="ml-3 text-xs font-mono text-[--fg-muted]">ExplainFlow Studio — 梯度下降</span>
-          </div>
-          <div className="h-64 flex items-center justify-center bg-[--bg-base] p-8">
-            <div className="flex flex-col items-center gap-5">
-              <h3 className="text-2xl font-bold">梯度下降 Gradient Descent</h3>
-              <div className="px-5 py-3 rounded-xl border border-purple-500/40 bg-purple-950/20">
-                <code className="text-lg font-mono text-purple-400">θ := θ − α · ∇L(θ)</code>
-              </div>
-              <div className="flex items-center gap-6">
-                {[
-                  { label: "θ₀", size: 48, color: "#a855f7" },
-                  { label: "→" },
-                  { label: "θ₁", size: 36, color: "#ec4899" },
-                  { label: "→" },
-                  { label: "θ*", size: 24, color: "#06b6d4" },
-                ].map((item, i) =>
-                  "size" in item ? (
-                    <div key={i} className="flex flex-col items-center gap-1">
-                      <div className="rounded-full" style={{ width: item.size, height: item.size, background: item.color, opacity: 0.8 }} />
-                      <span className="text-xs font-mono text-[--fg-muted]">{item.label}</span>
-                    </div>
-                  ) : (
-                    <span key={i} className="text-xl text-pink-500">→</span>
-                  )
-                )}
-              </div>
-              <p className="text-sm text-[--fg-muted]">↑ 参数逐步收敛到最优解</p>
-            </div>
-          </div>
-        </div>
       </section>
 
       {/* Social proof bar */}
+      <VideoShowcase />
+
       <section className="border-y border-[--border-subtle] bg-[--bg-surface] py-4">
         <div className="flex items-center justify-center gap-12 text-sm">
           {[

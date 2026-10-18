@@ -1,6 +1,7 @@
-import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId, ImageGenerationMode, LineArtColorMode } from "./types";
+import type { ExplainGraph, Storyboard, Scene, RenderJobSummary, PenStyleId, VideoStyleId, ImageGenerationMode, LineArtColorMode, AppSettingsView, Text2VideoTestResult, Text2VideoGenerateResult } from "./types";
 
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
+export const RENDER_BASE_URL = process.env.NEXT_PUBLIC_RENDER_URL ?? "http://localhost:3002";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
@@ -136,5 +137,38 @@ export async function synthesizeSceneAudio(text: string, voice = "xiaoxiao"): Pr
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error ?? new Error("Failed to read synthesized audio"));
     reader.readAsDataURL(blob);
+  });
+}
+
+
+export async function getAppSettings(): Promise<AppSettingsView> {
+  return request<AppSettingsView>("/settings");
+}
+
+export async function updateAppSettings(values: Record<string, string>): Promise<AppSettingsView> {
+  return request<AppSettingsView>("/settings", { method: "PUT", body: JSON.stringify({ values }) });
+}
+
+export async function testLocalText2Video(baseUrl: string, apiKey?: string): Promise<Text2VideoTestResult> {
+  return post<Text2VideoTestResult>("/settings/test-text2video", {
+    base_url: baseUrl || null,
+    api_key: apiKey || null,
+  });
+}
+
+export async function fetchRenderJobsDirect(): Promise<RenderJobSummary[]> {
+  const res = await fetch(`${RENDER_BASE_URL}/jobs`);
+  if (!res.ok) throw new Error(`render /jobs failed (${res.status})`);
+  const data = (await res.json()) as { jobs: RenderJobSummary[] };
+  return data.jobs ?? [];
+}
+
+
+export async function generateLocalTestVideo(prompt: string, baseUrl?: string, model?: string, apiKey?: string): Promise<Text2VideoGenerateResult> {
+  return post<Text2VideoGenerateResult>("/settings/generate-test-video", {
+    prompt: prompt || null,
+    base_url: baseUrl || null,
+    model: model || null,
+    api_key: apiKey || null,
   });
 }

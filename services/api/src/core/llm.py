@@ -13,6 +13,7 @@ from .validation import safe_parse_json, ValidationError as SchemaValidationErro
 logger = logging.getLogger(__name__)
 
 _client: AsyncOpenAI | None = None
+_client_key: tuple[str, str] | None = None
 _last_preflight_ok_at = 0.0
 
 T = TypeVar("T")
@@ -44,12 +45,32 @@ def _exception_summary(exc: Exception) -> str:
     return " ".join(parts)
 
 
+def _effective_llm_config() -> tuple[str, str]:
+    """Runtime settings override .env without a service restart."""
+    from src.core import runtime_settings
+
+    base = runtime_settings.get_override("llm_base_url") or settings.openai_base_url
+    key = runtime_settings.get_override("llm_api_key") or settings.openai_api_key
+    return base, key
+
+
+def _effective_model(model: str | None) -> str:
+    from src.core import runtime_settings
+
+    if model:
+        return model
+    override = runtime_settings.get_override("llm_model")
+    return override or settings.llm_model
+
+
 def get_client() -> AsyncOpenAI:
-    global _client
-    if _client is None:
+    global _client, _client_key
+    base_url, api_key = _effective_llm_config()
+    cache_key = (base_url, api_key)
+    if _client is None or _client_key != cache_key:
         _client = AsyncOpenAI(
-            api_key=settings.openai_api_key,
-            base_url=settings.openai_base_url,
+            api_key=api_key,
+            base_url=base_url,
         )
     return _client
 
@@ -155,7 +176,7 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
         return {
             "status": "ok",
             "cached": True,
-            "model": model or settings.llm_model,
+            "model": _effective_model(model),
             "base_url": settings.openai_base_url,
         }
 
@@ -165,7 +186,7 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
     async def _ping() -> None:
         client = get_client()
         resp = await client.chat.completions.create(
-            model=model or settings.llm_model,
+            model=_effective_model(model),
             messages=[
                 {
                     "role": "system",
@@ -192,7 +213,7 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
     except Exception as exc:
         logger.error(
             "[LLM] preflight failed: model=%s base_url=%s error=%s",
-            model or settings.llm_model,
+            _effective_model(model),
             settings.openai_base_url,
             _exception_summary(exc),
         )
@@ -204,7 +225,7 @@ async def check_llm_connection(model: str | None = None, force: bool = False) ->
     return {
         "status": "ok",
         "cached": False,
-        "model": model or settings.llm_model,
+        "model": _effective_model(model),
         "base_url": settings.openai_base_url,
     }
 
@@ -233,7 +254,7 @@ async def chat_json(
     async def _call(active_messages: list[dict]):
         client = get_client()
         return await client.chat.completions.create(
-            model=model or settings.llm_model,
+            model=_effective_model(model),
             messages=active_messages,
             response_format={"type": "json_object"},
             temperature=temperature,
@@ -295,7 +316,7 @@ async def chat_text(
     async def _call() -> str:
         client = get_client()
         resp = await client.chat.completions.create(
-            model=model or settings.llm_model,
+            model=_effective_model(model),
             messages=messages,
             temperature=temperature,
         )

@@ -176,6 +176,9 @@ const server = http.createServer(async (req, res) => {
         id, status: job.status, progress: job.progress ?? 0, phase: job.phase ?? null,
         topic: job.topic ?? null, createdAt: job.createdAt ?? null,
         actualDurationSeconds: job.actualDurationSeconds ?? null, qa: job.qa ?? null, error: job.error ?? null,
+        videoUrl: job.status === "done" && job.outputPath && existsSync(job.outputPath)
+          ? `/download/${id}`
+          : null,
       }))
       .sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
     sendJson(res, 200, { jobs: list });

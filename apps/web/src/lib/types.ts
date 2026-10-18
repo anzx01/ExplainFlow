@@ -264,6 +264,40 @@ export interface RenderJobSummary {
   actualDurationSeconds?: number | null;
   qa?: RenderQaResult | null;
   error: string | null;
+  videoUrl?: string | null;
+}
+
+export interface AppSettingsView {
+  saved: Record<string, unknown>;
+  effective: {
+    llm_base_url: string;
+    llm_model: string;
+    coder_model: string;
+    imagegen_provider: string;
+    imagegen_base_url: string;
+    imagegen_model: string;
+    cloud_text2video_base_url: string;
+    cloud_text2video_model: string;
+    local_text2image_available: boolean;
+    local_text2video_base_url: string;
+    local_text2video_model: string;
+  };
+}
+
+export interface Text2VideoGenerateResult {
+  ok: boolean;
+  filename: string;
+  videoUrl: string;
+  sizeBytes: number;
+  elapsedSeconds: number;
+  baseUrl: string;
+  model: string;
+}
+
+export interface Text2VideoTestResult {
+  ok: boolean;
+  baseUrl: string;
+  probes: Array<{ path: string; status?: number; error?: string }>;
 }
 
 export interface RenderJobStatus {

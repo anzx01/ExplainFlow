@@ -114,11 +114,11 @@ def _normalize_image_description(value: str | None) -> str:
 
 async def _call_seedream(prompt: str, client: httpx.AsyncClient) -> bytes:
     headers = {
-        "Authorization": f"Bearer {settings.ark_api_key}",
+        "Authorization": f"Bearer {effective_ark_api_key()}",
         "Content-Type": "application/json",
     }
     payload = {
-        "model": settings.seedream_model,
+        "model": effective_imagegen_model(),
         "prompt": prompt,
         "size": "2048x2048",
         "n": 1,
@@ -126,7 +126,7 @@ async def _call_seedream(prompt: str, client: httpx.AsyncClient) -> bytes:
         "watermark": False,
     }
     resp = await client.post(
-        f"{settings.ark_base_url}/images/generations",
+        f"{effective_imagegen_base_url()}/images/generations",
         headers=headers,
         json=payload,
         timeout=60.0,
@@ -519,9 +519,38 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
             return image
 
 
+def effective_imagegen_provider() -> str:
+    """Runtime settings override for IMAGEGEN_PROVIDER (settings UI)."""
+    from src.core import runtime_settings
+
+    override = runtime_settings.get_override("imagegen_provider")
+    if override:
+        return override
+    return str(settings.imagegen_provider or "").strip().lower()
+
+
+def effective_ark_api_key() -> str:
+    from src.core import runtime_settings
+
+    return runtime_settings.get_override("ark_api_key") or settings.ark_api_key
+
+
+def effective_imagegen_base_url() -> str:
+    """Cloud image API base (Ark/Seedream compatible), runtime-overridable."""
+    from src.core import runtime_settings
+
+    return (runtime_settings.get_override("imagegen_base_url") or settings.ark_base_url).rstrip("/")
+
+
+def effective_imagegen_model() -> str:
+    from src.core import runtime_settings
+
+    return runtime_settings.get_override("imagegen_model") or settings.seedream_model
+
+
 def _build_prompt(req: SceneImageRequest, condensed_subject: str | None = None) -> str:
     image_mode = str(req.image_mode or "").strip().lower()
-    provider_local = str(settings.imagegen_provider or "").strip().lower() in {"local", "local_then_ark"}
+    provider_local = effective_imagegen_provider() in {"local", "local_then_ark"}
     # The local (Flux) path must take the clean short prompt regardless of
     # whether the caller sends image_mode="flux" or the render pipeline's
     # "default": the SD1.5 mega-prompt below buries the subject under
@@ -933,7 +962,7 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
     provider = (
         "local" if requested_mode == "flux" else
         "comfyui" if requested_mode in {"sd15", "sd1.5", "sd-1.5"} else
-        settings.imagegen_provider.strip().lower()
+        effective_imagegen_provider()
     )
     attempts: list[dict] = []
     max_attempts = max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)

@@ -1,0 +1,7 @@
+{
+  "imagegen_provider": "local",
+  "llm_base_url": "https://api.deepseek.com/v1",
+  "coder_model": "deepseek-coder",
+  "local_text2video_base_url": "http://127.0.0.1:8300",
+  "local_text2video_model": "demo-t2v"
+}

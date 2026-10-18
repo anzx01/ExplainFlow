@@ -10,6 +10,7 @@ from src.imagegen.router import router as imagegen_router
 from src.narration.router import router as narration_router
 from src.planner.router import router as planner_router
 from src.render.router import router as render_router
+from src.settings_router import router as settings_router
 
 
 @asynccontextmanager
@@ -38,6 +39,7 @@ app.include_router(imagegen_router)
 app.include_router(planner_router)
 app.include_router(narration_router)
 app.include_router(render_router)
+app.include_router(settings_router)
 
 
 @app.get("/")

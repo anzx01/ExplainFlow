@@ -3,6 +3,12 @@ import logging
 from copy import deepcopy
 
 from src.core.llm import chat_json, check_llm_connection
+
+
+def _effective_coder_model() -> str:
+    from src.core import runtime_settings
+
+    return runtime_settings.get_override("coder_model") or settings.coder_model
 from src.core.config import settings
 from src.core.visual_prompts import visual_teaching_rules_prompt
 
@@ -149,7 +155,7 @@ async def generate_remotion_code(
         {"role": "user", "content": user_content},
     ]
     try:
-        raw = await chat_json(messages=messages, model=settings.coder_model)
+        raw = await chat_json(messages=messages, model=_effective_coder_model())
     except Exception as llm_error:
         logger.warning("Remotion TSX LLM call failed before validation: %s", llm_error)
         return _cache_remotion_response(
@@ -210,7 +216,7 @@ async def generate_remotion_code(
             },
         ]
         try:
-            raw = await chat_json(messages=repair_messages, model=settings.coder_model)
+            raw = await chat_json(messages=repair_messages, model=_effective_coder_model())
         except Exception as repair_error:
             logger.warning("Repaired Remotion TSX LLM call failed before validation: %s", repair_error)
             response = _compile_fast_remotion_response(
