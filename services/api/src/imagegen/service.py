@@ -8,7 +8,7 @@ import re
 import subprocess
 import tempfile
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import httpx
@@ -61,6 +61,8 @@ class SceneImageRequest:
     quality: str = "final"
     image_mode: str | None = None
     line_art_color_mode: str = "color"
+    image_shots: list[str] | None = None
+    image_style: str | None = None
 
 
 def _canonical_video_style(value: str | None) -> str:
@@ -333,19 +335,74 @@ def _flux_prompt_with_lora(prompt: str) -> str:
     return _local_prompt(f"{trigger}, {lora_tag}, {prompt}")
 
 
+# 白板教学风格配方(移植自 whiteboard-video-engine 的 VisualStyle 体系,
+# 字段:风格句 aesthetic / 纸面 paper / 色板 palette / 负面 avoid)。
+_IMAGE_STYLES = {
+    "clean-whiteboard": {
+        "aesthetic": "Freshly hand-drawn whiteboard illustration using medium black round-tip marker contours, simple people and props, and only essential arrows or circles",
+        "paper": "Clean matte whiteboard-white background without glare, room photography, borders, or smudged eraser bands",
+        "palette": "Black marker with at most one blue and one red emphasis; most regions stay white",
+        "avoid": "filled color masses, shadows, complex scenery, corporate icon libraries, dense annotations, pseudo-text",
+    },
+    "marker-whiteboard": {
+        "aesthetic": "Confident hand-drawn marker contours with rounded starts and stops, mild pressure variation, simple blocky props, and sparse hand-drawn emphasis marks",
+        "paper": "Neutral bright white board surface with no room context",
+        "palette": "Charcoal black plus one vivid cyan or coral highlighter accent",
+        "avoid": "tiny details, thin technical lines, airbrushed shading, stock icons, dense decoration, fake writing",
+    },
+    "minimal-line-explainer": {
+        "aesthetic": "Minimal black-ink explainer drawing with circle-headed stick figures, dot-line faces, thin slightly wobbly contours, and flat two-dimensional geometry",
+        "paper": "Plain ivory-white paper with very large negative space",
+        "palette": "Pure black line on ivory paper; no gray and no colored fill",
+        "avoid": "solid black silhouettes, hatching, shading, volume, thick outlines, realism, decoration",
+    },
+    "vivid-storybook": {
+        "aesthetic": "Warm hand-drawn storybook illustration with clean dark marker outlines and vivid saturated flat color fills, cheerful educational mood",
+        "paper": "Clean warm off-white drawing paper with no photographed tabletop or border",
+        "palette": "Vivid brick red, bright blue, ochre, sage, and warm cream flat fills with clear separated color regions",
+        "avoid": "muted pastel washes, gradients, glossy digital painting, anime polish, realistic lighting, dense scenery",
+    },
+}
+
+_DEFAULT_IMAGE_STYLE = "vivid-storybook"
+
+_SCENE_CONTRACT = (
+    "Show one immediately readable story beat. Keep every object complete inside the canvas with "
+    "breathing room; never crop key parts. Use two to four spatially separate clusters only when the "
+    "scene contains genuinely independent objects, with clear paper gaps between clusters, and never "
+    "join the whole canvas with one continuous ground line. Keep outlines distinguishable from fills "
+    "so the drawing can be converted locally into line art."
+)
+
+_PRODUCTION_CONTRACT = (
+    "Generate image only: no text, letters, numbers, pseudo-writing, captions, logo, watermark, "
+    "panel border, page frame, UI, or subtitle band; avoid photorealistic texture, dense backgrounds, "
+    "and tiny details; not anime, no people."
+)
+
+
 def _build_local_prompt(req: SceneImageRequest) -> str:
-    """Build a topic-agnostic local image prompt from storyboard intent."""
+    """Build a structured local image prompt from storyboard intent.
+
+    分段标注式结构移植自 whiteboard-video-engine 的 build_storyboard_prompt:
+    description → style recipe → paper → palette → avoid → contracts。
+    """
     description = _normalize_image_description(req.image_description)
     monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
-    style = (
-        "monochrome black and gray instructional illustration"
-        if monochrome else
-        "finished hand-drawn instructional illustration with solid filled color shapes and gentle shading"
-    )
-    return (
-        f"{description} Preserve every specified subject, pose, action, and lighting relationship. "
-        f"{style}. White background with clear margins; no readable text or watermark."
-    )
+    style_key = (req.image_style or _DEFAULT_IMAGE_STYLE).strip().lower()
+    style = dict(_IMAGE_STYLES.get(style_key, _IMAGE_STYLES[_DEFAULT_IMAGE_STYLE]))
+    if monochrome:
+        style["palette"] = "Pure black line on white paper; no colored fill"
+    sections = [
+        description,
+        f"Style recipe: {style['aesthetic']}",
+        f"Paper/background: {style['paper']}",
+        f"Palette and fill: {style['palette']}",
+        f"Avoid: {style['avoid']}",
+        f"Scene contract: {_SCENE_CONTRACT}",
+        f"Production contract: {_PRODUCTION_CONTRACT}",
+    ]
+    return chr(10).join(section for section in sections if section)
 
 
 def _local_seed(prompt: str) -> int:
@@ -463,7 +520,13 @@ async def _call_local_flux(prompt: str, *, quality: str = "final", attempt: int 
 
 
 def _build_prompt(req: SceneImageRequest, condensed_subject: str | None = None) -> str:
-    if str(req.image_mode or "").lower() == "flux" or (not req.image_mode and str(settings.imagegen_provider or "").strip().lower() in {"local", "local_then_ark"}):
+    image_mode = str(req.image_mode or "").strip().lower()
+    provider_local = str(settings.imagegen_provider or "").strip().lower() in {"local", "local_then_ark"}
+    # The local (Flux) path must take the clean short prompt regardless of
+    # whether the caller sends image_mode="flux" or the render pipeline's
+    # "default": the SD1.5 mega-prompt below buries the subject under
+    # teaching-rule boilerplate that Flux transcribes into painted labels.
+    if image_mode == "flux" or image_mode in {"", "default", "local"} and provider_local:
         return _build_local_prompt(req)
     # SD1.5's CLIP encoder only reads ~77 tokens, so the long storyboard
     # prompt gets truncated into noise. A distilled concrete subject keeps
@@ -777,7 +840,67 @@ async def _condense_subject_for_clip(req: SceneImageRequest) -> str:
     return fallback
 
 
+def _compose_scene_panels(panels: list[bytes]) -> bytes:
+    """Compose gate-passed single-subject panels into one wide scene canvas.
+
+    每个分拍都是独立生成、独立过检的单主体图;拼成横幅后走统一的
+    trace/标注/动画管线,清晰度远高于让 Flux 一张画多个主体关系。
+    """
+    images = [Image.open(io.BytesIO(p)).convert("RGB") for p in panels]
+    gap, margin, target_h = 64, 48, 820
+    scaled = []
+    for img in images:
+        w = max(1, round(img.width * target_h / img.height))
+        scaled.append(img.resize((w, target_h), Image.Resampling.LANCZOS))
+    total_w = sum(im.width for im in scaled) + gap * (len(scaled) - 1) + margin * 2
+    canvas = Image.new("RGB", (total_w, target_h + margin * 2), "white")
+    x = margin
+    for im in scaled:
+        canvas.paste(im, (x, margin))
+        x += im.width + gap
+    out = io.BytesIO()
+    canvas.save(out, format="PNG", optimize=True)
+    return out.getvalue()
+
+
+async def _generate_composite_scene(req: SceneImageRequest, shots: list[str], client: httpx.AsyncClient) -> tuple[str | None, dict]:
+    """Generate each single-subject shot independently, gate it, then compose."""
+    attempts: list[dict] = []
+    panels: list[bytes] = []
+    for index, shot in enumerate(shots):
+        shot_req = replace(
+            req,
+            scene_id=f"{req.scene_id}_shot{index + 1}",
+            image_description=shot,
+            image_shots=None,
+        )
+        b64, diag = await generate_scene_image_result(shot_req, client)
+        for item in diag.get("attempts", []):
+            tagged = dict(item)
+            tagged["shot"] = index + 1
+            attempts.append(tagged)
+        if not b64:
+            return None, {"ok": False, "attempts": attempts, "selectedAttempt": None,
+                          "failedShot": index + 1}
+        panels.append(base64.b64decode(b64))
+    img_bytes = _compose_scene_panels(panels)
+    quality = inspect_generated_image(img_bytes)
+    quality["attempt"] = len(attempts) + 1
+    quality["composed"] = len(panels)
+    attempts.append(quality)
+    if quality["ok"]:
+        logger.info("[imagegen] %s composite of %d panels accepted", req.scene_id, len(panels))
+        return base64.b64encode(img_bytes).decode(), {"ok": True, "attempts": attempts, "selectedAttempt": len(attempts)}
+    logger.warning("[imagegen] %s composite rejected errors=%s", req.scene_id, quality["errors"])
+    return None, {"ok": False, "attempts": attempts, "selectedAttempt": None}
+
+
 async def generate_scene_image_result(req: SceneImageRequest, client: httpx.AsyncClient) -> tuple[str | None, dict]:
+    shots = [s.strip() for s in (req.image_shots or []) if s and s.strip()]
+    requested_mode_early = str(req.image_mode or "").strip().lower()
+    if len(shots) >= 2 and requested_mode_early in {"flux", "local", "local_then_ark", "default", ""} \
+            and str(settings.imagegen_provider or "").strip().lower().startswith("local"):
+        return await _generate_composite_scene(req, shots, client)
     requested_mode = str(req.image_mode or "").strip().lower()
     # The render pipeline sends image_mode="default"; only flux/local bypass
     # the ComfyUI path. Everything landing on the long-prompt ComfyUI branch

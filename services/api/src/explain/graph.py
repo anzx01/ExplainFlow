@@ -230,7 +230,27 @@ def _problem_solving_framework_graph(req: GenerateGraphRequest, brief: EnhancedT
     return graph
 
 
+def _dedupe_graph_nodes(graph: ExplainGraph) -> None:
+    """LLM 常把同一概念输出两三个变体节点,coverage 又强制为每个节点建景,
+    结果是重复场景和指令泄漏的兜底景。按归一化 label 去重,保留 teach_order 最小者。"""
+    import re as _re
+
+    def norm(label: str) -> str:
+        return _re.sub(r"[\s:：,，。.、()（）·-]", "", str(label or "")).lower()
+
+    seen: dict[str, object] = {}
+    kept = []
+    for node in sorted(graph.nodes, key=lambda item: item.teach_order):
+        key = norm(node.label)
+        if not key or key in seen:
+            continue
+        seen[key] = node
+        kept.append(node)
+    graph.nodes = kept
+
+
 def _ensure_graph_quality(graph: ExplainGraph, req: GenerateGraphRequest, brief: EnhancedTeachingBrief) -> ExplainGraph:
+    _dedupe_graph_nodes(graph)
     if len(graph.nodes) < 3:
         for index, item in enumerate(brief.core_explanation_chain[:5]):
             _ensure_node(graph, f"步骤 {index + 1}", item, NodeType.PROCESS)

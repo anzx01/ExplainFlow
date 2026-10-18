@@ -3,6 +3,8 @@
  * 依赖: config.mjs, utils.mjs, scene-strategy.mjs, trace.mjs, trace-whiteboard.mjs
  */
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
+import { fileURLToPath } from "url";
+import sharp from "sharp";
 import { createHash } from "crypto";
 import { join } from "path";
 import {
@@ -63,7 +65,7 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
 
 export function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "scene-authored-artwork-v14-flux-master",
+    renderAssetMode: "scene-authored-artwork-v22-handdrawn-master",
     imageMode: storyboard?.image_generation_mode ?? storyboard?.imageGenerationMode ?? "default",
     authoredPrompt: imageGenerationDescription(storyboard, scene),
     sourceImage: createHash("sha256").update(sceneLocalImageBuffer(scene) ?? Buffer.alloc(0)).digest("hex"),
@@ -72,6 +74,9 @@ export function imageCacheKey(storyboard, scene) {
     id: scene?.id ?? "",
     title: scene?.title ?? "",
     imageDescription: scene?.image_description ?? scene?.imageDescription ?? "",
+    imageShots: scene?.image_shots ?? scene?.imageShots ?? null,
+    imageIcons: scene?.image_icons ?? scene?.imageIcons ?? null,
+    imageStyle: scene?.image_style ?? scene?.imageStyle ?? storyboard?.image_style ?? storyboard?.imageStyle ?? null,
     visualStyle: scene?.visual_style ?? scene?.visualStyle ?? "",
     videoStyle: scene?.video_style ?? scene?.videoStyle ?? "",
     lineArtColorMode: storyboard?.line_art_color_mode ?? storyboard?.lineArtColorMode ?? "color",
@@ -246,6 +251,66 @@ export function descriptionForScene(storyboard, scene) {
   return `Hand-drawn educational illustration for ${storyboard.topic ?? "the topic"}. Scene: ${scene.title ?? "key idea"}. ${details}. One clear central visual metaphor based on this scene, colored marker line art on a clean whiteboard, no readable text, no labels, no watermark.`;
 }
 
+const ICON_LIBRARY_DIR = fileURLToPath(new URL("./node_modules/lucide-static/icons/", import.meta.url));
+const OPENMOJI_DIR = fileURLToPath(new URL("./node_modules/openmoji/", import.meta.url));
+
+function iconDiagramSvgBuffer(scene) {
+  const icons = (scene.image_icons ?? scene.imageIcons ?? [])
+    .map((item) => String(item ?? "").trim())
+    .filter(Boolean);
+  if (icons.length < 2) return null;
+  const size = 460;
+  const gap = 150;
+  const margin = 90;
+  const lucidePalette = ["#2E86C1", "#2E9E4F", "#E67E22", "#2f2f2f"];
+  const groups = [];
+  let x = margin;
+  icons.forEach((name, i) => {
+    const isEmojiCode = /^[0-9A-Fa-f]{4,6}$/.test(name);
+    let inner = null;
+    let viewSize = 24;
+    if (isEmojiCode) {
+      const file = join(OPENMOJI_DIR, "color", "svg", `${name.toUpperCase()}.svg`);
+      if (!existsSync(file)) {
+        console.warn(`[image-trace] openmoji "${name}" missing, skipped`);
+        return;
+      }
+      inner = readFileSync(file, "utf8")
+        .replace(/<svg[^>]*>/, "")
+        .replace(/<\/svg>\s*$/, "");
+      viewSize = 72;
+    } else {
+      const file = join(ICON_LIBRARY_DIR, `${name}.svg`);
+      if (!existsSync(file)) {
+        console.warn(`[image-trace] icon "${name}" missing from library, skipped`);
+        return;
+      }
+      inner = readFileSync(file, "utf8")
+        .replace(/<svg[^>]*>/, "")
+        .replace(/<\/svg>\s*$/, "")
+        .replace(/stroke-width="[^"]*"/, 'stroke-width="0.55"')
+        .replaceAll('stroke="currentColor"', `stroke="${lucidePalette[i % lucidePalette.length]}"`);
+    }
+    const scale = size / viewSize;
+    const rot = [-2.4, 1.8, -1.4, 2.2][i % 4];
+    // 风格标志性的阳光黄高亮底斑,给图标加温度并融入板书风
+    const blob = `<ellipse cx="${size / 2}" cy="${size * 0.62}" rx="${size * 0.5}" ry="${size * 0.26}" fill="#F7D96B" opacity="0.7" transform="rotate(-4 ${size / 2} ${size * 0.62})"/>`;
+    groups.push(
+      `<g transform="translate(${x} ${margin + 50})">` +
+      `<g transform="rotate(${rot} ${size / 2} ${size / 2})">` +
+      blob +
+      `<g transform="scale(${scale})">${inner}</g>` +
+      `</g></g>`
+    );
+    x += size + gap;
+  });
+  if (groups.length < 2) return null;
+  const w = x - gap + margin;
+  const h = size + margin * 2 + 50;
+  const doc = `<svg xmlns="http://www.w3.org/2000/svg" width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><rect width="${w}" height="${h}" fill="#ffffff"/>${groups.join("")}</svg>`;
+  return Buffer.from(doc, "utf8");
+}
+
 export async function injectImageTraces(storyboard, jobId) {
   if (SKIP_IMAGE_TRACE) {
     console.log("[image-trace] SKIP_IMAGE_TRACE enabled, skipping trace generation");
@@ -263,6 +328,19 @@ export async function injectImageTraces(storyboard, jobId) {
       rasterBySceneId[scene.id] = cached;
       console.log(`[image-trace] ${scene.id}: reused cached raster assets`);
       continue;
+    }
+    const iconBuffer = iconDiagramSvgBuffer(scene);
+    if (iconBuffer) {
+      try {
+        const png = await sharp(iconBuffer).png().toBuffer();
+        const raster = await buildRasterRevealFromBuffer(png, jobId, scene, { forceTrace: true });
+        rasterBySceneId[scene.id] = raster;
+        saveImageCache(storyboard, scene, jobId, raster);
+        console.log(`[image-trace] ${scene.id}: ${raster.rasterReveal.renderMode} raster from icon library (${(scene.image_icons ?? scene.imageIcons ?? []).length} icons), ${raster.rasterReveal.strokes.length} reveal path(s)`);
+        continue;
+      } catch (err) {
+        console.warn(`[image-trace] ${scene.id}: icon diagram raster skipped: ${err.message}`);
+      }
     }
     // Only storyboard-provided local images are eligible. A generic topic
     // plate is not a substitute for artwork derived from the scene script.
@@ -364,6 +442,8 @@ export async function injectImageTraces(storyboard, jobId) {
           quality: "final",
           image_mode: imageMode,
           line_art_color_mode: storyboard.line_art_color_mode ?? storyboard.lineArtColorMode ?? "color",
+          image_shots: scene.image_shots ?? scene.imageShots ?? null,
+          image_style: scene.image_style ?? scene.imageStyle ?? storyboard.image_style ?? storyboard.imageStyle ?? null,
         })),
       };
       const auditDir = join(PUBLIC_GENERATED_DIR, jobId);

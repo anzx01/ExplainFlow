@@ -30,6 +30,8 @@ class SceneImageItem(BaseModel):
     quality: str = "final"
     image_mode: str | None = None
     line_art_color_mode: str = "color"
+    image_shots: list[str] | None = None
+    image_style: str | None = None
 
 
 class GenerateImagesRequest(BaseModel):
@@ -78,6 +80,8 @@ async def generate_scene_images(req: GenerateImagesRequest) -> GenerateImagesRes
             quality="preview" if scene.quality == "preview" else "final",
             image_mode=scene.image_mode,
             line_art_color_mode=scene.line_art_color_mode,
+            image_shots=scene.image_shots,
+            image_style=scene.image_style,
         )
         for scene in req.scenes
     ]

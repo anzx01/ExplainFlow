@@ -156,6 +156,8 @@ def _fit_storyboard_to_target(storyboard: Storyboard, target_duration: int) -> S
 
 
 def _max_scene_count_for_target(target_duration: int) -> int:
-    return max(3, min(7, math.ceil(max(60, target_duration) / 22)))
+    # How-to topics need one concrete step per scene (10-16s each); the old
+    # 7-scene cap forced multi-step scenes and shallow narration.
+    return max(3, min(12, math.ceil(max(60, target_duration) / 10)))
 
 

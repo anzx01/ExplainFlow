@@ -188,10 +188,58 @@ export async function rasterCoveragePaths(colorBuffer) {
     .map(({painted, ...path}) => path);
 }
 
+// 把生成图转成手绘质感:中值滤波抹平渐变 → 低频双线性位移制造手抖
+// → 色阶量化成蜡笔平涂 → 轻锐化恢复笔触边缘。产出的 master 同时供
+// 线稿提取与最终定格使用,所以成图定格不再是 AI 渲染感。
+async function handdrawnify(rawPipeline) {
+  const { data, info } = await rawPipeline.median(3).raw().toBuffer({ resolveWithObject: true });
+  const { width: w, height: h, channels } = info;
+  const WOBBLE = 3.5;
+  const STEP = 34;
+  let seed = 12345;
+  const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  const smoothGrid = (gw, gh, lo, hi) => {
+    const g = new Float32Array(gw * gh);
+    for (let i = 0; i < g.length; i += 1) g[i] = lo + rand() * (hi - lo);
+    return (u, v) => {
+      const x = u * (gw - 1), y = v * (gh - 1);
+      const x0 = Math.floor(x), y0 = Math.floor(y);
+      const x1 = Math.min(x0 + 1, gw - 1), y1 = Math.min(y0 + 1, gh - 1);
+      const fx = x - x0, fy = y - y0;
+      return (
+        g[y0 * gw + x0] * (1 - fx) * (1 - fy) + g[y0 * gw + x1] * fx * (1 - fy) +
+        g[y1 * gw + x0] * (1 - fx) * fy + g[y1 * gw + x1] * fx * fy
+      );
+    };
+  };
+  const dx = smoothGrid(Math.max(2, Math.round(w / 32)), Math.max(2, Math.round(h / 32)), -WOBBLE, WOBBLE);
+  const dy = smoothGrid(Math.max(2, Math.round(w / 32)), Math.max(2, Math.round(h / 32)), -WOBBLE, WOBBLE);
+  const out = Buffer.alloc(data.length);
+  const sample = (x, y, c) => {
+    const cx = Math.min(w - 1, Math.max(0, x));
+    const cy = Math.min(h - 1, Math.max(0, y));
+    return data[(cy * w + cx) * channels + c];
+  };
+  for (let y = 0; y < h; y += 1) {
+    for (let x = 0; x < w; x += 1) {
+      const ox = Math.round(dx(x / w, y / h));
+      const oy = Math.round(dy(x / w, y / h));
+      for (let c = 0; c < 3; c += 1) {
+        const v = sample(x + ox, y + oy, c);
+        out[(y * w + x) * channels + c] = Math.min(255, Math.round(v / STEP) * STEP + 6);
+      }
+    }
+  }
+  return sharp(out, { raw: { width: w, height: h, channels: 3 } })
+    .sharpen({ sigma: 0.6, m1: 0.6, m2: 2.2 })
+    .png({ compressionLevel: 9 })
+    .toBuffer();
+}
+
 async function makeHanddrawnMaster(imageBuffer) {
   // Keep the generated reference as the single source for both line art and
-  // color. The old palette reduction made detailed references collapse into
-  // flat geometric icons before tracing even started.
+  // color, then re-render it with a genuine hand-drawn pass so the final
+  // hold never shows the raw AI rendering.
   const normalized = await sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
@@ -202,11 +250,12 @@ async function makeHanddrawnMaster(imageBuffer) {
     .sharpen({ sigma: 0.55, m1: 0.7, m2: 2.5 })
     .png({ compressionLevel: 9 })
     .toBuffer();
+  const handdrawn = await handdrawnify(sharp(normalized, { failOn: "none" }));
 
   // Generated references often contain a large blank border. Trim only the
   // near-white border, then restore a small white margin so the subject grows
   // on the board without touching the canvas edge.
-  const trimmed = await sharp(normalized, { failOn: "none" })
+  const trimmed = await sharp(handdrawn, { failOn: "none" })
     .trim({ background: "#ffffff", threshold: 12 })
     .toBuffer();
   const metadata = await sharp(trimmed).metadata();

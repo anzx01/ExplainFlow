@@ -22,6 +22,7 @@ import {
   sleep,
 } from "./utils.mjs";
 import { injectGlyphOutlineDrawing } from "./glyph.mjs";
+import { injectSceneMotion } from "./motion-inject.mjs";
 import { buildStylePrompt, getStyleInstructions } from "./style-prompt.mjs";
 export { storyboardReferenceAssets, validateGeneratedTsx } from "./validate-tsx.mjs";
 export { getStyleInstructions } from "./style-prompt.mjs";
@@ -245,10 +246,18 @@ export async function generateRemotionCode(storyboard, options = {}) {
       // Compress stroke schedules that spill into the scene tail so the
       // finished-artwork overlay can fade in and hold before the cut.
       const heldTsx = enforceSceneFinalHold(glyphTsx);
+      // LLM 会把栅格揭示挤到场景开头,导致"整图先出、手再补画";重排节奏。
+      const pacedTsx = enforceRasterRevealPacing(heldTsx);
+      // LLM 生成物会剥掉 scene.motion 且不实现动画层,这里确定性注入。
+      const motionTsx = injectSceneMotion(pacedTsx, codegenStoryboard, {
+        fps: Number(response.fps ?? FPS),
+        width: Number(response.width ?? WIDTH),
+        height: Number(response.height ?? HEIGHT),
+      });
       const plannedSceneFrames = computePlannedFrames(codegenStoryboard);
 
       return {
-        tsx: validateGeneratedTsx(heldTsx, codegenStoryboard),
+        tsx: validateGeneratedTsx(motionTsx, codegenStoryboard),
         durationInFrames: Math.max(
           FPS,
           Math.ceil(Number(codegenStoryboard?.total_duration_estimate ?? 0) * FPS),
@@ -367,6 +376,65 @@ function findSceneArrayLiterals(code) {
     }
   }
   return spans;
+}
+
+// 栅格揭示节奏:LLM 常把几百条 _raster_ ops 挤在场景开头几秒,画面表现为
+// "整图先出现,手再在图上补标注"。这里按 strokes 的笔迹长度加权,把每条
+// 笔迹的窗口重排到 [开头引导, 结尾保护] 区间,墨线先画、色层紧随,让手绘
+// 揭示真正铺满整个场景。
+export function enforceRasterRevealPacing(code, options = {}) {
+  const spans = findSceneArrayLiterals(code);
+  if (!spans.length) return code;
+  let result = code;
+  for (const span of [...spans].reverse()) {
+    const paced = span.parsed.map((scene) => paceSceneRasterOps(scene, options));
+    result = result.slice(0, span.start) + JSON.stringify(paced) + result.slice(span.end);
+  }
+  return result;
+}
+
+function paceSceneRasterOps(scene, options = {}) {
+  const duration = sceneDurationFramesInGeneratedScene(scene);
+  const ops = Array.isArray(scene?.drawOps) ? scene.drawOps : [];
+  const strokes = Array.isArray(scene?.rasterReveal?.strokes) ? scene.rasterReveal.strokes : [];
+  if (!duration || !ops.length || !strokes.length) return scene;
+  const inkIds = new Set(strokes.map((s) => String(s?.opId ?? "")));
+  if (!inkIds.size) return scene;
+  const tailFrames = finalHoldTailFrames(duration, options);
+  const lead = Math.min(8, Math.max(2, Math.round(duration * 0.02)));
+  const spanEnd = Math.max(lead + strokes.length + 2, duration - tailFrames);
+  const lengthFor = new Map();
+  for (const s of strokes) {
+    const len = Math.max(6, Number(s?.dashLength) || 6);
+    lengthFor.set(String(s?.opId ?? ""), len);
+    if (s?.colorOpId) lengthFor.set(String(s.colorOpId), len);
+  }
+  const totalWeight = strokes.reduce((sum, s) => sum + (lengthFor.get(String(s?.opId ?? "")) || 6), 0);
+  const opWindow = new Map();
+  let t = lead;
+  for (const s of strokes) {
+    const w = lengthFor.get(String(s?.opId ?? "")) || 6;
+    const dur = Math.max(1, Math.round(((spanEnd - lead) * w) / totalWeight));
+    const end = Math.min(spanEnd, t + dur);
+    if (end <= t) {
+      opWindow.set(String(s?.opId ?? ""), { start: Math.max(lead, t - 1), end: t });
+    } else {
+      opWindow.set(String(s?.opId ?? ""), { start: t, end });
+    }
+    const colorDur = Math.max(1, Math.round(dur * 0.45));
+    const colorEnd = Math.min(spanEnd, end + colorDur);
+    if (s?.colorOpId) {
+      opWindow.set(String(s.colorOpId), { start: Math.max(end - 1, lead), end: Math.max(colorEnd, end) });
+    }
+    t = Math.max(t + 1, end);
+  }
+  const drawOps = ops.map((op) => {
+    const key = String(op?.id ?? "");
+    const win = opWindow.get(key);
+    if (!win) return op;
+    return { ...op, startFrame: win.start, endFrame: Math.max(win.end, win.start + 1) };
+  });
+  return { ...scene, drawOps };
 }
 
 export function enforceSceneFinalHold(code, options = {}) {

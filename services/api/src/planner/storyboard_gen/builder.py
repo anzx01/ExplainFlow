@@ -281,6 +281,19 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         character_lock=req.character_lock,
         palette_id=req.palette_id,
     )
+    chosen_style = str(raw.get("image_style") or "").strip().lower()
+    if chosen_style not in {"vivid-storybook", "clean-whiteboard", "marker-whiteboard", "minimal-line-explainer"}:
+        # LLM 未按 schema 输出时用确定性启发式兜底,保证全片仍有统一风格
+        blob = " ".join([graph.topic] + [str(s.title) for s in scenes])
+        if any(k in blob for k in ("对比", "效率", "数据", "百分比", "成本", "清单", "误区")):
+            chosen_style = "marker-whiteboard"
+        elif any(k in blob for k in ("步骤", "流程", "算法", "协议", "架构", "部署")):
+            chosen_style = "clean-whiteboard"
+        elif any(k in blob for k in ("概念", "定义", "原理速览", "一图看懂")):
+            chosen_style = "minimal-line-explainer"
+        else:
+            chosen_style = "vivid-storybook"
+    storyboard.image_style = chosen_style
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)

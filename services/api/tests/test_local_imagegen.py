@@ -109,7 +109,8 @@ def test_local_scene_prompt_preserves_authored_action_without_topic_override():
     assert description in prompt
     assert "Blue light on pillow" in _local_prompt(prompt)
     assert "no brain, clock, or checklist" not in prompt
-    assert "solid filled color shapes" in prompt
+    assert "Style recipe:" in prompt
+    assert "Production contract:" in prompt
 
 
 def test_local_seed_is_stable_and_prompt_specific():
@@ -296,21 +297,55 @@ def test_quality_gate_rejects_blank_image():
     assert "blank_or_flat" in result["errors"]
 
 
+def _tsv_stdout(words: list[tuple[str, float]]) -> str:
+    header = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext"
+    rows = [
+        f"5\t1\t1\t1\t1\t{i + 1}\t10\t10\t80\t30\t{conf:.6f}\t{text}"
+        for i, (text, conf) in enumerate(words)
+    ]
+    return "\n".join([header, *rows]) + "\n"
+
+
 def test_quality_gate_rejects_coherent_generated_labels(monkeypatch):
     from types import SimpleNamespace
     from src.imagegen import quality
     monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
-    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout="Sutenn attention fractentine"))
+    stdout = _tsv_stdout([("Sutenn", 62.1), ("attention", 71.4), ("fractentine", 55.9)])
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=stdout))
     result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
     assert not result["ok"]
     assert "possible_readable_text_or_signature" in result["errors"]
+
+
+def test_quality_gate_rejects_single_confident_short_label(monkeypatch):
+    """A lone 3-9 letter word read at high confidence is a drawn label (GAS)."""
+    from types import SimpleNamespace
+    from src.imagegen import quality
+    monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
+    stdout = _tsv_stdout([("GAS", 96.3)])
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=stdout))
+    result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
+    assert not result["ok"]
+    assert "possible_readable_text_or_signature" in result["errors"]
+
+
+def test_quality_gate_tolerates_low_confidence_single_pseudo_word(monkeypatch):
+    """Stroke hallucinations stay below ~90 confidence and must not reject."""
+    from types import SimpleNamespace
+    from src.imagegen import quality
+    monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
+    stdout = _tsv_stdout([("Crangh", 87.2), ("ye", 85.0)])
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=stdout))
+    result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
+    assert result["ok"]
 
 
 def test_quality_gate_does_not_reject_isolated_doodle_ocr_noise(monkeypatch):
     from types import SimpleNamespace
     from src.imagegen import quality
     monkeypatch.setattr(quality.shutil, "which", lambda _: "tesseract")
-    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout="4 3) Yh"))
+    stdout = _tsv_stdout([("4", 40.2), ("3)", 35.7), ("Yh", 44.9)])
+    monkeypatch.setattr(quality.subprocess, "run", lambda *args, **kwargs: SimpleNamespace(stdout=stdout))
     result = inspect_generated_image(_png(lambda draw: draw.ellipse((130, 100, 380, 350), outline="black", width=8)))
     assert result["ok"]
 

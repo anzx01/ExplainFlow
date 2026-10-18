@@ -11,7 +11,7 @@ export function nvencArgs({ args }) {
     if (["-crf", "-preset"].includes(args[i])) { i++; continue; }
     result.push(args[i] === "libx264" ? "h264_nvenc" : args[i]);
   }
-  result.splice(result.length - 1, 0, "-preset", "p1", "-cq", "23");
+  result.splice(result.length - 1, 0, "-preset", "p4", "-cq", "20");
   return result;
 }
 
@@ -33,7 +33,7 @@ export function nvencOptions() {
     if (/\.(exe|dll)$/.test(file) && file !== "ffmpeg.exe") copyFileSync(join(bundled, file), join(binariesDirectory, file));
   }
   copyFileSync(ffmpeg, join(binariesDirectory, "ffmpeg.exe"));
-  console.log("[render] NVIDIA h264_nvenc enabled (preset p1, CQ 23)");
+  console.log("[render] NVIDIA h264_nvenc enabled (preset p4, CQ 20)");
   // The external GPL build has no libfdk_aac, which Remotion uses for AAC.
   return (cached = { binariesDirectory, ffmpegOverride: nvencArgs, audioCodec: "mp3" });
 }

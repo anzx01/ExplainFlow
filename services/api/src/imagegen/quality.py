@@ -86,23 +86,46 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
         tesseract = str(installed) if installed.is_file() else None
         if not tesseract:
             warnings.append("ocr_unavailable")
+    tsv_words: list[tuple[str, float]] = []
     if tesseract:
         with tempfile.TemporaryDirectory(prefix="explainflow-ocr-") as tmp:
             source = Path(tmp) / "image.png"
             image.save(source)
             try:
                 result = subprocess.run(
-                    [tesseract, str(source), "stdout", "-l", "eng", "--psm", "11"],
+                    [tesseract, str(source), "stdout", "-l", "eng", "--psm", "11", "tsv"],
                     capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False,
                 )
-                ocr_text = " ".join((result.stdout or "").split())[:200]
+                rows = (result.stdout or "").splitlines()
+                for row in rows[1:]:
+                    cols = row.split("\t")
+                    if len(cols) < 12:
+                        continue
+                    text = cols[11].strip()
+                    try:
+                        conf = float(cols[10])
+                    except ValueError:
+                        continue
+                    if text and conf >= 0:
+                        tsv_words.append((text, conf))
+                ocr_text = " ".join(text for text, _ in tsv_words)[:200]
             except (OSError, subprocess.TimeoutExpired):
                 warnings.append("ocr_unavailable")
         # Tesseract frequently hallucinates isolated short tokens from doodle
         # strokes (for example ``4 3) Yh``). Treat text as a signature only
-        # when OCR has enough coherent evidence to indicate an actual label.
-        tokens = re.findall(r"[A-Za-z]{4,}|[A-Za-z0-9]{6,}", ocr_text)
-        if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens):
+        # when OCR has enough coherent evidence to indicate an actual label:
+        # either several 4+ letter tokens, one very long token, or a single
+        # confidently-read short word. Calibration over the generated-image
+        # corpus: stroke hallucinations never exceed ~89 confidence while
+        # actual drawn labels (``Safe``, ``GAS``) read at 94-97, so a single
+        # word at >=90 confidence is safe to reject and closes the gap where
+        # a lone short label (``GAS``) slipped past the multi-token rule.
+        tokens = re.findall(r"[A-Za-zА-Яа-яЁё]{4,}|[A-Za-z0-9]{6,}", ocr_text)
+        confident_words = [
+            word for word, conf in tsv_words
+            if conf >= 90 and re.fullmatch(r"[A-Za-z]{3,9}", word)
+        ]
+        if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens) or confident_words:
             errors.append("possible_readable_text_or_signature")
     return {
         "ok": not errors,
