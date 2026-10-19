@@ -122,10 +122,16 @@ export default function StudioPage() {
 
         <div className="flex items-center gap-3">
           <Link
-            href="/jobs"
+            href="/console/videos"
             className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
           >
             视频库
+          </Link>
+          <Link
+            href="/console/settings"
+            className="h-8 px-3 rounded-md border border-[--border-default] hover:border-[--border-subtle] text-xs text-[--fg-muted] hover:text-[--fg-default] inline-flex items-center transition-colors"
+          >
+            设置
           </Link>
           {storyboard && (
             <Link

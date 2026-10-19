@@ -6,7 +6,7 @@ import type { AppSettingsView, Text2VideoGenerateResult, Text2VideoTestResult } 
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010";
 
-type SecretState = "" | "(unchanged)";
+type SecretState = "" | "(unchanged)" | (string & {});
 
 function isSavedSecret(v: unknown): v is { set: boolean; tail?: string } {
   return typeof v === "object" && v !== null && "set" in v;

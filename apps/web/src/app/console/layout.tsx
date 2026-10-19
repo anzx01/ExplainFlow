@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const NAV = [
+  { href: "/studio", label: "创作室", icon: "✦", external: true },
   { href: "/console/videos", label: "视频库", icon: "🎞" },
   { href: "/console/settings", label: "设置", icon: "⚙" },
 ];
@@ -22,7 +23,7 @@ export default function ConsoleLayout({ children }: { children: React.ReactNode 
 
         <nav className="flex flex-col gap-1 px-3 py-4">
           {NAV.map((item) => {
-            const active = pathname?.startsWith(item.href);
+            const active = !item.external && pathname?.startsWith(item.href);
             return (
               <Link
                 key={item.href}

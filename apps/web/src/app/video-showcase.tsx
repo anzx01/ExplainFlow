@@ -62,10 +62,10 @@ export default function VideoShowcase() {
 
   return (
     <section id="showcase" className="px-20 py-16 border-t border-[--border-subtle]">
-      <div className="flex items-end justify-between mb-6">
+      <div className="flex items-end justify-between mb-8">
         <div>
-          <h2 className="text-2xl font-bold">作品展示</h2>
-          <p className="text-sm text-[--fg-muted] mt-1">全部由 ExplainFlow 本地生成,点击任意视频即可播放</p>
+          <h2 className="text-4xl font-bold tracking-tight">作品展示</h2>
+          <p className="text-sm text-[--fg-muted] mt-2">全部由 ExplainFlow 本地生成,点击任意视频即可播放</p>
         </div>
         <span className="text-xs font-mono text-[--fg-muted]">{videos.length} 个视频</span>
       </div>

@@ -42,7 +42,7 @@ export default function HomePage() {
           </h1>
 
           <p className="text-lg text-[--fg-muted] leading-relaxed max-w-xl">
-            输入 Prompt 或 Markdown，AI 自动生成中文白板讲解视频。梯度下降、Attention、Transformer，秒级出片。
+            输入一个主题，AI 自动生成中文白板讲解视频。
           </p>
 
           <div className="flex items-center gap-4">
@@ -53,10 +53,10 @@ export default function HomePage() {
               ✦ 免费开始创作
             </Link>
             <a
-              href="#how"
+              href="#showcase"
               className="h-12 px-8 rounded-md border border-[--border-default] hover:border-purple-500 text-[--fg-muted] hover:text-[--fg-default] text-base inline-flex items-center transition-colors"
             >
-              ▶ 查看流程
+              ▶ 看真实作品
             </a>
           </div>
         </div>
@@ -89,11 +89,12 @@ export default function HomePage() {
         </div>
         <div className="grid grid-cols-3 gap-6 max-w-4xl mx-auto">
           {[
-            { icon: "✦", color: "purple", title: "AI 自动规划", desc: "LLM 深度理解 AI/ML 概念，自动规划教学顺序和分镜脚本，无需手动编排。" },
-            { icon: "◈", color: "pink", title: "Khan Academy 风格", desc: "一键生成中文白板动画，手绘质感、中文字幕，直接适配 B 站和知乎。" },
-            { icon: "⚡", color: "cyan", title: "秒级生成导出", desc: "1-3 分钟 MP4 1080p，横屏 + 竖屏 Shorts 双格式，生成完直接发布。" },
+            { no: "01", icon: "✦", color: "purple", title: "AI 自动规划", desc: "LLM 深度理解 AI/ML 概念，自动规划教学顺序和分镜脚本，无需手动编排。" },
+            { no: "02", icon: "◈", color: "pink", title: "Khan Academy 风格", desc: "一键生成中文白板动画，手绘质感、中文字幕，直接适配 B 站和知乎。" },
+            { no: "03", icon: "⚡", color: "cyan", title: "秒级生成导出", desc: "1-3 分钟 MP4 1080p，横屏 + 竖屏 Shorts 双格式，生成完直接发布。" },
           ].map((f) => (
-            <div key={f.title} className="rounded-2xl border border-[--border-subtle] bg-[--bg-surface] p-6 space-y-4">
+            <div key={f.title} className="rounded-2xl border border-[--border-subtle] bg-[--bg-surface] p-6 space-y-4 relative">
+              <span className="absolute top-5 right-6 text-xs font-mono text-[--fg-muted]/60">{f.no}</span>
               <div className={`w-11 h-11 rounded-xl flex items-center justify-center text-lg ${
                 f.color === "purple" ? "bg-purple-950/40 text-purple-400" :
                 f.color === "pink" ? "bg-pink-950/40 text-pink-400" :
