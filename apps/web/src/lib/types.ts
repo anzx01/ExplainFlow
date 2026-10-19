@@ -318,3 +318,14 @@ export interface BackgroundMusicTrack {
   url: string;
   size: number;
 }
+
+export interface AuthUser {
+  username: string;
+  display_name: string | null;
+  created_at: number | null;
+}
+
+export interface AuthResponse {
+  token: string;
+  user: AuthUser;
+}

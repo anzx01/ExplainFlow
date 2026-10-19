@@ -14,6 +14,7 @@ export default function HomePage() {
           <a href="#features" className="hover:text-[--fg-default] transition-colors">功能</a>
           <a href="#how" className="hover:text-[--fg-default] transition-colors">使用流程</a>
           <Link href="/console" className="hover:text-[--fg-default] transition-colors">控制台</Link>
+          <Link href="/login" className="hover:text-[--fg-default] transition-colors">登录</Link>
         </div>
         <Link
           href="/studio"

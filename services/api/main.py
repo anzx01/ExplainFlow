@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from src.auth_router import router as auth_router
 from src.core.config import settings
 from src.core.llm import LLMUnavailableError, check_llm_connection
 from src.core.logging import setup_logging
@@ -40,6 +41,7 @@ app.include_router(planner_router)
 app.include_router(narration_router)
 app.include_router(render_router)
 app.include_router(settings_router)
+app.include_router(auth_router)
 
 
 @app.get("/")
