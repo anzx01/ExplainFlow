@@ -44,6 +44,53 @@ def normalize_whiteboard_image(image_bytes: bytes) -> bytes:
     return output.getvalue()
 
 
+def _composition_metrics(image: Image.Image) -> dict:
+    """Subject presence / clutter metrics on a downscaled foreground mask.
+
+    Calibrated over the cached master corpus (subject_h 0.33-0.85, debris 0-33):
+    a hand-drawn teaching illustration needs one dominant subject cluster;
+    confetti-like images and noisy hatch textures trace badly and read as
+    cheap AI output.
+    """
+    width = 256
+    height = max(1, round(image.height * width / image.width))
+    small = image.resize((width, height), Image.Resampling.BILINEAR)
+    gray = np.asarray(small, dtype=np.float32).mean(axis=2)
+    mask = gray < 235
+    labels = np.zeros((height, width), dtype=np.int32)
+    sizes: list[int] = []
+    for y in range(height):
+        for x in range(width):
+            if not mask[y, x] or labels[y, x]:
+                continue
+            component = len(sizes) + 1
+            stack = [(y, x)]
+            labels[y, x] = component
+            count = 0
+            while stack:
+                cy, cx = stack.pop()
+                count += 1
+                for dy in (-1, 0, 1):
+                    for dx in (-1, 0, 1):
+                        ny, nx = cy + dy, cx + dx
+                        if 0 <= ny < height and 0 <= nx < width and mask[ny, nx] and not labels[ny, nx]:
+                            labels[ny, nx] = component
+                            stack.append((ny, nx))
+            sizes.append(count)
+    if not sizes:
+        return {"subjectHeightRatio": 0.0, "debrisCount": 0, "componentCount": 0}
+    largest = int(np.argmax(sizes)) + 1
+    ys, _ = np.where(labels == largest)
+    subject_h = float((ys.max() - ys.min() + 1) / height) if len(ys) else 0.0
+    small_area = width * height * 0.0004
+    debris = int(sum(1 for size in sizes if size < small_area))
+    return {
+        "subjectHeightRatio": round(subject_h, 4),
+        "debrisCount": debris,
+        "componentCount": len(sizes),
+    }
+
+
 def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict:
     errors: list[str] = []
     warnings: list[str] = []
@@ -78,6 +125,12 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
         errors.append("insufficient_edges")
     if border_foreground_ratio > 0.002:
         errors.append("border_signature_or_watermark")
+
+    composition = _composition_metrics(image)
+    if composition["subjectHeightRatio"] < 0.24:
+        errors.append("no_clear_subject")
+    if composition["debrisCount"] > 60:
+        errors.append("debris_too_many")
 
     ocr_text = ""
     tesseract = shutil.which("tesseract") if use_ocr else None
@@ -138,6 +191,9 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
             "foregroundRatio": round(foreground_ratio, 4),
             "edgeDensity": round(edge_density, 4),
             "borderForegroundRatio": round(border_foreground_ratio, 4),
+            "subjectHeightRatio": composition["subjectHeightRatio"],
+            "debrisCount": composition["debrisCount"],
+            "componentCount": composition["componentCount"],
         },
         "ocrText": ocr_text,
     }

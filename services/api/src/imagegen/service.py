@@ -367,11 +367,15 @@ _IMAGE_STYLES = {
 _DEFAULT_IMAGE_STYLE = "vivid-storybook"
 
 _SCENE_CONTRACT = (
-    "Show one immediately readable story beat. Keep every object complete inside the canvas with "
-    "breathing room; never crop key parts. Use two to four spatially separate clusters only when the "
-    "scene contains genuinely independent objects, with clear paper gaps between clusters, and never "
-    "join the whole canvas with one continuous ground line. Keep outlines distinguishable from fills "
-    "so the drawing can be converted locally into line art."
+    "Show one immediately readable story beat with ONE dominant hero subject filling at least one "
+    "third of the canvas height; every other element stays clearly smaller support. Keep every object "
+    "complete inside the canvas with breathing room; never crop key parts. Use two to four spatially "
+    "separate clusters only when the scene contains genuinely independent objects, with clear paper "
+    "gaps between clusters, and never join the whole canvas with one continuous ground line. Keep "
+    "outlines distinguishable from fills so the drawing can be converted locally into line art: clean "
+    "thick dark outlines, large flat color shapes, low texture, generous empty margins; no hatching, "
+    "stippling, speckle noise, tiny repeated decorations, or dense small details; keep the bottom "
+    "quarter of the canvas nearly empty."
 )
 
 _PRODUCTION_CONTRACT = (
@@ -979,11 +983,21 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
     )
     for attempt in range(max_attempts):
         try:
-            retry_prompt = (
-                prompt + anti_text_suffix
-                if any("possible_readable_text_or_signature" in (item.get("errors") or []) for item in attempts)
-                else prompt
-            )
+            prior_errors = {err for item in attempts for err in (item.get("errors") or [])}
+            retry_prompt = prompt
+            if "possible_readable_text_or_signature" in prior_errors:
+                retry_prompt += anti_text_suffix
+            if "no_clear_subject" in prior_errors:
+                retry_prompt += (
+                    " Redraw with ONE single dominant hero subject occupying at least one third of the "
+                    "canvas height, clearly centered; remove secondary scattered objects."
+                )
+            if "debris_too_many" in prior_errors:
+                retry_prompt += (
+                    " Simplify drastically: fewer and much larger flat shapes only; remove all scattered "
+                    "small elements, repeated tiny decorations, hatching, and stippling texture; keep "
+                    "large empty paper areas."
+                )
             if provider in {"local", "local_then_ark"}:
                 img_bytes = await _call_local_flux(retry_prompt, quality=req.quality, attempt=attempt)
             elif provider in {"comfyui", "comfy"}:

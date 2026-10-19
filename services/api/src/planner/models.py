@@ -155,6 +155,7 @@ class Scene(BaseModel):
     video_style: str | None = None
     visual_style: str | None = None
     pen_style: str | None = None
+    key_points: list[str] = Field(default_factory=list, alias="keyPoints")
     asset_contract: SceneAssetContract | None = Field(default=None, alias="assetContract")
     canvas_width: int = Field(default=1920, ge=1, alias="canvasWidth")
     canvas_height: int = Field(default=1080, ge=1, alias="canvasHeight")
@@ -172,6 +173,8 @@ class Storyboard(BaseModel):
     title_image_url: str | None = Field(default=None, alias="titleImageUrl")  # 标题卡片的主题插图
     video_style: str | None = None
     pen_style: str | None = None
+    spine: str | None = None
+    example_context: str | None = Field(default=None, alias="exampleContext")
     line_art_color_mode: str = Field(default="color", alias="lineArtColorMode")
     style_lock: str | None = Field(default=None, alias="styleLock")
     character_lock: str | None = Field(default=None, alias="characterLock")

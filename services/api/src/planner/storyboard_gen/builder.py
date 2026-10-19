@@ -33,11 +33,13 @@ from .timing import (
 from .scene_mgmt import (
     _trim_storyboard_scene_count,
     _ensure_opening_scene_first,
+    _ensure_summary_scene_last,
     _graph_enhanced_brief,
     _desired_scene_count,
 )
 from .quality_ensure import _ensure_storyboard_quality
 from ..coverage.appender import _sanitize_storyboard_narration
+from .narration_quality import deepen_storyboard_narration
 from ..prompts.storyboard import STORYBOARD_SYSTEM_PROMPT
 from ..render_contract import finalize_storyboard_contract
 
@@ -267,6 +269,7 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
                 video_style=_clean_text(s.get("video_style") or s.get("videoStyle") or ""),
                 visual_style=_clean_text(s.get("visual_style") or ""),
                 pen_style=_clean_text(s.get("pen_style") or s.get("penStyle") or ""),
+                key_points=[str(p).strip() for p in (s.get("key_points") or s.get("keyPoints") or []) if str(p).strip()],
             )
         )
 
@@ -276,6 +279,8 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
         scenes=scenes,
         video_style=video_style,
         pen_style=pen_style,
+        spine=_clean_text(raw.get("spine") or "") or None,
+        example_context=_clean_text(raw.get("example_context") or raw.get("exampleContext") or "") or None,
         line_art_color_mode=req.line_art_color_mode if req.line_art_color_mode in {"color", "monochrome"} else "color",
         style_lock=req.style_lock,
         character_lock=req.character_lock,
@@ -298,9 +303,11 @@ async def generate_storyboard(req: GenerateStoryboardRequest) -> Storyboard:
     storyboard = _ensure_storyboard_quality(storyboard, graph, req.target_duration)
     storyboard = _trim_storyboard_scene_count(storyboard, req.target_duration, graph)
     storyboard = _ensure_opening_scene_first(storyboard)
+    storyboard = _ensure_summary_scene_last(storyboard)
     storyboard = _compress_storyboard_narration_to_target(storyboard, req.target_duration)
     storyboard = _fit_storyboard_to_target(storyboard, req.target_duration)
     storyboard = _sanitize_storyboard_narration(storyboard)
+    storyboard = await deepen_storyboard_narration(storyboard, req.target_duration)
     storyboard = finalize_storyboard_contract(storyboard)
 
     # 生成标题图片（异步，不阻塞）

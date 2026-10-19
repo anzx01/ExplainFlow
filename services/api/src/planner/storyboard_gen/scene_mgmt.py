@@ -1,4 +1,5 @@
 import json
+import re
 
 from src.explain.models import ExplainGraph
 from ..models import Scene, Storyboard
@@ -12,6 +13,8 @@ from ..coverage.analyzer import (
     _coverage_unit_is_covered,
 )
 from ..coverage.corpus import _scene_corpus, _contains_terms, _graph_enhanced_brief
+
+_WRAPUP_SCENE_RE = re.compile(r"(总览|回顾|总结|小结|概览|归纳|收尾|overview|recap)")
 
 
 def _visual_relation_kind_for_scene(scene: Scene) -> str | None:
@@ -79,6 +82,32 @@ def _ensure_opening_scene_first(storyboard: Storyboard) -> Storyboard:
         return storyboard
     opening_scene = storyboard.scenes.pop(opening_index)
     storyboard.scenes.insert(0, opening_scene)
+    return _reindex_storyboard_scenes(storyboard)
+
+
+def _is_summary_scene(scene: Scene) -> bool:
+    # 只认标题/学习目标层面的收束场景,避免把旁白里一句"总结一下"误判成整场
+    blob = f"{scene.title or ''} {scene.learning_goal or ''}"
+    return bool(_WRAPUP_SCENE_RE.search(blob))
+
+
+def _ensure_summary_scene_last(storyboard: Storyboard) -> Storyboard:
+    """收束类场景只允许出现在最后;中间的收束场景挪到结尾(保持相对顺序)。
+
+    实测病灶:LLM 会在倒数第二场放"完整因果链总结",再在最后补一场
+    coverage 场景,成片结尾顺序错乱(先总结再讲新东西)。
+    """
+    if len(storyboard.scenes) < 2:
+        return storyboard
+    trailing = storyboard.scenes[-1]
+    wrapups = [scene for scene in storyboard.scenes[:-1] if _is_summary_scene(scene)]
+    if not wrapups:
+        return storyboard
+    remainder = [scene for scene in storyboard.scenes[:-1] if scene not in wrapups]
+    if _is_summary_scene(trailing):
+        storyboard.scenes = remainder + wrapups + [trailing]
+    else:
+        storyboard.scenes = remainder + [trailing] + wrapups
     return _reindex_storyboard_scenes(storyboard)
 
 
