@@ -178,7 +178,13 @@ def inspect_generated_image(image_bytes: bytes, *, use_ocr: bool = True) -> dict
             word for word, conf in tsv_words
             if conf >= 90 and re.fullmatch(r"[A-Za-z]{3,9}", word)
         ]
-        if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens) or confident_words:
+        # 单字母/双字母高置信读数(如水分子图上被画出来的 N/H/O 圆圈):
+        # 笔画幻觉置信度实测不超过 ~89,≥92 的孤立短读数几乎必是真实画出的字母。
+        confident_short = [
+            word for word, conf in tsv_words
+            if conf >= 92 and re.fullmatch(r"[A-Za-z]{1,2}", word)
+        ]
+        if len(tokens) >= 2 or any(len(token) >= 10 for token in tokens) or confident_words or confident_short:
             errors.append("possible_readable_text_or_signature")
     return {
         "ok": not errors,

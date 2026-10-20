@@ -1,3 +1,5 @@
+import re
+
 from src.explain.models import ExplainGraph
 from ..models import Scene, Storyboard
 from .analyzer import _missing_coverage_units, _brief_coverage_units
@@ -6,6 +8,19 @@ from .corpus import _storyboard_scene_corpus
 from ..storyboard_gen.scene_mgmt import _protected_coverage_scenes, _replaceable_scene_index
 from ..storyboard_gen.normalizer import _clean_text, _normalize_image_description_text, _clean_narration_text
 from ..storyboard_gen.timing import _max_scene_count_for_target, _narration_from_beats
+
+# 实测病灶(微波炉片):coverage 追加的"完整因果链总结/宏观现象"场景用
+# 图表话术 image_description 让 Flux 画出完全跑题的插画(路人/花鸟),
+# 旁白也是"像桌上的一颗螺丝"式填充话。总结/总览类收束是规划契约 LLM
+# 的职责(N10/N11),coverage 层绝不追加。
+_META_UNIT_RE = re.compile(r"(总结|总览|回顾|小结|概览|汇总|宏观|整体认知|因果链|要点|收束)")
+
+
+def _is_meta_unit(unit: dict) -> bool:
+    label = _clean_text(unit.get("label") or unit.get("id") or "")
+    goal = _clean_text(unit.get("teaching_goal") or "")
+    return bool(_META_UNIT_RE.search(label)) and not _clean_text(unit.get("must_show") or unit.get("must_draw"))
+
 
 def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard:
     scenes = [_scene_from_spec(index, spec) for index, spec in enumerate(specs)]
@@ -22,7 +37,7 @@ def _replace_with_specs(storyboard: Storyboard, specs: list[dict]) -> Storyboard
 
 
 def _append_missing_coverage_scenes(storyboard: Storyboard, graph: ExplainGraph, target_duration: int, limit: int | None = None) -> Storyboard:
-    missing = _missing_coverage_units(storyboard, graph)
+    missing = [unit for unit in _missing_coverage_units(storyboard, graph) if not _is_meta_unit(unit)]
     if not missing:
         return storyboard
     effective_limit = limit if limit is not None else _max_scene_count_for_target(target_duration)

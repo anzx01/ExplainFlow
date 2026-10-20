@@ -178,6 +178,9 @@ function platformLatinFontCandidates() {
 
 export const GLYPH_FONT_CANDIDATES = [
   configuredPath(process.env.EXPLAINFLOW_GLYPH_FONT),
+  // 中文手写体(马善政楷书, OFL):标题/标签/公式的字形路径用它才有
+  // 手写板书感;系统楷体/雅黑是印刷体,是"廉价 PPT 感"的直接来源。
+  join(__dirname, "public", "fonts", "MaShanZheng-Regular.ttf"),
   ...configuredPathList("EXPLAINFLOW_GLYPH_FONTS"),
   ...platformFontCandidates(),
 ].filter(Boolean);

@@ -60,9 +60,10 @@ def test_explicit_flux_stops_after_configured_attempts(monkeypatch):
     monkeypatch.setattr(service, "inspect_generated_image", lambda image: {"ok": False, "errors": ["possible_readable_text_or_signature"]})
     monkeypatch.setattr(service, "_asset_contract_metadata", lambda *args: {})
     image, diagnostics = asyncio.run(service.generate_scene_image_result(SceneImageRequest("retry", "food", "food", "a plate", image_mode="flux"), None))
-    assert image is None
+    assert image
     assert calls == [0, 1]
-    assert diagnostics["selectedAttempt"] is None
+    assert diagnostics["bestFailedFallback"] is True
+    assert diagnostics["selectedAttempt"] == 1
 
 
 def test_local_imagegen_status_reports_missing_components(monkeypatch, tmp_path: Path):

@@ -161,7 +161,9 @@ const captionWeight = (value: string) =>
 const splitSubtitleText = (value: string): string[] => {
   const source = value.replace(/\s+/g, " ").trim();
   if (!source) return [];
-  const sentences = source.match(/[^。！？.!?；;]+[。！？.!?；;]?/g) ?? [source];
+  // ASCII "." must NOT split cues: decimals like 2.45GHz / 12.2厘米 would be
+  // cut mid-number ("频率是2." + "45GHz…"). Only CJK/!/? and ；; end a cue.
+  const sentences = source.match(/[^。！？!?；;]+[。！？!?；;]?/g) ?? [source];
   const chunks: string[] = [];
   for (const sentence of sentences) {
     const clean = sentence.trim();

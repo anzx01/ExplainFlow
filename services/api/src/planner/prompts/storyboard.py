@@ -168,6 +168,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 图形由文生图模型生成时，image_description 必须要求 text-free artwork：不要让图像模型生成标题、段落、中文/英文标签、按钮或水印；所有可读文字和动态标注由渲染端手写叠加。
 - 复杂直显图可以给后续标注留白，但不要让图像模型画空白 callout 框、空圆圈、气泡框、图例框、标签牌、占位容器或孤立箭头；留开放空白即可。
 - 图文并茂不是信息图堆字：一场只保留一个大图形或最多三个大步骤，文字只做短标题、短标签和少量结论。
+- diagram_plan.kind 为 comparison 的场景，必须用 image_shots 给出左右两侧各一个单主体描述（每个 shot = 一侧的具体物件清单+状态），禁止让单张图同时画两侧对比（单图对比必然挤成小图）。
 - 一屏只讲一个核心想法；不要把完整报告页、海报页或密集信息图塞进一场。
 - 标题使用短蓝色手写字，位于顶部左侧或顶部居中，可加一条手绘下划线。
 - 主体图放在画面中部或略偏右，占画面宽度约 45%-65%；四周留出大面积空白给手和后续标注。
@@ -176,7 +177,7 @@ STORYBOARD_SYSTEM_PROMPT = """你是一个教学视频 production storyboard 规
 - 色彩克制且有含义：黑色主体线，蓝色标题/控制箭头，红色风险/电流/错误，绿色有效路径/正确结果，黄色只做短下划线/局部强调。
 - 复杂主体不要强行拆成几百笔；直接呈现清晰主体，再用 2-4 个老师式 callout 解释。简单主体才逐笔 trace。
 - 场景之间像连续板书推进：上一场讲画完整后立刻进入下一场，不留空白停顿。
-- image_description 必须要求 bold editorial hand-drawn explainer illustration: thick imperfect black marker/crayon outlines, warm off-white surface, subject-integral color accents only, sunny yellow highlight blobs behind the subject, one large visual anchor or at most three big step groups, generous white space, text-free artwork, no baked callout arrows/checks/starbursts/underlines, no poster/card/legend/panel/background wash.
+- image_description 必须要求 bold editorial hand-drawn explainer illustration: thick imperfect black marker/crayon outlines, warm off-white surface, subject-integral color accents only, no decorative background color blobs (每一块颜色都必须是主体自身的、有描边的组成部分), one large visual anchor or at most three big step groups, generous white space, text-free artwork, no baked callout arrows/checks/starbursts/underlines, no poster/card/legend/panel/background wash.
 
 烹饪/食物教程的额外规则：
 - image_description 必须把食材、器具、颜色和状态写具体，不能只写 generic food / pot / ingredients。

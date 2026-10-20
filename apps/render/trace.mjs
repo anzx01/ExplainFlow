@@ -276,8 +276,12 @@ async function makeHanddrawnMaster(imageBuffer) {
 }
 
 export async function makeTransparentLineArtAsset(imageBuffer) {
-  const master = await makeHanddrawnMaster(imageBuffer);
-  const { data, info } = await sharp(master, { failOn: "none" })
+  // imageBuffer is already the hand-drawn master produced once by
+  // buildRasterRevealFromBuffer. Re-running makeHanddrawnMaster here trimmed
+  // the plate a second time, drifting ink/color dimensions away from the
+  // master asset (721x273 vs 725x279) so the declared reveal size did not
+  // match the master actually rendered.
+  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .flatten({ background: "#ffffff" })
     .greyscale()
@@ -316,8 +320,8 @@ export async function makeTransparentLineArtAsset(imageBuffer) {
 async function makeTransparentColorAsset(imageBuffer) {
   // Normalize photographic references into one restrained whiteboard plate:
   // low-detail, flat colors, and no photographic grain competing with the ink.
-  const stylizedBuffer = await makeHanddrawnMaster(imageBuffer);
-  const { data, info } = await sharp(stylizedBuffer, { failOn: "none" })
+  // imageBuffer arrives already hand-drawn (single shared master pass).
+  const { data, info } = await sharp(imageBuffer, { failOn: "none" })
     .rotate()
     .resize({ width: RASTER_REVEAL_ASSET_MAX_SIZE, height: RASTER_REVEAL_ASSET_MAX_SIZE, fit: "inside", withoutEnlargement: true })
     .flatten({ background: "#ffffff" })

@@ -83,7 +83,8 @@ export function trimNarrationToChars(text, maxChars) {
   const limit = Math.max(0, Number(maxChars) || 0);
   const source = cleanNarrationText(text);
   if (!limit || source.length <= limit) return source;
-  const sentences = source.match(/[^。！？.!?]+[。！？.!?]?/g) ?? [source];
+  // ASCII "." excluded so decimals (2.45GHz) never end a "sentence".
+  const sentences = source.match(/[^。！？!?]+[。！？!?]?/g) ?? [source];
   let result = "";
   for (const sentence of sentences) {
     const next = `${result}${sentence}`;

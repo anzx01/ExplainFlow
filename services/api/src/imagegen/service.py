@@ -379,7 +379,7 @@ _SCENE_CONTRACT = (
 )
 
 _PRODUCTION_CONTRACT = (
-    "Generate image only: no text, letters, numbers, pseudo-writing, captions, logo, watermark, "
+    "Generate image only: no text, no letters, no single characters, no chemical element symbols, no numbers, no Greek or math symbols on any object, no pseudo-writing, captions, logo, watermark, "
     "panel border, page frame, UI, or subtitle band; avoid photorealistic texture, dense backgrounds, "
     "and tiny details; not anime, no people."
 )
@@ -981,6 +981,7 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
         "signature — the video renderer adds all text later. Express every concept purely with "
         "icons, arrows, boxes, charts, and doodle shapes."
     )
+    best_failed: tuple[int, int, bytes] | None = None  # (error_count, attempt_no, image_bytes)
     for attempt in range(max_attempts):
         try:
             prior_errors = {err for item in attempts for err in (item.get("errors") or [])}
@@ -1017,6 +1018,10 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
                 logger.info("[imagegen] %s provider=%s bytes=%d attempt=%d", req.scene_id, provider, len(img_bytes), attempt + 1)
                 return base64.b64encode(img_bytes).decode(), {"ok": True, "attempts": attempts, "selectedAttempt": attempt + 1}
             logger.warning("[imagegen] %s rejected attempt=%d errors=%s", req.scene_id, attempt + 1, quality["errors"])
+            # 优雅降级候选:全部重试都被质量门拒掉时,场景宁可带一张有瑕疵
+            # 的图也不能没有中央锚点图(下游拿不到图会整场跳过插画)。
+            if best_failed is None or len(quality["errors"]) < best_failed[0]:
+                best_failed = (len(quality["errors"]), attempt + 1, img_bytes)
         except Exception as exc:
             attempts.append({"ok": False, "attempt": attempt + 1, "errors": ["generation_failed"], "message": str(exc)})
             logger.warning("[imagegen] %s attempt=%d failed: %s", req.scene_id, attempt + 1, exc)
@@ -1030,6 +1035,18 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
                 return base64.b64encode(img_bytes).decode(), {"ok": True, "attempts": attempts, "selectedAttempt": len(attempts)}
         except Exception as exc:
             attempts.append({"ok": False, "errors": ["ark_fallback_failed"], "message": str(exc)})
+    if best_failed is not None:
+        error_count, attempt_no, fallback_bytes = best_failed
+        logger.warning(
+            "[imagegen] %s all attempts rejected; degrading to least-flawed candidate (attempt=%d, %d error(s))",
+            req.scene_id, attempt_no, error_count,
+        )
+        return base64.b64encode(fallback_bytes).decode(), {
+            "ok": True,
+            "attempts": attempts,
+            "selectedAttempt": attempt_no,
+            "bestFailedFallback": True,
+        }
     return None, {"ok": False, "attempts": attempts, "selectedAttempt": None}
 
 

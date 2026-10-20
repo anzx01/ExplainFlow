@@ -75,7 +75,7 @@ BOLD_EDITORIAL_IMAGE_STYLE = (
     "thick imperfect black marker/crayon outlines around solid filled color shapes, loose sketch texture, visible material cues, expressive but simple people, objects, food, tools, or icons, "
     "large friendly visual anchors rather than tiny symbols, "
     "hot pink accent connectors only when they are integral process paths between subject parts; no baked callout arrows, pointing arrows, warning marks, underlines, circles, brackets, or title marks, "
-    "sunny yellow paint-blob or halo highlight shapes behind the main subject, never as a full-page background, "
+    "no background washes, no decorative color blobs behind or around the subject — every colored shape must be an outlined, integral part of the subject itself, "
     "limited lively palette: black ink, warm yellow, coral pink, small grey fills, plus subject-specific semantic colors, "
     "composition has one big subject or at most three big step groups; if step connectors are needed, they connect the subject parts directly and never point at the subject as annotations, "
     "leave generous blank margins for renderer-added handwriting and later animated callouts, "
@@ -89,7 +89,7 @@ BOLD_EDITORIAL_IMAGE_STYLE = (
 
 BOLD_EDITORIAL_IMAGE_DESCRIPTION_HINT = (
     "Style preset: bold editorial hand-drawn explainer illustration, thick imperfect black crayon/marker outlines, "
-    "warm off-white surface, subject-integral color accents only, sunny yellow highlight blobs behind the main subject, "
+    "warm off-white surface, subject-integral color accents only, no decorative background color blobs, "
     "one large friendly subject or at most three large step groups, generous blank space, text-free artwork for later handwritten overlays."
 )
 

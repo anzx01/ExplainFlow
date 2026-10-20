@@ -1,7 +1,7 @@
 import math
 
 from .scene_builder_base import FallbackSceneBuilder
-from .geometry import _point, _curve_points, _line_points, _polyline_length, _path_from_points, _text_visual_width
+from .geometry import _point, _circle_points, _curve_points, _line_points, _polyline_length, _path_from_points, _text_visual_width
 from ..storyboard_gen.normalizer import _clean_text
 
 
@@ -78,8 +78,10 @@ def build_raster_reveal(self, start: int) -> int:
 
         note_size = max(44, int(self.body_size * 1.44))
         note_width = self.width * 0.18
-        left_note_x = max(self.width * 0.055, draw_x - note_width - self.width * 0.055)
-        right_note_x = min(self.width - note_width - self.width * 0.055, draw_x + draw_w + self.width * 0.055)
+        # 标签写在图内留白(风格契约保证主体四周留白),而不是图像外的画布
+        # 边缘——外缘标签与内容零连接,观感是"字幕散在空白里"。
+        left_note_x = max(self.width * 0.035, draw_x + self.width * 0.022)
+        right_note_x = min(self.width - note_width - self.width * 0.035, draw_x + draw_w - note_width - self.width * 0.022)
         label_specs = [
             {"annotation_type": plan_items[0][0], "label": plan_items[0][1], "beat_id": plan_items[0][2], "side": "left", "text_x": left_note_x, "text_y": draw_y + draw_h * 0.17, "color": self.red if plan_items[0][0] == "risk_ray" else self.blue},
             {"annotation_type": plan_items[1][0], "label": plan_items[1][1], "beat_id": plan_items[1][2], "side": "right", "text_x": right_note_x, "text_y": draw_y + draw_h * 0.30, "color": self.red if plan_items[1][0] in {"risk_ray", "crossout"} else self.violet},
@@ -100,16 +102,21 @@ def build_raster_reveal(self, start: int) -> int:
             connector_color = self.semantic_annotation_color(annotation_type, spec["label"], self.blue if side == "left" else self.violet)
             underline_color = self.yellow if annotation_type == "wavy_underline" else connector_color
             note_text_width = min(note_width * 0.82, _text_visual_width(spec["label"], note_size) * 0.88 + self.width * 0.018)
-            link_start_x = label_x + note_text_width if side == "left" else label_x - self.width * 0.012
-            edge_x = draw_x - self.width * 0.014 if side == "left" else draw_x + draw_w + self.width * 0.014
-            edge_y = min(draw_y + draw_h * 0.86, max(draw_y + draw_h * 0.14, label_y + note_size * 0.58))
+            # 标签已落在图内留白:指引线改成从标签内侧朝图心的短线,末端
+            # 加一个小圆点,表示"这里",避免长线横穿主体。
+            tick_dir = 1 if side == "left" else -1
+            pointer_start_x = label_x + note_text_width if side == "left" else label_x
+            pointer_end_x = min(
+                draw_x + draw_w * 0.62,
+                max(draw_x + draw_w * 0.20, pointer_start_x + tick_dir * self.width * 0.085),
+            )
+            pointer_end_y = label_y + note_size * 0.56 + self.height * 0.022
             note_frames = min(34, max(18, segment_span // 5))
-            self.add_text(spec["label"], label_x, label_y, note_size, color, local_cursor, note_frames, note_width, emphasis=True, max_chars=9, beat_id=beat_id)
+            self.add_text(spec["label"], label_x, label_y, note_size, color, local_cursor, note_frames, note_width, emphasis=True, max_chars=12, beat_id=beat_id)
             underline_w = min(note_width * 0.86, max(self.width * 0.070, _text_visual_width(spec["label"], note_size) * 0.82))
             self.add_stroke("bold_callout_underline", _curve_points(label_x, label_y + note_size * 1.08, label_x + underline_w, label_y + note_size * 1.08, count=9, wave=self.height * 0.006), underline_color, 7, local_cursor + note_frames + 1, min(12, max(7, segment_span // 10)), beat_id=beat_id)
-            self.add_stroke("callout_link", _curve_points(link_start_x, label_y + note_size * 0.56, edge_x, edge_y, count=8, wave=self.height * 0.006), connector_color, 5, local_cursor + note_frames + 6, min(16, max(8, segment_span // 8)), beat_id=beat_id)
-            tick_dir = 1 if side == "left" else -1
-            self.add_stroke("callout_tick", _line_points(edge_x, edge_y, edge_x + tick_dir * self.width * 0.030, edge_y, count=4), connector_color, 7, local_cursor + note_frames + min(18, max(8, segment_span // 8)), min(10, max(6, segment_span // 12)), beat_id=beat_id)
+            self.add_stroke("callout_link", _line_points(pointer_start_x, label_y + note_size * 0.56, pointer_end_x, pointer_end_y, count=6), connector_color, 5, local_cursor + note_frames + 6, min(16, max(8, segment_span // 8)), beat_id=beat_id)
+            self.add_stroke("callout_tick", _circle_points(pointer_end_x, pointer_end_y, self.width * 0.006, self.height * 0.010, count=8), connector_color, 5, local_cursor + note_frames + min(18, max(8, segment_span // 8)), min(10, max(6, segment_span // 12)), beat_id=beat_id)
             accent_start = local_cursor + note_frames + min(26, max(12, segment_span // 7))
             accent_x = label_x - self.width * 0.018 if side == "left" else label_x + note_text_width + self.width * 0.018
             accent_y = label_y + note_size * 0.50
