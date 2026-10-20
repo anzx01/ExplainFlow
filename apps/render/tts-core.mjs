@@ -118,12 +118,13 @@ export function splitNarrationSentences(text) {
 }
 
 export function distributeNarrationAcrossBeats(sceneNarration, beatCount) {
-  const count = Math.max(1, Number(beatCount) || 1);
+  const requestedCount = Math.max(1, Math.floor(Number(beatCount) || 1));
   const source = cleanNarrationText(sceneNarration);
   if (!source) return [];
-  if (count === 1) return [source];
-  const sentences = splitNarrationSentences(source);
+  if (requestedCount === 1) return [source];
+  const sentences = (source.match(/[^。！？!?]+[。！？!?]?/g) ?? [source]).map(part => part.trim()).filter(Boolean);
   if (sentences.length === 0) return [source];
+  const count = Math.min(requestedCount, sentences.length);
   const chunks = Array.from({ length: count }, () => []);
   const totalChars = sentences.reduce((sum, s) => sum + s.length, 0);
   const targetChars = Math.max(1, totalChars / count);
@@ -131,13 +132,13 @@ export function distributeNarrationAcrossBeats(sceneNarration, beatCount) {
   for (const [sentenceIndex, sentence] of sentences.entries()) {
     const remainingSentences = sentences.length - sentenceIndex;
     const remainingSlots = count - chunkIndex - 1;
-    if (chunkIndex < count - 1 && chunkChars > 0 && chunkChars + sentence.length > targetChars && remainingSentences > remainingSlots) {
+    if (chunkIndex < count - 1 && chunkChars > 0 && (chunkChars + sentence.length > targetChars || remainingSentences === remainingSlots)) {
       chunkIndex += 1; chunkChars = 0;
     }
     chunks[chunkIndex].push(sentence);
     chunkChars += sentence.length;
   }
-  return chunks.map((chunk) => cleanNarrationText(chunk.join(""))).filter(Boolean);
+  return chunks.map((chunk) => chunk.join("")).filter(Boolean);
 }
 
 export function normalizeVoiceKey(voice) {
@@ -179,7 +180,7 @@ export async function requestTtsAudio(narration, voice, sceneId) {
 
 export function ttsCacheFilename(text, voice) {
   const hash = createHash("sha1")
-    .update(JSON.stringify({ text: String(text ?? ""), voice: String(voice ?? "") }))
+    .update(JSON.stringify({ version: 2, text: String(text ?? ""), voice: String(voice ?? "") }))
     .digest("hex").slice(0, 20);
   return `tts_${hash}.mp3`;
 }

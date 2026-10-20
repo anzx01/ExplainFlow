@@ -313,7 +313,7 @@ function sceneDurationFramesInGeneratedScene(scene) {
     (max, seg) => Math.max(max, Number(seg?.endFrame ?? 0), Number(seg?.duration ?? 0)),
     0,
   );
-  return Math.max(0, Number(scene?.timingPlan?.durationFrames ?? 0), fromSegments);
+  return Math.max(0, Number(scene?.duration ?? 0), Number(scene?.timingPlan?.durationFrames ?? 0), fromSegments);
 }
 
 function rescaleSceneDrawOps(scene, options = {}) {
@@ -398,11 +398,12 @@ function paceSceneRasterOps(scene, options = {}) {
   const ops = Array.isArray(scene?.drawOps) ? scene.drawOps : [];
   const strokes = Array.isArray(scene?.rasterReveal?.strokes) ? scene.rasterReveal.strokes : [];
   if (!duration || !ops.length || !strokes.length) return scene;
+  if (ops.some(op => op.contractElementId)) return scene;
   const inkIds = new Set(strokes.map((s) => String(s?.opId ?? "")));
   if (!inkIds.size) return scene;
   const tailFrames = finalHoldTailFrames(duration, options);
   const lead = Math.min(8, Math.max(2, Math.round(duration * 0.02)));
-  const spanEnd = Math.max(lead + strokes.length + 2, duration - tailFrames);
+  const spanEnd = Math.max(lead + 1, duration - tailFrames);
   const lengthFor = new Map();
   for (const s of strokes) {
     const len = Math.max(6, Number(s?.dashLength) || 6);
@@ -414,25 +415,21 @@ function paceSceneRasterOps(scene, options = {}) {
   let t = lead;
   for (const s of strokes) {
     const w = lengthFor.get(String(s?.opId ?? "")) || 6;
-    const dur = Math.max(1, Math.round(((spanEnd - lead) * w) / totalWeight));
+    // Subframe windows keep dense traces inside the scene and its final hold.
+    const dur = ((spanEnd - lead) * w) / totalWeight;
     const end = Math.min(spanEnd, t + dur);
-    if (end <= t) {
-      opWindow.set(String(s?.opId ?? ""), { start: Math.max(lead, t - 1), end: t });
-    } else {
-      opWindow.set(String(s?.opId ?? ""), { start: t, end });
-    }
-    const colorDur = Math.max(1, Math.round(dur * 0.45));
-    const colorEnd = Math.min(spanEnd, end + colorDur);
+    const inkEnd = s?.colorOpId ? t + (end - t) * 0.72 : end;
+    opWindow.set(String(s?.opId ?? ""), { start: t, end: inkEnd });
     if (s?.colorOpId) {
-      opWindow.set(String(s.colorOpId), { start: Math.max(end - 1, lead), end: Math.max(colorEnd, end) });
+      opWindow.set(String(s.colorOpId), { start: inkEnd, end });
     }
-    t = Math.max(t + 1, end);
+    t = end;
   }
   const drawOps = ops.map((op) => {
     const key = String(op?.id ?? "");
     const win = opWindow.get(key);
     if (!win) return op;
-    return { ...op, startFrame: win.start, endFrame: Math.max(win.end, win.start + 1) };
+    return { ...op, startFrame: win.start, endFrame: win.end };
   });
   return { ...scene, drawOps };
 }

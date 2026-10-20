@@ -13,19 +13,16 @@ from PIL import Image
 
 
 def normalize_whiteboard_image(image_bytes: bytes) -> bytes:
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    source = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+    image = Image.new("RGBA", source.size, "white")
+    image.alpha_composite(source)
+    image = image.convert("RGB")
     width, height = image.size
     pixels = np.asarray(image).copy()
-    border = max(4, round(min(width, height) * 0.07))
-    pixels[:border, :, :] = 255
-    pixels[-border:, :, :] = 255
-    pixels[:, :border, :] = 255
-    pixels[:, -border:, :] = 255
     cleaned = Image.fromarray(pixels)
     gray = pixels.mean(axis=2)
-    search = np.zeros_like(gray, dtype=bool)
-    search[round(height * 0.15):round(height * 0.82), round(width * 0.05):round(width * 0.95)] = True
-    foreground = (gray < 225) & search
+    # Measure the whole artwork: edge erasing and a center-only crop cut off limbs and tools.
+    foreground = gray < 225
     ys, xs = np.where(foreground)
     if len(xs) >= 32:
         pad_x = max(8, round((xs.max() - xs.min() + 1) * 0.08))
@@ -33,7 +30,7 @@ def normalize_whiteboard_image(image_bytes: bytes) -> bytes:
         left, right = max(0, int(xs.min()) - pad_x), min(width, int(xs.max()) + pad_x + 1)
         top, bottom = max(0, int(ys.min()) - pad_y), min(height, int(ys.max()) + pad_y + 1)
         cleaned = cleaned.crop((left, top, right, bottom))
-    max_width, max_height = round(width * 0.82), round(height * 0.76)
+    max_width, max_height = round(width * 0.88), round(height * 0.84)
     scale = min(max_width / cleaned.width, max_height / cleaned.height)
     target = (max(1, round(cleaned.width * scale)), max(1, round(cleaned.height * scale)))
     cleaned = cleaned.resize(target, Image.Resampling.LANCZOS)

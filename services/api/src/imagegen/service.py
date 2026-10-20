@@ -199,9 +199,7 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
     preview = quality.strip().lower() == "preview"
     width = settings.local_imagegen_preview_width if preview else settings.local_imagegen_width
     height = settings.local_imagegen_preview_height if preview else settings.local_imagegen_height
-    # 强化负面提示：限制复杂度，确保简洁教学风格。
-    # meinaPastel 是动漫底模：复杂多对象场景会漂移成"动漫人物+奇幻构图"，
-    # 必须在负面里硬性排除人物与暗背景。
+    # Exclude unwanted styles, not people required by the teaching action.
     negative = (
         "text, letters, words, logo, watermark, blurry, low quality, malformed hands, duplicate objects, "
         "overly detailed, too many elements, cluttered composition, busy background, complex patterns, "
@@ -210,7 +208,7 @@ async def _call_comfyui(prompt: str, *, quality: str = "final", attempt: int = 0
         "anime style details, hair strands, fabric folds, glossy highlights, "
         "small objects, tiny icons, miniature details, dense infographic, "
         "more than 5 main objects, crowded scene, overlapping elements, "
-        "anime, manga, 1girl, 1boy, bishoujo, anime character, human face, portrait, person, "
+        "anime, manga, bishoujo, anime character, glamour portrait, "
         "dark background, black background, night sky, galaxy, fantasy art"
     )
     timeout = max(5.0, float(settings.comfyui_timeout_s))
@@ -367,21 +365,21 @@ _IMAGE_STYLES = {
 _DEFAULT_IMAGE_STYLE = "vivid-storybook"
 
 _SCENE_CONTRACT = (
-    "Show one immediately readable story beat with ONE dominant hero subject filling at least one "
-    "third of the canvas height; every other element stays clearly smaller support. Keep every object "
-    "complete inside the canvas with breathing room; never crop key parts. Use two to four spatially "
-    "separate clusters only when the scene contains genuinely independent objects, with clear paper "
-    "gaps between clusters, and never join the whole canvas with one continuous ground line. Keep "
+    "Show one immediately readable teaching action or mechanism with the main subject group filling "
+    "most of the usable canvas. Preserve the specified people, anatomy, tools, object counts, and "
+    "spatial relationships. Show physical contact where an action requires it and the visible change "
+    "or result; do not turn interacting subjects into disconnected icons. For a comparison, keep both "
+    "states equally legible. An analogy must remain connected to the actual topic, not replace it. "
+    "Keep every required part complete inside the canvas with breathing room; never crop key parts. Keep "
     "outlines distinguishable from fills so the drawing can be converted locally into line art: clean "
     "thick dark outlines, large flat color shapes, low texture, generous empty margins; no hatching, "
-    "stippling, speckle noise, tiny repeated decorations, or dense small details; keep the bottom "
-    "quarter of the canvas nearly empty."
+    "stippling, speckle noise, tiny repeated decorations, or dense small details."
 )
 
 _PRODUCTION_CONTRACT = (
     "Generate image only: no text, no letters, no single characters, no chemical element symbols, no numbers, no Greek or math symbols on any object, no pseudo-writing, captions, logo, watermark, "
     "panel border, page frame, UI, or subtitle band; avoid photorealistic texture, dense backgrounds, "
-    "and tiny details; not anime, no people."
+    "and tiny details; not anime."
 )
 
 
@@ -581,7 +579,7 @@ def _build_prompt(req: SceneImageRequest, condensed_subject: str | None = None) 
         )
         return (
             f"{style_head} {condensed_subject.strip().rstrip('.')}. "
-            f"{color_tail}, generous margins, no text. Flat simple doodle illustration, absolutely not anime, no people"
+            f"{color_tail}, safe margins, no text. Flat simple teaching illustration, not anime"
         )
     mode = (req.board_mode or "whiteboard").strip().lower()
     monochrome = str(req.line_art_color_mode or "color").strip().lower() == "monochrome"
@@ -935,13 +933,13 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
             and str(settings.imagegen_provider or "").strip().lower().startswith("local"):
         return await _generate_composite_scene(req, shots, client)
     requested_mode = str(req.image_mode or "").strip().lower()
-    # The render pipeline sends image_mode="default"; only flux/local bypass
-    # the ComfyUI path. Everything landing on the long-prompt ComfyUI branch
-    # needs the condensed subject, or SD1.5's 77-token window drops the topic.
-    uses_comfyui = requested_mode not in {"flux", "local", "local_then_ark"} or (
-        requested_mode in {"sd15", "sd1.5", "sd-1.5"}
+    provider = (
+        "local" if requested_mode == "flux" else
+        "comfyui" if requested_mode in {"sd15", "sd1.5", "sd-1.5"} else
+        effective_imagegen_provider()
     )
-    condensed_subject = await _condense_subject_for_clip(req) if uses_comfyui else None
+    # Only SD1.5 needs CLIP condensation; other providers retain the full lesson.
+    condensed_subject = await _condense_subject_for_clip(req) if provider in {"comfyui", "comfy"} else None
     prompt = _build_prompt(req, condensed_subject)
     semantic = _semantic_prompt_diagnostics(req)
     requested_mode = str(req.image_mode or "").strip().lower()
@@ -963,11 +961,6 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
                 "selectedAttempt": None,
                 "imageMode": "sd15",
             }
-    provider = (
-        "local" if requested_mode == "flux" else
-        "comfyui" if requested_mode in {"sd15", "sd1.5", "sd-1.5"} else
-        effective_imagegen_provider()
-    )
     attempts: list[dict] = []
     max_attempts = max(1, settings.local_imagegen_max_attempts if provider.startswith("local") else 1)
     # When OCR keeps reading words in the artwork, retell the model the board
@@ -981,7 +974,6 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
         "signature — the video renderer adds all text later. Express every concept purely with "
         "icons, arrows, boxes, charts, and doodle shapes."
     )
-    best_failed: tuple[int, int, bytes] | None = None  # (error_count, attempt_no, image_bytes)
     for attempt in range(max_attempts):
         try:
             prior_errors = {err for item in attempts for err in (item.get("errors") or [])}
@@ -1012,16 +1004,12 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
             quality = inspect_generated_image(img_bytes)
             quality["attempt"] = attempt + 1
             quality["semantic"] = semantic
-            quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, prompt, provider)
+            quality["sourceAsset"] = _asset_contract_metadata(req, img_bytes, retry_prompt, provider)
             attempts.append(quality)
             if quality["ok"]:
                 logger.info("[imagegen] %s provider=%s bytes=%d attempt=%d", req.scene_id, provider, len(img_bytes), attempt + 1)
                 return base64.b64encode(img_bytes).decode(), {"ok": True, "attempts": attempts, "selectedAttempt": attempt + 1}
             logger.warning("[imagegen] %s rejected attempt=%d errors=%s", req.scene_id, attempt + 1, quality["errors"])
-            # 优雅降级候选:全部重试都被质量门拒掉时,场景宁可带一张有瑕疵
-            # 的图也不能没有中央锚点图(下游拿不到图会整场跳过插画)。
-            if best_failed is None or len(quality["errors"]) < best_failed[0]:
-                best_failed = (len(quality["errors"]), attempt + 1, img_bytes)
         except Exception as exc:
             attempts.append({"ok": False, "attempt": attempt + 1, "errors": ["generation_failed"], "message": str(exc)})
             logger.warning("[imagegen] %s attempt=%d failed: %s", req.scene_id, attempt + 1, exc)
@@ -1035,18 +1023,6 @@ async def generate_scene_image_result(req: SceneImageRequest, client: httpx.Asyn
                 return base64.b64encode(img_bytes).decode(), {"ok": True, "attempts": attempts, "selectedAttempt": len(attempts)}
         except Exception as exc:
             attempts.append({"ok": False, "errors": ["ark_fallback_failed"], "message": str(exc)})
-    if best_failed is not None:
-        error_count, attempt_no, fallback_bytes = best_failed
-        logger.warning(
-            "[imagegen] %s all attempts rejected; degrading to least-flawed candidate (attempt=%d, %d error(s))",
-            req.scene_id, attempt_no, error_count,
-        )
-        return base64.b64encode(fallback_bytes).decode(), {
-            "ok": True,
-            "attempts": attempts,
-            "selectedAttempt": attempt_no,
-            "bestFailedFallback": True,
-        }
     return None, {"ok": False, "attempts": attempts, "selectedAttempt": None}
 
 

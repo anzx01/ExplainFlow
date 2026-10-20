@@ -24,7 +24,6 @@ import {
   requestTtsAudio,
   splitNarrationSentences,
   ttsInFlight,
-  trimNarrationToChars,
   ttsCacheFilename,
 } from "./tts-core.mjs";
 
@@ -88,23 +87,28 @@ export async function synthesizeScene(sceneId, text, voice) {
 // ---------------------------------------------------------------------------
 
 export function sceneBeatSpecs(scene) {
-  const visualBeats = Array.isArray(scene.visual_beats) ? scene.visual_beats : [];
+  const rawBeats = scene.visual_beats ?? scene.visualBeats;
+  const visualBeats = Array.isArray(rawBeats) ? rawBeats : [];
   const beats = visualBeats.length > 0
     ? visualBeats
     : [{ id: "beat_0", draw_intent: scene.image_description || scene.title || "", narration: scene.narration || scene.title || "", required_labels: [], duration_estimate: scene.duration_estimate || 8 }];
-  const sceneBudget = Math.max(2, Number(scene?.duration_estimate ?? 0) || 0);
-  const sceneNarration = cleanNarrationText(scene.narration || scene.title || "");
-  const distributedSceneNarration = distributeNarrationAcrossBeats(sceneNarration, beats.length);
-  return beats.map((beat, index) => {
-    const beatNarration = cleanNarrationText(beat?.narration || "");
-    const rawText = cleanNarrationText(beatNarration || distributedSceneNarration[index] || sceneNarration || scene.title || beat?.draw_intent || "");
-    const narratedEstimate = estimateNarrationSeconds(rawText) + 0.8;
+  const beatTexts = beats.map(beat => cleanNarrationText(beat?.narration || ""));
+  const sceneNarration = cleanNarrationText(scene.narration || beatTexts.join("") || scene.title || "");
+  // Deepening or editing the script must not leave TTS reading an earlier beat draft.
+  const texts = beatTexts.every(Boolean) && narrationKey(beatTexts.join("")) === narrationKey(sceneNarration)
+    ? beatTexts
+    : distributeNarrationAcrossBeats(sceneNarration, beats.length);
+  return texts.map((text, index) => {
+    const beat = beats[index];
+    const narratedEstimate = estimateNarrationSeconds(text) + 0.8;
     const requestedEstimate = Number(beat?.duration_estimate ?? beat?.duration ?? 0);
     const beatEstimate = Math.max(1, narratedEstimate, Math.min(requestedEstimate || narratedEstimate, narratedEstimate + 1.2));
-    const maxChars = Math.max(120, Math.min(260, Math.floor(Math.max(beatEstimate, 8) * 9.5)));
-    const text = trimNarrationToChars(rawText, maxChars);
     return { id: String(beat?.id || `beat_${index}`), index, text, drawIntent: String(beat?.draw_intent || beat?.drawIntent || scene.title || "").trim(), durationEstimate: beatEstimate };
   });
+}
+
+function narrationKey(text) {
+  return normalizeTextForTts(cleanNarrationText(text)).replace(/\s+/g, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -169,6 +173,8 @@ export async function assertStoryboardAudioComplete(storyboard) {
 function reusableSceneAudio(scene) {
   const segments = scene?.audioSegments ?? scene?.audio_segments;
   if (!Array.isArray(segments) || segments.length === 0) return null;
+  const spoken = segments.map(segment => segment?.narration ?? segment?.subtitleText ?? segment?.subtitle_text ?? "").join("");
+  if (scene.narration?.trim() && narrationKey(spoken) !== narrationKey(scene.narration)) return null;
   const localSegments = segments.map((segment) => {
     const src = segment?.audioUrl ?? segment?.audio_url;
     const filename = audioFilenameFromUrl(src);

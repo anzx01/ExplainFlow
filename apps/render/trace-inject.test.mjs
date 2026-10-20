@@ -45,6 +45,7 @@ test("adds scene subject, action, and relationship constraints to image generati
   );
   assert.match(prompt, /手机|phone/i);
   assert.match(prompt, /compulsive scrolling/);
+  assert.match(prompt, /人不断滑动手机，时间被短视频循环吞掉/);
   assert.match(prompt, /cause\/effect|relationship/i);
   assert.match(prompt, /generic face/i);
 });
@@ -166,4 +167,5 @@ test("image cache changes when authored action or image mode changes", () => {
   const scene = {id: "scene_0", image_description: "person and phone", visual_beats: [{draw_intent: "lying on side"}]};
   assert.notEqual(imageCacheKey(board, scene), imageCacheKey(board, {...scene, visual_beats: [{draw_intent: "standing"}]}));
   assert.notEqual(imageCacheKey(board, scene), imageCacheKey({...board, image_generation_mode: "sd15"}, scene));
+  assert.notEqual(imageCacheKey(board, {...scene, narration: "站好。"}), imageCacheKey(board, {...scene, narration: "转腰挥拍。"}));
 });

@@ -65,7 +65,7 @@ export function imagegenRequestTimeoutMs(providerStatus, sceneCount, overrideMs 
 
 export function imageCacheKey(storyboard, scene) {
   const payload = {
-    renderAssetMode: "scene-authored-artwork-v23-single-pass-master",
+    renderAssetMode: "scene-authored-artwork-v24-lesson-fidelity",
     imageMode: storyboard?.image_generation_mode ?? storyboard?.imageGenerationMode ?? "default",
     authoredPrompt: imageGenerationDescription(storyboard, scene),
     sourceImage: createHash("sha256").update(sceneLocalImageBuffer(scene) ?? Buffer.alloc(0)).digest("hex"),
@@ -108,6 +108,7 @@ export function imageGenerationDescription(storyboard, scene) {
     `topic: ${storyboard?.topic ?? ""}`,
     `scene title: ${scene?.title ?? ""}`,
     `learning goal: ${scene?.learning_goal ?? scene?.learningGoal ?? ""}`,
+    scene.narration && `current explanation (meaning only, never draw as text): ${scene.narration}`,
     intents && `visual action: ${intents}`,
     beats && `visual beats: ${beats}`,
   ].filter(Boolean).join(". ");
@@ -115,6 +116,7 @@ export function imageGenerationDescription(storyboard, scene) {
   return [
     `Required scene artwork: ${base}`,
     context,
+    "The current explanation and learning goal determine what this image must teach. Preserve the action, physical contact, part counts, and before/after or cause/effect relationship; if an older visual draft conflicts with the explanation, follow the explanation. Keep the actual subject visible when using an analogy",
     "The image must visibly show the named subject, its action, and the cause/effect or relationship in this scene; build a complete classroom whiteboard composition preserving the specified objects, pose, lighting, and action, with clear foreground and background relationships and one readable central action",
     `Use detailed hand-drawn marker line art like a real teaching sketch: the specified subjects should be structurally recognizable and connected; ${monochrome ? "use only black, charcoal gray and white, with no colored accents" : "use solid subject-specific color fills and purposeful color accents"}; avoid isolated icon tiles and avoid an empty canvas`,
     "Do not use anime, manga, glossy digital illustration, photorealism, generic cute characters, a generic face substituted for the requested action, abstract icon-only diagrams, or unrelated stock art; no readable text, labels, logos, watermark, or baked callout boxes",

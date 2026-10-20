@@ -129,7 +129,7 @@ def build_raster_reveal(self, start: int) -> int:
             elif annotation_type == "wavy_underline":
                 self.draw_wavy_underline(label_x, label_y + note_size * 1.22, underline_w, self.yellow, accent_start, min(12, max(8, segment_span // 11)), beat_id=beat_id)
             elif annotation_type == "route_trace":
-                self.add_arrow(_curve_points(edge_x, edge_y, edge_x + tick_dir * self.width * 0.085, edge_y + self.height * 0.045, count=12, wave=self.height * 0.018), self.green, 5, accent_start, min(16, max(9, segment_span // 10)), role="annotation_route_trace", beat_id=beat_id)
+                self.add_arrow(_curve_points(pointer_start_x, label_y + note_size * 0.56, pointer_end_x, pointer_end_y, count=12, wave=self.height * 0.018), self.green, 5, accent_start, min(16, max(9, segment_span // 10)), role="annotation_route_trace", beat_id=beat_id)
             elif annotation_type == "side_label":
                 self.draw_star(accent_x, accent_y - self.height * 0.018, self.width * 0.016, self.yellow, accent_start, min(12, max(8, segment_span // 11)), beat_id=beat_id)
             else:
@@ -271,10 +271,12 @@ def build_raster_reveal(self, start: int) -> int:
     if not plan_items:
         plan_items = [("side_label", label, self.beat_id_for(index))
                       for index, label in enumerate(fallback_labels[:2])]
-    note_size = max(28, int(self.body_size * 1.10))
-    note_width = self.width * 0.15
-    left_x = self.width * 0.045
-    right_x = self.width - note_width - self.width * 0.045
+    note_size = max(28, round(self.height * 0.048))
+    note_width = self.width * 0.19
+    gap = self.width * 0.025
+    # Keep labels beside the illustration instead of stranded at the canvas edges.
+    left_x = max(self.width * 0.035, draw_x - note_width - gap)
+    right_x = min(self.width - note_width - self.width * 0.035, draw_x + draw_w + gap)
     label_positions = [
         (left_x, draw_y + draw_h * 0.20),
         (right_x, draw_y + draw_h * 0.30),

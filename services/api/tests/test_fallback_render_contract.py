@@ -377,3 +377,41 @@ def test_storyboard_style_and_character_locks_get_stable_fingerprints():
     finalized = finalize_storyboard_contract(storyboard)
     assert finalized.style_fingerprint == "78d481b57dae9462"
     assert finalized.character_fingerprint == "e512935684770e4f"
+
+
+@pytest.mark.parametrize("width,height", [(1920, 1080), (960, 540)])
+def test_trace_labels_are_readable_and_close_to_portrait_artwork(width, height):
+    labels = ["先站稳", "再转腰"]
+    scene = Scene(
+        id="labels", order=0, title="动作", narration="先站稳。再转腰。", duration_estimate=10,
+        referenceImageAsset="ink.png",
+        rasterReveal={"imageWidth": 512, "imageHeight": 512, "inkAsset": "ink.png",
+                      "strokes": [{"points": [{"x": .2, "y": .2}, {"x": .8, "y": .8}]}]},
+        annotation_plan=[{"type": "side_label", "label": label, "target": "主体"} for label in labels],
+    )
+    spec = _build_fallback_scene_spec(scene, 0, 24, width, height)
+    notes = [item for item in spec["texts"] if item["text"] in labels]
+    assert len(notes) == 2
+    art = spec["rasterReveal"]
+    assert art["width"] == pytest.approx(art["height"], abs=1)
+    left, right = notes
+    for note in notes:
+        assert note["fontSize"] >= height * .047
+        assert 0 <= note["x"] <= width - note["maxWidth"]
+    assert 0 <= art["x"] - left["x"] - left["maxWidth"] <= width * .03
+    assert 0 <= right["x"] - art["x"] - art["width"] <= width * .03
+
+
+def test_direct_route_annotation_renders_without_stretching_the_artwork():
+    scene = Scene(
+        id="route", order=0, title="发力路线", narration="从脚到手。", duration_estimate=10,
+        referenceImageAsset="master.png",
+        rasterReveal={"imageWidth": 512, "imageHeight": 512, "renderMode": "direct"},
+        annotation_plan=[{"type": "route_trace", "label": "从脚到手", "target": "主体"}],
+    )
+    spec = _build_fallback_scene_spec(scene, 0, 24, 1920, 1080)
+    assert any(stroke["role"] == "annotation_route_trace" for stroke in spec["strokes"])
+    assert spec["rasterReveal"]["fit"] == "contain"
+    tsx, _ = _build_fallback_remotion_tsx(Storyboard(topic="route", total_duration_estimate=10, scenes=[scene]), 24, 1920, 1080)
+    overlay = tsx.split("const RasterFinalOverlay", 1)[1].split("const AnimeDoodle", 1)[0]
+    assert 'objectFit: reveal.fit ?? "fill"' in overlay

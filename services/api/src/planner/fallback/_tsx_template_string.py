@@ -428,7 +428,7 @@ const RasterFinalOverlay = ({ scene }: { scene: SceneSpec }) => {
             top: reveal.y,
             width: reveal.width,
             height: reveal.height,
-            objectFit: reveal.fit === "cover" ? "cover" : "fill",
+            objectFit: reveal.fit ?? "fill",
             opacity,
             pointerEvents: "none",
             zIndex: 11,

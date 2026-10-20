@@ -1,13 +1,33 @@
+import asyncio
 from pathlib import Path
+import sys
 
-from src.narration.service import _synthesize_silence
+import pytest
+
+sys.path.insert(0, str(Path(__file__).parents[1]))
+from src.narration import service
 
 
-def test_offline_narration_fallback_creates_mp3():
-    path = _synthesize_silence("离线渲染也需要稳定的音频时间轴。")
-    try:
-        assert path.suffix == ".mp3"
-        assert path.exists()
-        assert path.stat().st_size > 512
-    finally:
-        Path(path).unlink(missing_ok=True)
+class UnavailableEdge:
+    def __init__(self, *args):
+        pass
+
+    async def save(self, path):
+        raise RuntimeError("edge unavailable")
+
+
+def test_unavailable_voice_providers_fail_instead_of_returning_silence(monkeypatch):
+    def unavailable_sapi(text):
+        raise RuntimeError("sapi unavailable")
+
+    monkeypatch.setattr(service.edge_tts, "Communicate", UnavailableEdge)
+    monkeypatch.setattr(service, "_synthesize_with_windows_sapi", unavailable_sapi)
+    with pytest.raises(RuntimeError, match="配音生成失败"):
+        asyncio.run(service.synthesize("必须有真实配音。"))
+
+
+def test_local_voice_is_used_when_online_voice_fails(monkeypatch, tmp_path):
+    voice_path = tmp_path / "local.mp3"
+    monkeypatch.setattr(service.edge_tts, "Communicate", UnavailableEdge)
+    monkeypatch.setattr(service, "_synthesize_with_windows_sapi", lambda text: voice_path)
+    assert asyncio.run(service.synthesize("使用本地语音。")) == voice_path

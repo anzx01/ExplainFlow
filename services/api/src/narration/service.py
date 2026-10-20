@@ -3,7 +3,6 @@ import logging
 import os
 import subprocess
 import tempfile
-import wave
 from pathlib import Path
 from uuid import uuid4
 
@@ -109,35 +108,6 @@ $synth.Dispose()
         _cleanup_temp_file(wav_path)
 
 
-def _synthesize_silence(text: str) -> Path:
-    """Create deterministic offline fallback audio so local rendering remains testable."""
-    wav_path = _create_uuid_temp_path(".wav")
-    mp3_path = _create_uuid_temp_path(".mp3")
-    duration = max(1.5, min(30.0, len(text.strip()) / 5.0 + 0.8))
-    sample_rate = 24_000
-    try:
-        with wave.open(str(wav_path), "wb") as handle:
-            handle.setnchannels(1)
-            handle.setsampwidth(2)
-            handle.setframerate(sample_rate)
-            handle.writeframes(b"\x00\x00" * int(sample_rate * duration))
-        subprocess.run(
-            [
-                imageio_ffmpeg.get_ffmpeg_exe(), "-y", "-loglevel", "error",
-                "-i", str(wav_path), "-codec:a", "libmp3lame", "-b:a", "64k", str(mp3_path),
-            ],
-            check=True,
-            capture_output=True,
-            timeout=120,
-        )
-        if not mp3_path.exists() or mp3_path.stat().st_size < 512:
-            raise RuntimeError("Offline TTS fallback did not create usable audio")
-        logger.warning("TTS providers unavailable; using %.1fs offline silent fallback audio", duration)
-        return mp3_path
-    finally:
-        _cleanup_temp_file(wav_path)
-
-
 async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
     voice = VOICES[voice_key]
     out_path = _create_uuid_temp_path(".mp3")
@@ -154,7 +124,7 @@ async def synthesize(text: str, voice_key: str = "xiaoxiao") -> Path:
             return await asyncio.to_thread(_synthesize_with_windows_sapi, text)
         except Exception as sapi_error:
             logger.warning("Edge TTS failed (%s); Windows SAPI failed (%s)", edge_error, sapi_error)
-            return await asyncio.to_thread(_synthesize_silence, text)
+            raise RuntimeError("配音生成失败：在线语音和本地语音均不可用，请恢复语音服务后重试。") from sapi_error
 
 
 async def synthesize_scenes(scenes: list[dict], voice_key: str = "xiaoxiao") -> list[Path]:
